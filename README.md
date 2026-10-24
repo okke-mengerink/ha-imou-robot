@@ -3,7 +3,7 @@
 Home Assistant custom integration for Imou robot vacuums, controlled through the Imou Open Platform cloud API.
 
 - Domain: `imou_robot`
-- Version: 0.1.1
+- Version: 0.1.2
 - Tested with: RV-L11-A (deviceModel `L11-A`), Home Assistant 2026.10.2
 - License: MIT
 
@@ -131,7 +131,8 @@ Contributions of identifier and enum mappings are welcome.
 ## Known limitations and unverified points
 
 - Suction, water level and fan speed are set through the `WindWater` service, verified on an L11-A. Plain property writes for these are ignored by the L11-A. Models without a `WindWater` service get property writes instead (unverified). Other models may use another scale; those values show as `unknown_<n>` and can be added to `LEVEL_KEYS`.
-- Whether property writes for the switches (auto-empty, carpet boost, resume after charging) are applied by the robot is unverified. Return to dock, which is also a property write, works.
+- Property writes work on an L11-A for carpet boost (the cloud confirms the new value) and for return to dock. The L11-A never reports auto-empty or resume after charging, before or after a write, and the Imou app has no such settings, so its firmware probably does not implement them although the shared things model lists them. Whether such a write has any effect cannot be verified.
+- A switch whose setting the robot did not report in its first poll is created but disabled by default (the poll must be of an online robot; otherwise nothing is disabled). Enable it in the entity settings if your model supports it. Every switch has the attribute `reported_by_device`. Entities created by an earlier version keep their state: disable or delete those two switches by hand.
 - The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.)
 - Consumable values are assumed to be hours used. A new robot reports 0.
 - There is no map, room, zone or schedule control yet.

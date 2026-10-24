@@ -68,6 +68,24 @@ class ImouSwitch(ImouEntity, SwitchEntity):
         """Initialize the switch."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
+        # A setting that the robot did not report in its first online poll is
+        # probably not implemented by its firmware (the L11-A never reports
+        # auto-empty or resume-after-charging). The switch is still created, so
+        # that users of a model that does support it can enable it, but it is
+        # disabled by default. Existing registry entries are not changed.
+        self._attr_entity_registry_enabled_default = (
+            coordinator.reports.enabled_by_default(description.identifier)
+        )
+
+    @property
+    @override
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Tell whether the robot reports this setting at all."""
+        return {
+            "reported_by_device": self.coordinator.reports.is_reported(
+                self.entity_description.identifier
+            )
+        }
 
     @property
     @override

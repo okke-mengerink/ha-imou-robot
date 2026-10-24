@@ -219,6 +219,37 @@ def test_level_maps_and_unknown_values() -> None:
     assert const.DEFAULT_LEVEL == 2 and const.DEFAULT_LEVEL in const.LEVEL_KEYS["windpower"] and const.DEFAULT_LEVEL in const.LEVEL_KEYS["water"]
 
 
+def test_report_tracker_without_evidence_disables_nothing() -> None:
+    tracker = model_mod.ReportTracker()
+    assert tracker.enabled_by_default("auto_dust") and not tracker.is_reported("auto_dust")
+    tracker.update(False, {})  # an offline poll is no evidence either
+    tracker.update(False, {"auto_dust": 1})  # and its values are ignored
+    assert tracker.enabled_by_default("auto_dust") and not tracker.is_reported("auto_dust")
+    assert not tracker.seen_online
+
+
+def test_report_tracker_flags_settings_missing_from_an_online_poll() -> None:
+    tracker = model_mod.ReportTracker()
+    tracker.update(True, {"rug_press": 1})
+    assert tracker.seen_online
+    assert tracker.enabled_by_default("rug_press") and tracker.is_reported("rug_press")
+    assert not tracker.enabled_by_default("auto_dust") and not tracker.is_reported("auto_dust")
+    tracker.update(True, {"auto_dust": 0})  # a later report counts as reported
+    assert tracker.is_reported("auto_dust") and tracker.enabled_by_default("auto_dust")
+    assert tracker.as_diagnostics() == {"seen_online": True, "reported_identifiers": ["auto_dust", "rug_press"]}
+
+
+def test_l11a_fixture_reports_carpet_boost_but_not_auto_dust_or_keep_clean() -> None:
+    model = l11a()
+    tracker = model_mod.ReportTracker()
+    tracker.update(True, model.parse_values(fixture("l11a_values.json")["properties"]))
+    assert tracker.enabled_by_default("rug_press")  # 11900 is reported
+    assert not tracker.enabled_by_default("auto_dust")  # 11800 never is
+    assert not tracker.enabled_by_default("keep_clean")  # 11700 never is
+    # all three switches exist in the model, so they are created either way
+    assert all(model.prop(identifier) for identifier in ("rug_press", "auto_dust", "keep_clean"))
+
+
 def test_parse_values_on_observed_data() -> None:
     model = l11a()
     values = model.parse_values(fixture("l11a_values.json")["properties"])

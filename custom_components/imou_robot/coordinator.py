@@ -42,7 +42,7 @@ from .const import (
     SERVICE_WIND_WATER,
 )
 from .commanded import CommandedValue
-from .model import ThingsModel, to_bool, to_int
+from .model import ReportTracker, ThingsModel, to_bool, to_int
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,6 +126,9 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         self.device = device
         self.model = model
         self.poll_refs = model.poll_refs()
+        # which settings the robot reports; filled by the first refresh, which
+        # runs before any entity is created
+        self.reports = ReportTracker()
         # last value commanded per identifier, shared by all entities of the setting
         self.commanded: defaultdict[str, CommandedValue[Any]] = defaultdict(
             CommandedValue
@@ -160,6 +163,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             state = ImouRobotState(
                 online=online, values=self.model.parse_values(result.values)
             )
+        self.reports.update(state.online, state.values)
         self._update_polling_interval(state)
         return state
 

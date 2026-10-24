@@ -194,6 +194,43 @@ def _parse_service(raw: Any) -> ServiceDef | None:
     return ServiceDef(identifier=identifier, ref=ref, inputs=inputs)
 
 
+class ReportTracker:
+    """Which settings the robot actually reports.
+
+    The shared things model lists settings that a firmware may not implement: the
+    L11-A never reports auto-empty or resume-after-charging, before or after a
+    write. A setting that is missing from the first online poll is therefore
+    treated as "not reported by the device".
+    """
+
+    def __init__(self) -> None:
+        """Start without any evidence."""
+        self.seen_online = False
+        self.reported: set[str] = set()
+
+    def update(self, online: bool, values: Mapping[str, Any]) -> None:
+        """Record a poll; only polls of an online robot count as evidence."""
+        if online:
+            self.seen_online = True
+            self.reported.update(values)
+
+    def is_reported(self, identifier: str) -> bool:
+        """Return whether the robot has reported this setting."""
+        return identifier in self.reported
+
+    def enabled_by_default(self, identifier: str) -> bool:
+        """Return whether an entity for this setting is enabled by default.
+
+        It is, unless the robot was online and left the setting out of its poll.
+        Without evidence (the robot was never online yet) nothing is disabled.
+        """
+        return not self.seen_online or identifier in self.reported
+
+    def as_diagnostics(self) -> dict[str, Any]:
+        """Return the evidence, for the diagnostics download."""
+        return {"seen_online": self.seen_online, "reported_identifiers": sorted(self.reported)}
+
+
 class ThingsModel:
     """The things model of one product, resolved by identifier."""
 

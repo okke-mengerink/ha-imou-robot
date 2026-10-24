@@ -36,6 +36,7 @@ async def async_get_config_entry_diagnostics(
                     "status": device.status,
                 },
                 "poll_refs": coordinator.poll_refs,
+                "reports": coordinator.reports.as_diagnostics(),
                 "update_interval": coordinator.update_interval.total_seconds()
                 if coordinator.update_interval
                 else None,
