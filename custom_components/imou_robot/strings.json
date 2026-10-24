@@ -1,0 +1,195 @@
+{
+  "title": "Imou Robot Vacuum",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to the Imou Open Platform",
+        "description": "Enter the App ID and App Secret of your Imou Open Platform developer app. The README explains how to create one.",
+        "data": {
+          "app_id": "App ID",
+          "app_secret": "App Secret",
+          "region": "Region"
+        },
+        "data_description": {
+          "app_id": "Shown under App Information in your Imou Open Platform Control Board.",
+          "app_secret": "Shown next to the App ID. It is stored in Home Assistant and never logged.",
+          "region": "The data centre of your Imou account."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with Imou",
+        "description": "Imou rejected the stored credentials. Enter the current App Secret of your Imou Open Platform app.",
+        "data": {
+          "app_secret": "App Secret"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the Imou cloud. Check your internet connection and the selected region.",
+      "invalid_auth": "Imou rejected the App ID or App Secret.",
+      "unknown": "Unexpected error. Check the Home Assistant log."
+    },
+    "abort": {
+      "already_configured": "This App ID is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "selector": {
+    "region": {
+      "options": {
+        "eu": "Europe",
+        "sg": "Singapore (Asia)",
+        "na": "North America"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "mop_fitted": {
+        "name": "Mop fitted"
+      }
+    },
+    "button": {
+      "empty_bin": {
+        "name": "Empty bin"
+      }
+    },
+    "select": {
+      "suction_level": {
+        "name": "Suction",
+        "state": {
+          "quiet": "Quiet",
+          "standard": "Standard",
+          "max": "Max"
+        }
+      },
+      "mop_water_level": {
+        "name": "Water level",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      }
+    },
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      },
+      "status": {
+        "name": "Status",
+        "state": {
+          "standby": "Standby",
+          "paused": "Paused",
+          "returning": "Returning to dock",
+          "charging": "Charging",
+          "relocating": "Relocating",
+          "remote_control": "Remote control",
+          "error": "Error",
+          "room_clean": "Room clean",
+          "zone_clean": "Zone clean",
+          "spot_clean": "Spot clean",
+          "go_to": "Go to point",
+          "emptying_bin": "Emptying bin",
+          "whole_house_clean": "Whole-house clean",
+          "return_paused": "Return paused"
+        }
+      },
+      "error": {
+        "name": "Error",
+        "state": {
+          "none": "None",
+          "wheel_stuck": "Wheel stuck",
+          "fan": "Fan fault",
+          "no_water_tank": "No water tank",
+          "water_low": "Water low",
+          "cliff": "Cliff or fall detected",
+          "lidar_cover_stuck": "Lidar cover stuck",
+          "lifted": "Robot lifted",
+          "in_no_go_zone": "In no-go zone",
+          "battery": "Battery fault",
+          "lidar": "Lidar fault",
+          "main_brush": "Main brush fault"
+        }
+      },
+      "cleaned_area": {
+        "name": "Cleaned area"
+      },
+      "cleaning_time": {
+        "name": "Cleaning time"
+      },
+      "side_brush": {
+        "name": "Side brush usage"
+      },
+      "main_brush": {
+        "name": "Main brush usage"
+      },
+      "filter": {
+        "name": "Filter usage"
+      },
+      "sensors": {
+        "name": "Sensors usage"
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal",
+        "state": {
+          "abnormal": "Abnormal",
+          "no_network": "No network",
+          "poor": "Poor",
+          "fair": "Fair",
+          "good": "Good"
+        }
+      }
+    },
+    "switch": {
+      "auto_empty": {
+        "name": "Auto-empty"
+      },
+      "carpet_boost": {
+        "name": "Carpet boost"
+      },
+      "resume_after_charging": {
+        "name": "Resume after charging"
+      }
+    },
+    "vacuum": {
+      "robot": {
+        "state_attributes": {
+          "fan_speed": {
+            "state": {
+              "quiet": "Quiet",
+              "standard": "Standard",
+              "max": "Max"
+            }
+          }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Imou rejected the App ID or App Secret."
+    },
+    "cannot_connect": {
+      "message": "Could not reach the Imou cloud: {error}"
+    },
+    "no_robots_found": {
+      "message": "No Imou robot vacuum was found on this account. Add the robot under Device Access Service in the Imou Open Platform Control Board, then reload this integration."
+    },
+    "update_failed": {
+      "message": "Could not read the robot's state: {error}"
+    },
+    "command_failed": {
+      "message": "The Imou cloud did not accept the command: {error}"
+    },
+    "unsupported": {
+      "message": "This robot does not support {feature}."
+    },
+    "invalid_fan_speed": {
+      "message": "{fan_speed} is not a valid fan speed for this robot. Use quiet, standard or max."
+    },
+    "invalid_option": {
+      "message": "{option} is not a valid choice for this robot."
+    }
+  }
+}

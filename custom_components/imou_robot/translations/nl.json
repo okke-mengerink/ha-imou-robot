@@ -1,0 +1,195 @@
+{
+  "title": "Imou-robotstofzuiger",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Verbinden met het Imou Open Platform",
+        "description": "Vul de App ID en App Secret in van je Imou Open Platform-ontwikkelaarsapp. In de README staat hoe je die aanmaakt.",
+        "data": {
+          "app_id": "App ID",
+          "app_secret": "App Secret",
+          "region": "Regio"
+        },
+        "data_description": {
+          "app_id": "Te vinden onder App Information in je Imou Open Platform Control Board.",
+          "app_secret": "Staat naast de App ID. Wordt opgeslagen in Home Assistant en nooit gelogd.",
+          "region": "Het datacenter van je Imou-account."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Opnieuw inloggen bij Imou",
+        "description": "Imou heeft de opgeslagen inloggegevens geweigerd. Vul de huidige App Secret van je Imou Open Platform-app in.",
+        "data": {
+          "app_secret": "App Secret"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Geen verbinding met de Imou-cloud. Controleer je internetverbinding en de gekozen regio.",
+      "invalid_auth": "Imou heeft de App ID of App Secret geweigerd.",
+      "unknown": "Onverwachte fout. Bekijk het Home Assistant-logboek."
+    },
+    "abort": {
+      "already_configured": "Deze App ID is al ingesteld.",
+      "reauth_successful": "Opnieuw inloggen is gelukt."
+    }
+  },
+  "selector": {
+    "region": {
+      "options": {
+        "eu": "Europa",
+        "sg": "Singapore (Azië)",
+        "na": "Noord-Amerika"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "mop_fitted": {
+        "name": "Dweil geplaatst"
+      }
+    },
+    "button": {
+      "empty_bin": {
+        "name": "Stofbak legen"
+      }
+    },
+    "select": {
+      "suction_level": {
+        "name": "Zuigkracht",
+        "state": {
+          "quiet": "Stil",
+          "standard": "Standaard",
+          "max": "Maximaal"
+        }
+      },
+      "mop_water_level": {
+        "name": "Waterniveau",
+        "state": {
+          "low": "Laag",
+          "medium": "Gemiddeld",
+          "high": "Hoog"
+        }
+      }
+    },
+    "sensor": {
+      "battery": {
+        "name": "Batterij"
+      },
+      "status": {
+        "name": "Status",
+        "state": {
+          "standby": "Stand-by",
+          "paused": "Gepauzeerd",
+          "returning": "Terug naar dock",
+          "charging": "Aan het laden",
+          "relocating": "Positie bepalen",
+          "remote_control": "Op afstand bestuurd",
+          "error": "Storing",
+          "room_clean": "Kamer reinigen",
+          "zone_clean": "Zone reinigen",
+          "spot_clean": "Plek reinigen",
+          "go_to": "Naar punt rijden",
+          "emptying_bin": "Stofbak legen",
+          "whole_house_clean": "Hele huis reinigen",
+          "return_paused": "Terugkeer gepauzeerd"
+        }
+      },
+      "error": {
+        "name": "Storing",
+        "state": {
+          "none": "Geen",
+          "wheel_stuck": "Wiel vast",
+          "fan": "Ventilatorstoring",
+          "no_water_tank": "Geen watertank",
+          "water_low": "Water bijna op",
+          "cliff": "Afgrond of val gedetecteerd",
+          "lidar_cover_stuck": "Lidar-afdekking vast",
+          "lifted": "Robot opgetild",
+          "in_no_go_zone": "In verboden zone",
+          "battery": "Batterijstoring",
+          "lidar": "Lidar-storing",
+          "main_brush": "Storing hoofdborstel"
+        }
+      },
+      "cleaned_area": {
+        "name": "Gereinigd oppervlak"
+      },
+      "cleaning_time": {
+        "name": "Reinigingstijd"
+      },
+      "side_brush": {
+        "name": "Gebruik zijborstel"
+      },
+      "main_brush": {
+        "name": "Gebruik hoofdborstel"
+      },
+      "filter": {
+        "name": "Gebruik filter"
+      },
+      "sensors": {
+        "name": "Gebruik sensoren"
+      },
+      "wifi_signal": {
+        "name": "Wifi-signaal",
+        "state": {
+          "abnormal": "Afwijkend",
+          "no_network": "Geen netwerk",
+          "poor": "Slecht",
+          "fair": "Matig",
+          "good": "Goed"
+        }
+      }
+    },
+    "switch": {
+      "auto_empty": {
+        "name": "Automatisch legen"
+      },
+      "carpet_boost": {
+        "name": "Tapijtboost"
+      },
+      "resume_after_charging": {
+        "name": "Hervatten na laden"
+      }
+    },
+    "vacuum": {
+      "robot": {
+        "state_attributes": {
+          "fan_speed": {
+            "state": {
+              "quiet": "Stil",
+              "standard": "Standaard",
+              "max": "Maximaal"
+            }
+          }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "auth_failed": {
+      "message": "Imou heeft de App ID of App Secret geweigerd."
+    },
+    "cannot_connect": {
+      "message": "Geen verbinding met de Imou-cloud: {error}"
+    },
+    "no_robots_found": {
+      "message": "Er is geen Imou-robotstofzuiger gevonden op dit account. Voeg de robot toe onder Device Access Service in het Imou Open Platform Control Board en laad deze integratie daarna opnieuw."
+    },
+    "update_failed": {
+      "message": "De status van de robot kon niet worden opgehaald: {error}"
+    },
+    "command_failed": {
+      "message": "De Imou-cloud heeft de opdracht niet geaccepteerd: {error}"
+    },
+    "unsupported": {
+      "message": "Deze robot ondersteunt {feature} niet."
+    },
+    "invalid_fan_speed": {
+      "message": "{fan_speed} is geen geldige zuigstand voor deze robot. Gebruik quiet, standard of max."
+    },
+    "invalid_option": {
+      "message": "{option} is geen geldige keuze voor deze robot."
+    }
+  }
+}

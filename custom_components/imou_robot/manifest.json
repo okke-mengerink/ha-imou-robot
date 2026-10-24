@@ -1,0 +1,12 @@
+{
+  "domain": "imou_robot",
+  "name": "Imou Robot Vacuum",
+  "codeowners": ["@okke-mengerink"],
+  "config_flow": true,
+  "documentation": "https://github.com/okke-mengerink/ha-imou-robot",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/okke-mengerink/ha-imou-robot/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

@@ -1,0 +1,66 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "mop_fitted": {
+        "default": "mdi:mop"
+      }
+    },
+    "button": {
+      "empty_bin": {
+        "default": "mdi:delete-empty"
+      }
+    },
+    "select": {
+      "suction_level": {
+        "default": "mdi:fan",
+        "state": {
+          "quiet": "mdi:weather-night",
+          "standard": "mdi:fan-speed-2",
+          "max": "mdi:fan"
+        }
+      },
+      "mop_water_level": {
+        "default": "mdi:water",
+        "state": {
+          "low": "mdi:water-minus",
+          "medium": "mdi:water",
+          "high": "mdi:water-plus"
+        }
+      }
+    },
+    "sensor": {
+      "status": {
+        "default": "mdi:robot-vacuum"
+      },
+      "error": {
+        "default": "mdi:alert-circle-outline"
+      },
+      "side_brush": {
+        "default": "mdi:brush"
+      },
+      "main_brush": {
+        "default": "mdi:brush"
+      },
+      "filter": {
+        "default": "mdi:air-filter"
+      },
+      "sensors": {
+        "default": "mdi:radar"
+      },
+      "wifi_signal": {
+        "default": "mdi:wifi"
+      }
+    },
+    "switch": {
+      "auto_empty": {
+        "default": "mdi:delete-empty"
+      },
+      "carpet_boost": {
+        "default": "mdi:fan-plus"
+      },
+      "resume_after_charging": {
+        "default": "mdi:play-circle-outline"
+      }
+    }
+  }
+}

@@ -1,0 +1,55 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+
+  tests:
+    name: Tests (Home Assistant ${{ matrix.homeassistant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # the minimum version from hacs.json and the version the integration targets
+          - homeassistant: "2026.1.0"
+            python: "3.13"
+          - homeassistant: "2026.10.2"
+            python: "3.14"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Pure-Python tests (no Home Assistant)
+        run: |
+          python3 -I tests/test_sign.py
+          python3 -I tests/test_api.py
+          python3 -I tests/test_model.py
+          python3 -I tests/test_commanded.py
+      - name: Smoke test against Home Assistant
+        run: >
+          uv run --python ${{ matrix.python }}
+          --with "homeassistant==${{ matrix.homeassistant }}"
+          python -I tests/smoke_ha.py

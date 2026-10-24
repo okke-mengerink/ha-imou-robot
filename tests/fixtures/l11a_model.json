@@ -1,0 +1,1911 @@
+{
+ "cloudModel": [
+  "802900",
+  "803300",
+  "80300",
+  "90100",
+  "80600",
+  "80400",
+  "81100"
+ ],
+ "events": [
+  {
+   "outputData": [
+    {
+     "identifier": "mode",
+     "ref": "30401",
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "全屋"
+        },
+        {
+         "value": "1",
+         "desc": "选区"
+        },
+        {
+         "value": "2",
+         "desc": "划区"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "清洁模式",
+     "desc": ""
+    },
+    {
+     "identifier": "area",
+     "ref": "30402",
+     "dataType": {
+      "specs": {
+       "unit": "m2",
+       "range": [
+        "0",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "面积",
+     "desc": ""
+    },
+    {
+     "identifier": "time",
+     "ref": "30403",
+     "dataType": {
+      "specs": {
+       "unit": "min",
+       "range": [
+        "0",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "时长",
+     "desc": ""
+    },
+    {
+     "identifier": "status",
+     "ref": "30404",
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "完成"
+        },
+        {
+         "value": "1",
+         "desc": "人为中断"
+        },
+        {
+         "value": "2",
+         "desc": "清扫中断"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "状态",
+     "desc": ""
+    },
+    {
+     "identifier": "start_time",
+     "ref": "30405",
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "开始时间",
+     "desc": ""
+    }
+   ],
+   "identifier": "clean_log",
+   "inputData": [
+    {
+     "identifier": "mode",
+     "ref": "30401",
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "全屋"
+        },
+        {
+         "value": "1",
+         "desc": "选区"
+        },
+        {
+         "value": "2",
+         "desc": "划区"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "清洁模式",
+     "desc": ""
+    },
+    {
+     "identifier": "area",
+     "ref": "30402",
+     "dataType": {
+      "specs": {
+       "unit": "m2",
+       "range": [
+        "0",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "面积",
+     "desc": ""
+    },
+    {
+     "identifier": "time",
+     "ref": "30403",
+     "dataType": {
+      "specs": {
+       "unit": "min",
+       "range": [
+        "0",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "时长",
+     "desc": ""
+    },
+    {
+     "identifier": "status",
+     "ref": "30404",
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "完成"
+        },
+        {
+         "value": "1",
+         "desc": "人为中断"
+        },
+        {
+         "value": "2",
+         "desc": "清扫中断"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "状态",
+     "desc": ""
+    },
+    {
+     "identifier": "start_time",
+     "ref": "30405",
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "开始时间",
+     "desc": ""
+    }
+   ],
+   "ref": "30400",
+   "method": "1",
+   "name": "清扫记录",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_4",
+   "ref": "494942",
+   "method": "3",
+   "name": "回充失败",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_24",
+   "ref": "497294",
+   "method": "3",
+   "name": "雷达开路或短路",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_23",
+   "ref": "497295",
+   "method": "3",
+   "name": "风机开路或短路",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_22",
+   "ref": "497296",
+   "method": "3",
+   "name": "边刷开路或短路",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_21",
+   "ref": "497297",
+   "method": "3",
+   "name": "主轮开路或短路",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_20",
+   "ref": "497298",
+   "method": "3",
+   "name": "主刷开路或短路",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_26",
+   "ref": "497300",
+   "method": "3",
+   "name": "水泵开路或者短路",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_27",
+   "ref": "497393",
+   "method": "3",
+   "name": "在悬空地方启动工作触发地检",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_16",
+   "ref": "497394",
+   "method": "3",
+   "name": "从禁区启动清扫",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_14",
+   "ref": "497395",
+   "method": "1",
+   "name": "清扫区域无法到达",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_22",
+   "ref": "497396",
+   "method": "1",
+   "name": "机器不在充电桩上且电量低于15%",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_12",
+   "ref": "497397",
+   "method": "3",
+   "name": "拖地模式水量不足",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_11",
+   "ref": "497398",
+   "method": "3",
+   "name": "无水箱有拖布触发清扫",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_15",
+   "ref": "497399",
+   "method": "3",
+   "name": "工作中抱起设备或抱起状态下启动",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_5",
+   "ref": "497499",
+   "method": "3",
+   "name": "机器被困",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_3",
+   "ref": "497593",
+   "method": "1",
+   "name": "尘满取出尘盒",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_1",
+   "ref": "497594",
+   "method": "3",
+   "name": "无尘盒触发工作",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_2",
+   "ref": "497595",
+   "method": "1",
+   "name": "尘盒已满，建议清理尘盒",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_14",
+   "ref": "497596",
+   "method": "3",
+   "name": "雷达上盖卡住",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_10",
+   "ref": "497597",
+   "method": "3",
+   "name": "风机异常",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_9",
+   "ref": "497598",
+   "method": "3",
+   "name": "边刷卡住",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_8",
+   "ref": "497599",
+   "method": "3",
+   "name": "主刷卡住",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_3",
+   "ref": "497691",
+   "method": "3",
+   "name": "沿墙传感器异常",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_2",
+   "ref": "497692",
+   "method": "3",
+   "name": "前方墙检传感器异常",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_29",
+   "ref": "497694",
+   "method": "3",
+   "name": "雷达被卡住或者转速异常",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_19",
+   "ref": "497695",
+   "method": "3",
+   "name": "雷达有效数据少",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_6",
+   "ref": "497696",
+   "method": "3",
+   "name": "在倾斜面上启动工作",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_13",
+   "ref": "497697",
+   "method": "3",
+   "name": "跌落传感器触发时启动工作",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_28",
+   "ref": "497698",
+   "method": "3",
+   "name": "侧边防撞栏数据异常",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_7",
+   "ref": "497799",
+   "method": "3",
+   "name": "主轮卡住",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_13",
+   "ref": "497898",
+   "method": "1",
+   "name": "清扫中电量不足",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_23",
+   "ref": "497899",
+   "method": "1",
+   "name": "低电量自动回充",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_20",
+   "ref": "506012",
+   "method": "1",
+   "name": "进入勿扰模式",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_12",
+   "ref": "506023",
+   "method": "1",
+   "name": "清扫完成",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_19",
+   "ref": "506034",
+   "method": "1",
+   "name": "开始定时清扫",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_28",
+   "ref": "506052",
+   "method": "1",
+   "name": "重定位失败",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_15",
+   "ref": "506096",
+   "method": "1",
+   "name": "充电时断点续扫",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "error_info_25",
+   "ref": "506097",
+   "method": "3",
+   "name": "低电量触发工作",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_27",
+   "ref": "506105",
+   "method": "1",
+   "name": "充电桩上无法恢复出厂设置",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_11",
+   "ref": "506127",
+   "method": "1",
+   "name": "回充任务中定位失败",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_21",
+   "ref": "506128",
+   "method": "1",
+   "name": "清扫未结束，预约时间到了",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_17",
+   "ref": "506131",
+   "method": "1",
+   "name": "开始集尘",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_18",
+   "ref": "506132",
+   "method": "1",
+   "name": "集尘完成",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_5",
+   "ref": "506133",
+   "method": "1",
+   "name": "尘袋满或风道堵塞",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_6",
+   "ref": "506134",
+   "method": "1",
+   "name": "尘袋不在位",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_7",
+   "ref": "506135",
+   "method": "1",
+   "name": "集尘宝风机出现异常",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_9",
+   "ref": "506136",
+   "method": "1",
+   "name": "插入拖布",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_10",
+   "ref": "506137",
+   "method": "1",
+   "name": "取下拖布",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_26",
+   "ref": "506139",
+   "method": "1",
+   "name": "正在下载固件",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_26",
+   "ref": "506140",
+   "method": "1",
+   "name": "固件下载完成",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_24",
+   "ref": "506141",
+   "method": "1",
+   "name": "固件升级完成",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "info_25",
+   "ref": "506142",
+   "method": "1",
+   "name": "固件下载失败",
+   "desc": ""
+  }
+ ],
+ "profile": {
+  "identifier": "PRODUCT_ID",
+  "bindType": "0"
+ },
+ "properties": [
+  {
+   "identifier": "remote",
+   "ref": 1008,
+   "dataType": {
+    "specs": {
+     "list": [
+      {
+       "value": "0",
+       "desc": "前进"
+      },
+      {
+       "value": "1",
+       "desc": "左旋"
+      },
+      {
+       "value": "2",
+       "desc": "右旋"
+      }
+     ]
+    },
+    "type": "enum"
+   },
+   "name": "遥控控制",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "back_charging",
+   "ref": 1019,
+   "dataType": {
+    "specs": {},
+    "type": "bool"
+   },
+   "name": "回充",
+   "accessMode": "rw",
+   "desc": "开始回充|结束回充"
+  },
+  {
+   "identifier": "clean_area",
+   "ref": 1020,
+   "dataType": {
+    "specs": {
+     "unit": "m2",
+     "range": [
+      "0",
+      "10000"
+     ],
+     "step": "1"
+    },
+    "type": "int"
+   },
+   "name": "清扫面积",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "clean_time",
+   "ref": 1021,
+   "dataType": {
+    "specs": {
+     "unit": "min",
+     "range": [
+      "0",
+      "10000"
+     ],
+     "step": "1"
+    },
+    "type": "int"
+   },
+   "name": "清扫用时",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "clean_params",
+   "ref": 1022,
+   "dataType": {
+    "specs": {},
+    "type": "text"
+   },
+   "name": "清扫参数",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "areainfoarray",
+   "ref": 1023,
+   "dataType": {
+    "specs": {},
+    "type": "text"
+   },
+   "name": "区域信息",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "mapconfig",
+   "ref": 1025,
+   "dataType": {
+    "specs": {},
+    "type": "text"
+   },
+   "name": "地图操作-预留",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "trailpath",
+   "ref": 1026,
+   "dataType": {
+    "specs": {},
+    "type": "text"
+   },
+   "name": "轨迹操作-预留",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "WindPower",
+   "ref": 1027,
+   "dataType": {
+    "specs": {
+     "unit": "",
+     "range": [
+      "0",
+      "100"
+     ],
+     "step": "1"
+    },
+    "type": "int"
+   },
+   "name": "风机吸力",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "Water",
+   "ref": 1028,
+   "dataType": {
+    "specs": {
+     "unit": "",
+     "range": [
+      "0",
+      "100"
+     ],
+     "step": "1"
+    },
+    "type": "int"
+   },
+   "name": "水箱档位",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "mopEnable",
+   "ref": 1029,
+   "dataType": {
+    "specs": {},
+    "type": "bool"
+   },
+   "name": "拖布状态",
+   "accessMode": "r",
+   "desc": "开启|关闭"
+  },
+  {
+   "identifier": "wifi_rssi_sdj",
+   "ref": "11300",
+   "dataType": {
+    "specs": {
+     "list": [
+      {
+       "value": "0",
+       "desc": "异常"
+      },
+      {
+       "value": "1",
+       "desc": "无网络"
+      },
+      {
+       "value": "2",
+       "desc": "较差"
+      },
+      {
+       "value": "3",
+       "desc": "一般"
+      },
+      {
+       "value": "4",
+       "desc": "较好"
+      }
+     ]
+    },
+    "type": "enum"
+   },
+   "name": "WIFI信号",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "light",
+   "ref": "11400",
+   "dataType": {
+    "specs": {},
+    "type": "bool"
+   },
+   "name": " 指示灯",
+   "accessMode": "rw",
+   "desc": "开|关"
+  },
+  {
+   "identifier": "home_switch",
+   "ref": "11500",
+   "dataType": {
+    "specs": {},
+    "type": "bool"
+   },
+   "name": "首页清扫开关",
+   "accessMode": "rw",
+   "desc": "开始|暂停"
+  },
+  {
+   "identifier": "power",
+   "ref": "11600",
+   "dataType": {
+    "specs": {
+     "unit": "%",
+     "range": [
+      "-100",
+      "100"
+     ],
+     "step": "1"
+    },
+    "type": "int"
+   },
+   "name": "电量",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "keep_clean",
+   "ref": "11700",
+   "dataType": {
+    "specs": {},
+    "type": "bool"
+   },
+   "name": "断点续扫",
+   "accessMode": "rw",
+   "desc": "开|关"
+  },
+  {
+   "identifier": "auto_dust",
+   "ref": "11800",
+   "dataType": {
+    "specs": {},
+    "type": "bool"
+   },
+   "name": "自动集尘",
+   "accessMode": "rw",
+   "desc": "开|关"
+  },
+  {
+   "identifier": "rug_press",
+   "ref": "11900",
+   "dataType": {
+    "specs": {},
+    "type": "bool"
+   },
+   "name": "地毯增压",
+   "accessMode": "rw",
+   "desc": "开|关"
+  },
+  {
+   "identifier": "volume",
+   "ref": "12000",
+   "dataType": {
+    "specs": {
+     "unit": "%",
+     "range": [
+      "0",
+      "100"
+     ],
+     "step": "1"
+    },
+    "type": "int"
+   },
+   "name": "音量",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "life",
+   "ref": "12200",
+   "dataType": {
+    "specs": [
+     {
+      "identifier": "brush_time",
+      "ref": "12202",
+      "dataType": {
+       "specs": {
+        "unit": "h",
+        "range": [
+         "0",
+         "10000"
+        ],
+        "step": "1"
+       },
+       "type": "int"
+      },
+      "name": "边刷时长",
+      "desc": ""
+     },
+     {
+      "identifier": "main_brush_time",
+      "ref": "12204",
+      "dataType": {
+       "specs": {
+        "unit": "h",
+        "range": [
+         "0",
+         "10000"
+        ],
+        "step": "1"
+       },
+       "type": "int"
+      },
+      "name": "滚刷时间",
+      "desc": ""
+     },
+     {
+      "identifier": "rosebox_time",
+      "ref": "12206",
+      "dataType": {
+       "specs": {
+        "unit": "h",
+        "range": [
+         "0",
+         "10000"
+        ],
+        "step": "1"
+       },
+       "type": "int"
+      },
+      "name": "滤芯时间",
+      "desc": ""
+     },
+     {
+      "identifier": "sensor_time",
+      "ref": "12208",
+      "dataType": {
+       "specs": {
+        "unit": "h",
+        "range": [
+         "0",
+         "10000"
+        ],
+        "step": "1"
+       },
+       "type": "int"
+      },
+      "name": "传感器时间",
+      "desc": ""
+     }
+    ],
+    "type": "struct"
+   },
+   "name": "耗材寿命",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "work_status",
+   "ref": "12300",
+   "dataType": {
+    "specs": {
+     "list": [
+      {
+       "value": "0",
+       "desc": "待机中"
+      },
+      {
+       "value": "1",
+       "desc": "暂停中"
+      },
+      {
+       "value": "2",
+       "desc": "回充中"
+      },
+      {
+       "value": "3",
+       "desc": "充电中"
+      },
+      {
+       "value": "4",
+       "desc": "定位中"
+      },
+      {
+       "value": "5",
+       "desc": "遥控中"
+      },
+      {
+       "value": "6",
+       "desc": "异常中"
+      },
+      {
+       "value": "7",
+       "desc": "选区清扫中"
+      },
+      {
+       "value": "8",
+       "desc": "划区清扫中"
+      },
+      {
+       "value": "9",
+       "desc": "定点清扫中"
+      },
+      {
+       "value": "10",
+       "desc": "指哪到哪"
+      },
+      {
+       "value": "11",
+       "desc": "集尘中"
+      },
+      {
+       "value": "12",
+       "desc": "全屋清扫中"
+      },
+      {
+       "value": "13",
+       "desc": "回充暂停中"
+      }
+     ]
+    },
+    "type": "enum"
+   },
+   "name": "状态-扫地机",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "map_switch",
+   "ref": 40100,
+   "dataType": {
+    "specs": [
+     {
+      "identifier": "map_name",
+      "ref": 40102,
+      "dataType": {
+       "specs": {},
+       "type": "text"
+      },
+      "name": "地图名称",
+      "desc": ""
+     },
+     {
+      "identifier": "map_url",
+      "ref": 40103,
+      "dataType": {
+       "specs": {},
+       "type": "text"
+      },
+      "name": "地图地址",
+      "desc": ""
+     },
+     {
+      "identifier": "area_url",
+      "ref": 40104,
+      "dataType": {
+       "specs": {},
+       "type": "text"
+      },
+      "name": "区域地质",
+      "desc": ""
+     }
+    ],
+    "type": "struct"
+   },
+   "name": "地图切换",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "DNDST",
+   "ref": 40200,
+   "dataType": {
+    "specs": [
+     {
+      "identifier": "enable",
+      "ref": 40201,
+      "dataType": {
+       "specs": {},
+       "type": "bool"
+      },
+      "name": "开关",
+      "desc": "开启|关闭"
+     },
+     {
+      "identifier": "start_time",
+      "ref": 40202,
+      "dataType": {
+       "specs": {},
+       "type": "text"
+      },
+      "name": "开始时间",
+      "desc": ""
+     },
+     {
+      "identifier": "end_time",
+      "ref": 40203,
+      "dataType": {
+       "specs": {},
+       "type": "text"
+      },
+      "name": "结束时间",
+      "desc": ""
+     }
+    ],
+    "type": "struct"
+   },
+   "name": "勿扰模式",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "voice",
+   "ref": 40300,
+   "dataType": {
+    "specs": [
+     {
+      "identifier": "language",
+      "ref": 40302,
+      "dataType": {
+       "specs": {},
+       "type": "text"
+      },
+      "name": "语言包",
+      "desc": ""
+     },
+     {
+      "identifier": "id",
+      "ref": 40304,
+      "dataType": {
+       "specs": {},
+       "type": "text"
+      },
+      "name": "语音包id",
+      "desc": ""
+     },
+     {
+      "identifier": "code",
+      "ref": 40305,
+      "dataType": {
+       "specs": {
+        "list": [
+         {
+          "value": "0",
+          "desc": "切换成功"
+         },
+         {
+          "value": "1",
+          "desc": "切换中"
+         },
+         {
+          "value": "2",
+          "desc": "切换失败"
+         }
+        ]
+       },
+       "type": "enum"
+      },
+      "name": "状态(上报)",
+      "desc": ""
+     }
+    ],
+    "type": "struct"
+   },
+   "name": "语音设置",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "specify_clean",
+   "ref": 40400,
+   "dataType": {
+    "specs": [
+     {
+      "identifier": "command",
+      "ref": 40401,
+      "dataType": {
+       "specs": {
+        "list": [
+         {
+          "value": "0",
+          "desc": "前往"
+         },
+         {
+          "value": "1",
+          "desc": "停止"
+         }
+        ]
+       },
+       "type": "enum"
+      },
+      "name": "命令",
+      "desc": ""
+     },
+     {
+      "identifier": "pix-x",
+      "ref": 40402,
+      "dataType": {
+       "specs": {
+        "unit": "",
+        "range": [
+         "0",
+         "10000"
+        ],
+        "step": "1"
+       },
+       "type": "int"
+      },
+      "name": "坐标-x",
+      "desc": ""
+     },
+     {
+      "identifier": "pix-y",
+      "ref": 40403,
+      "dataType": {
+       "specs": {
+        "unit": "",
+        "range": [
+         "0",
+         "10000"
+        ],
+        "step": "1"
+       },
+       "type": "int"
+      },
+      "name": "坐标-y",
+      "desc": ""
+     }
+    ],
+    "type": "struct"
+   },
+   "name": "指哪扫哪",
+   "accessMode": "rw",
+   "desc": ""
+  },
+  {
+   "identifier": "errorinfo",
+   "ref": 40500,
+   "dataType": {
+    "specs": [
+     {
+      "identifier": "errcode",
+      "ref": 40501,
+      "dataType": {
+       "specs": {
+        "list": [
+         {
+          "value": "1",
+          "desc": "主轮等卡住"
+         },
+         {
+          "value": "2",
+          "desc": "风机异常"
+         },
+         {
+          "value": "3",
+          "desc": "未检测水箱"
+         },
+         {
+          "value": "4",
+          "desc": "水量不足"
+         },
+         {
+          "value": "5",
+          "desc": "跌落"
+         },
+         {
+          "value": "6",
+          "desc": "雷达上盖卡住"
+         },
+         {
+          "value": "7",
+          "desc": "设备离地"
+         },
+         {
+          "value": "8",
+          "desc": "设备在禁区上"
+         },
+         {
+          "value": "9",
+          "desc": "电池异常"
+         },
+         {
+          "value": "10",
+          "desc": "雷达异常"
+         },
+         {
+          "value": "11",
+          "desc": "主刷等异常"
+         },
+         {
+          "value": "0",
+          "desc": "无异常"
+         }
+        ]
+       },
+       "type": "enum"
+      },
+      "name": "错误状态",
+      "desc": ""
+     },
+     {
+      "identifier": "valid",
+      "ref": 40502,
+      "dataType": {
+       "specs": {},
+       "type": "bool"
+      },
+      "name": "有效性",
+      "desc": "有效|失效"
+     }
+    ],
+    "type": "struct"
+   },
+   "name": "异常信息",
+   "accessMode": "rw",
+   "desc": ""
+  }
+ ],
+ "schema": "1.0",
+ "services": [
+  {
+   "outputData": [],
+   "identifier": "location",
+   "ref": "20400",
+   "inputData": [],
+   "name": "定位机器人",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "reset_parts",
+   "ref": "20500",
+   "inputData": [
+    {
+     "identifier": "type",
+     "ref": "20501",
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "边刷"
+        },
+        {
+         "value": "1",
+         "desc": "滚刷"
+        },
+        {
+         "value": "2",
+         "desc": "滤芯"
+        },
+        {
+         "value": "3",
+         "desc": "传感器"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "类型",
+     "desc": ""
+    }
+   ],
+   "name": "复位耗材",
+   "desc": ""
+  },
+  {
+   "outputData": [
+    {
+     "identifier": "errcode",
+     "ref": 2301,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "0",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "错误码",
+     "desc": ""
+    }
+   ],
+   "identifier": "dust",
+   "ref": 2300,
+   "inputData": [],
+   "name": "一键集尘",
+   "desc": ""
+  },
+  {
+   "outputData": [
+    {
+     "identifier": "code",
+     "ref": 2402,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "-10000",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "错误码",
+     "desc": ""
+    }
+   ],
+   "identifier": "timer_clean",
+   "ref": 2400,
+   "inputData": [
+    {
+     "identifier": "timer",
+     "ref": 2401,
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "定时器全量数据",
+     "desc": ""
+    }
+   ],
+   "name": "预约清洁设置",
+   "desc": ""
+  },
+  {
+   "outputData": [
+    {
+     "identifier": "timer",
+     "ref": 2501,
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "定时器全量数据",
+     "desc": ""
+    }
+   ],
+   "identifier": "clean_list",
+   "ref": 2500,
+   "inputData": [],
+   "name": "预约清扫列表获取",
+   "desc": ""
+  },
+  {
+   "outputData": [
+    {
+     "identifier": "code",
+     "ref": 2706,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "-10000",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "错误码",
+     "desc": ""
+    }
+   ],
+   "identifier": "clean_control",
+   "ref": 2700,
+   "inputData": [
+    {
+     "identifier": "status",
+     "ref": 2701,
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "暂停"
+        },
+        {
+         "value": "1",
+         "desc": "开始"
+        },
+        {
+         "value": "2",
+         "desc": "继续"
+        },
+        {
+         "value": "3",
+         "desc": "停止"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "状态",
+     "desc": ""
+    },
+    {
+     "identifier": "mode",
+     "ref": 2702,
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "全屋"
+        },
+        {
+         "value": "1",
+         "desc": "分区"
+        },
+        {
+         "value": "2",
+         "desc": "划区"
+        },
+        {
+         "value": "3",
+         "desc": "定点"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "模式",
+     "desc": ""
+    },
+    {
+     "identifier": "plan",
+     "ref": 2703,
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "通用"
+        },
+        {
+         "value": "1",
+         "desc": "定制"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "方案",
+     "desc": ""
+    },
+    {
+     "identifier": "partition_area",
+     "ref": 2704,
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "分区区域信息",
+     "desc": ""
+    },
+    {
+     "identifier": "blocks_area",
+     "ref": 2705,
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "划区区域信息",
+     "desc": ""
+    }
+   ],
+   "name": "清扫控制",
+   "desc": ""
+  },
+  {
+   "outputData": [
+    {
+     "identifier": "status",
+     "ref": 2801,
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "暂停"
+        },
+        {
+         "value": "1",
+         "desc": "开始"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "状态",
+     "desc": ""
+    },
+    {
+     "identifier": "mode",
+     "ref": 2802,
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "全屋"
+        },
+        {
+         "value": "1",
+         "desc": "分区"
+        },
+        {
+         "value": "2",
+         "desc": "划区"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "模式",
+     "desc": ""
+    },
+    {
+     "identifier": "plan",
+     "ref": 2803,
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "通用"
+        },
+        {
+         "value": "1",
+         "desc": "定制"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "方案",
+     "desc": ""
+    },
+    {
+     "identifier": "partition_area",
+     "ref": 2804,
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "分区区域信息",
+     "desc": ""
+    },
+    {
+     "identifier": "blocks_area",
+     "ref": 2805,
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "划区区域信息",
+     "desc": ""
+    }
+   ],
+   "identifier": "clean_status",
+   "ref": 2800,
+   "inputData": [],
+   "name": "清扫状态查询",
+   "desc": ""
+  },
+  {
+   "outputData": [
+    {
+     "identifier": "code",
+     "ref": 2902,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "-10000",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "错误码",
+     "desc": ""
+    }
+   ],
+   "identifier": "query",
+   "ref": 2900,
+   "inputData": [
+    {
+     "identifier": "type",
+     "ref": 2901,
+     "dataType": {
+      "specs": {
+       "list": [
+        {
+         "value": "0",
+         "desc": "升级条件查询"
+        }
+       ]
+      },
+      "type": "enum"
+     },
+     "name": "类型",
+     "desc": ""
+    }
+   ],
+   "name": "特殊条件查询",
+   "desc": ""
+  },
+  {
+   "outputData": [],
+   "identifier": "AutoPartition",
+   "ref": 3000,
+   "inputData": [
+    {
+     "identifier": "AutoAreaId",
+     "ref": 3001,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "0",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "自动区域id",
+     "desc": ""
+    },
+    {
+     "identifier": "MapId",
+     "ref": 3002,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "0",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "自动区域对应map的ID",
+     "desc": ""
+    },
+    {
+     "identifier": "Operate",
+     "ref": 3003,
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "操作指令",
+     "desc": ""
+    },
+    {
+     "identifier": "Extra",
+     "ref": 3004,
+     "dataType": {
+      "specs": {},
+      "type": "text"
+     },
+     "name": "设置参数",
+     "desc": ""
+    }
+   ],
+   "name": "设置自动分区",
+   "desc": ""
+  },
+  {
+   "outputData": [
+    {
+     "identifier": "code",
+     "ref": 3104,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "0",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "错误码",
+     "desc": ""
+    }
+   ],
+   "identifier": "WindWater",
+   "ref": 3100,
+   "inputData": [
+    {
+     "identifier": "Water",
+     "ref": 3102,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "0",
+        "100"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "水量",
+     "desc": ""
+    },
+    {
+     "identifier": "Wind",
+     "ref": 3103,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "0",
+        "100"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "吸力",
+     "desc": ""
+    }
+   ],
+   "name": "设置风力吸力",
+   "desc": ""
+  },
+  {
+   "outputData": [
+    {
+     "identifier": "code",
+     "ref": 3201,
+     "dataType": {
+      "specs": {
+       "unit": "",
+       "range": [
+        "0",
+        "10000"
+       ],
+       "step": "1"
+      },
+      "type": "int"
+     },
+     "name": "错误码",
+     "desc": ""
+    }
+   ],
+   "identifier": "reset_map",
+   "ref": 3200,
+   "inputData": [],
+   "name": "地图重置",
+   "desc": ""
+  }
+ ]
+}
