@@ -434,6 +434,48 @@ def test_entities() -> None:
     check("vacuum without 'location' service has no LOCATE, without WindPower no FAN_SPEED", not slim_vac.supported_features & VacuumEntityFeature.LOCATE and not slim_vac.supported_features & VacuumEntityFeature.FAN_SPEED and bool(slim_vac.supported_features & VacuumEntityFeature.START))
 
 
+def test_level_inputs() -> None:
+    """The WindWater inputs: the new level plus the other one's current value."""
+    coordinator_cls = mod("coordinator").ImouCoordinator
+    const = mod("const")
+    model = mod("model").ThingsModel.from_api(MODEL_JSON)
+    commanded_cls = mod("commanded").CommandedValue
+
+    def fake(values: dict[str, Any] | None = None, model_obj: Any = model, data: bool = True) -> Any:
+        values = {"windpower": 2, "water": 2} if values is None else values
+        return SimpleNamespace(model=model_obj, data=SimpleNamespace(values=dict(values)) if data else None, commanded=defaultdict(commanded_cls))
+
+    def inputs(self_: Any, identifier: str, level: int) -> Any:
+        return coordinator_cls._wind_water_inputs(self_, identifier, level)
+
+    check("both inputs, cloud 2/2: wind 3", inputs(fake(), "windpower", 3) == {"wind": 3, "water": 2})
+    check("both inputs, cloud 2/2: water 1", inputs(fake(), "water", 1) == {"water": 1, "wind": 2})
+    check("other input follows the cloud (1/3)", inputs(fake({"windpower": 1, "water": 3}), "windpower", 2) == {"wind": 2, "water": 3} and inputs(fake({"windpower": 1, "water": 3}), "water", 2) == {"water": 2, "wind": 1})
+    check("an unknown reported level of the other setting is passed on unchanged", inputs(fake({"windpower": 2, "water": 5}), "windpower", 3) == {"wind": 3, "water": 5})
+
+    no_water = fake({"windpower": 2})
+    no_water.commanded["water"].set(1)
+    check("cloud has no value for the other: the commanded value", inputs(no_water, "windpower", 3) == {"wind": 3, "water": 1})
+    check("neither cloud nor command knows it: default level 2", const.DEFAULT_LEVEL == 2 and inputs(fake({}), "windpower", 3) == {"wind": 3, "water": 2} and inputs(fake(data=False), "water", 1) == {"water": 1, "wind": 2})
+
+    pending = fake({"windpower": 2, "water": 2})
+    pending.commanded["windpower"].set(3)  # suction was just set to 3, the cloud still says 2
+    check("pending command of the other setting is kept (no revert while the cloud lags)", inputs(pending, "water", 1) == {"water": 1, "wind": 3})
+    pending.commanded["windpower"]._until = 0.0
+    check("after the grace period the cloud value is used again", inputs(pending, "water", 1) == {"water": 1, "wind": 2})
+    check("commanded values are only shown for 30 s", const.COMMAND_GRACE_SECONDS == 30)
+
+    check("not a level property -> None", inputs(fake(), "clean_area", 1) is None)
+    without_service = copy.deepcopy(MODEL_JSON)
+    without_service["services"] = [x for x in without_service["services"] if x["identifier"] != "WindWater"]
+    check("model without a WindWater service -> None (property write)", inputs(fake(model_obj=mod("model").ThingsModel.from_api(without_service)), "windpower", 3) is None)
+    wind_only = copy.deepcopy(MODEL_JSON)
+    for service in wind_only["services"]:
+        if service["identifier"] == "WindWater":
+            service["inputData"] = [x for x in service["inputData"] if x["identifier"] == "Wind"]
+    check("service with only a Wind input -> only Wind is sent", inputs(fake(model_obj=mod("model").ThingsModel.from_api(wind_only)), "windpower", 3) == {"wind": 3} and inputs(fake(model_obj=mod("model").ThingsModel.from_api(wind_only)), "water", 1) is None)
+
+
 # ---------------------------------------------------------------------------
 # 3. translations, manifest, hacs.json
 # ---------------------------------------------------------------------------
@@ -497,7 +539,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_robot" and manifest["name"] == "Imou Robot Vacuum" and manifest["version"] == "0.1.0"
+        manifest["domain"] == "imou_robot" and manifest["name"] == "Imou Robot Vacuum" and manifest["version"] == "0.1.1"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -564,6 +606,8 @@ class FakeClient:
         self.fail_set_with: Exception | None = None  # makes only property writes fail
         self.fail_control_with: Exception | None = None  # makes only service calls fail
         self.ignore_sets = False  # simulate a cloud that accepts but does not apply writes
+        self.ignore_level_control = False  # WindWater accepted (code 0) but not applied
+        self.apply_level_property_writes = False  # the real L11-A ignores 1027/1028 writes
 
     async def async_validate(self) -> None:
         if FakeClient.validate_error is not None:
@@ -600,13 +644,21 @@ class FakeClient:
         if (failure := self.fail_set_with or self.fail_commands_with or self.fail_with) is not None:
             raise failure
         if not self.ignore_sets:
-            self.props.update(properties)
+            for ref, value in properties.items():
+                if ref in ("1027", "1028") and not self.apply_level_property_writes:
+                    continue  # like the real L11-A: code 0, but the robot ignores the write
+                self.props[ref] = value
 
     async def async_control(self, product_id: str, device_id: str, ref: str, content: dict[str, Any] | None = None) -> dict[str, Any]:
         self.calls.append(("control", device_id, ref, dict(content or {})))
         if (failure := self.fail_control_with or self.fail_commands_with or self.fail_with) is not None:
             raise failure
-        return {"content": {"outputData": {"2706": 0}, "service": ref}}
+        if ref == "3100" and not self.ignore_level_control:  # WindWater: Wind 3103 -> 1027, Water 3102 -> 1028
+            if "3103" in content:
+                self.props["1027"] = content["3103"]
+            if "3102" in content:
+                self.props["1028"] = content["3102"]
+        return {"content": {"outputData": {"3104": 0} if ref == "3100" else {"2706": 0}, "service": ref}}
 
 
 async def full_setup_checks(config_dir: str) -> None:
@@ -783,11 +835,11 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     await call("switch", "turn_on", "resume_after_charging")
     check("resume after charging on -> set {11700:1}", client.calls == [("set", "TESTDEVICE0001", {"11700": 1})], str(client.calls))
     await call("select", "select_option", "suction_level", option="max")
-    check("suction 'max' -> set {1027:3}", client.calls == [("set", "TESTDEVICE0001", {"1027": 3})], str(client.calls))
+    check("suction 'max' -> WindWater {Wind:3, Water:2 from the cloud}, no property write", client.calls == [("control", "TESTDEVICE0001", "3100", {"3103": 3, "3102": 2})], str(client.calls))
     await call("select", "select_option", "mop_water_level", option="low")
-    check("water 'low' -> set {1028:1}", client.calls == [("set", "TESTDEVICE0001", {"1028": 1})], str(client.calls))
+    check("water 'low' -> WindWater {Water:1, Wind:3 = the pending command, the cloud has not caught up}", client.calls == [("control", "TESTDEVICE0001", "3100", {"3102": 1, "3103": 3})], str(client.calls))
     await call("vacuum", "set_fan_speed", "vacuum", fan_speed="quiet")
-    check("fan speed 'quiet' -> set {1027:1}", client.calls == [("set", "TESTDEVICE0001", {"1027": 1})], str(client.calls))
+    check("fan speed 'quiet' -> WindWater {Wind:1, Water:1 = pending}", client.calls == [("control", "TESTDEVICE0001", "3100", {"3103": 1, "3102": 1})], str(client.calls))
     await call("button", "press", "empty_bin")
     check("empty bin -> control 2300 {}", client.calls == [("control", "TESTDEVICE0001", "2300", {})], str(client.calls))
     await hass.async_block_till_done()
@@ -824,32 +876,68 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         else:
             check(f"invalid choice {data} is rejected without a write", False, "no error")
 
-    # ---- WindWater is only a fallback: used when the property write returns an API error -----
+    # ---- levels go through the WindWater service (the L11-A ignores property writes) ----
     wind_water = ("control", "TESTDEVICE0001", "3100")
-    client.fail_set_with = api.ImouApiError("OP1005", "property not writable")
-    await call("select", "select_option", "suction_level", option="standard")
-    check("rejected write -> WindWater with the new wind and the current water", client.calls == [("set", "TESTDEVICE0001", {"1027": 2}), (*wind_water, {"3103": 2, "3102": 2})], str(client.calls))
+    coordinator.commanded.clear()
+    client.props["1027"], client.props["1028"] = 2, 2
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    await call("vacuum", "set_fan_speed", "vacuum", fan_speed="quiet")
+    check("set_fan_speed -> iotDeviceControl 3100 with both inputs: Wind 1 and the cloud's Water 2", client.calls == [(*wind_water, {"3103": 1, "3102": 2})], str(client.calls))
+    await coordinator.async_refresh()  # the cloud applied it and reports it now
+    await hass.async_block_till_done()
+    check("select and fan speed show the level the cloud reports", client.props["1027"] == 1 and state("suction_level").state == "quiet" and state("vacuum").attributes["fan_speed"] == "quiet")
     await call("select", "select_option", "mop_water_level", option="high")
-    check("rejected write (water) -> WindWater with the new water and the current wind", client.calls == [("set", "TESTDEVICE0001", {"1028": 3}), (*wind_water, {"3102": 3, "3103": 2})], str(client.calls))
-    await call("vacuum", "set_fan_speed", "vacuum", fan_speed="max")
-    check("rejected write (fan speed) -> WindWater", client.calls == [("set", "TESTDEVICE0001", {"1027": 3}), (*wind_water, {"3103": 3, "3102": 2})], str(client.calls))
-    for failure in (api.ImouConnectionError("TIMEOUT", "setIotDeviceProperties"), api.ImouAuthError("TK1002", "token"), api.ImouDeviceOfflineError("DV1007", "offline")):
-        client.fail_set_with = failure
+    check("water 'high' -> {Water:3, Wind: the cloud's 1}", client.calls == [(*wind_water, {"3102": 3, "3103": 1})], str(client.calls))
+    await call("select", "select_option", "suction_level", option="max")
+    check("suction 'max' -> {Wind:3, Water: the pending command 3}", client.calls == [(*wind_water, {"3103": 3, "3102": 3})], str(client.calls))
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("cloud reports the new levels", (state("suction_level").state, state("mop_water_level").state, state("vacuum").attributes["fan_speed"]) == ("max", "high", "max"), f"{state('suction_level').state} {state('mop_water_level').state}")
+
+    # the real L11-A finding: a command that is accepted but ignored must become visible
+    client.props["1027"], client.props["1028"] = 2, 2
+    coordinator.commanded.clear()
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    client.ignore_level_control = True
+    await call("select", "select_option", "suction_level", option="max")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("ignored command: the commanded level is shown during the grace period", state("suction_level").state == "max" and state("vacuum").attributes["fan_speed"] == "max")
+    coordinator.commanded["windpower"]._until = 0.0  # 30 s are over
+    await coordinator.async_refresh()  # unchanged data must still refresh the entities
+    await hass.async_block_till_done()
+    check("ignored command: after the grace period the reported level wins", state("suction_level").state == "standard" and state("vacuum").attributes["fan_speed"] == "standard", f"{state('suction_level').state} {state('vacuum').attributes['fan_speed']}")
+    client.ignore_level_control = False
+
+    # a model without a WindWater service gets property writes
+    removed = coordinator.model._services.pop("windwater")
+    client.apply_level_property_writes = True
+    await call("select", "select_option", "suction_level", option="max")
+    check("no WindWater service -> property write {1027:3}", client.calls == [("set", "TESTDEVICE0001", {"1027": 3})], str(client.calls))
+    await call("vacuum", "set_fan_speed", "vacuum", fan_speed="quiet")
+    check("no WindWater service -> fan speed writes the property {1027:1}", client.calls == [("set", "TESTDEVICE0001", {"1027": 1})], str(client.calls))
+    await call("select", "select_option", "mop_water_level", option="low")
+    check("no WindWater service -> water writes the property {1028:1}", client.calls == [("set", "TESTDEVICE0001", {"1028": 1})], str(client.calls))
+    coordinator.model._services["windwater"] = removed
+    client.apply_level_property_writes = False
+
+    # failures are reported, there is no second route, and the state does not change
+    for failure in (api.ImouApiError("OP2000", "service refused"), api.ImouConnectionError("TIMEOUT", "iotDeviceControl"), api.ImouDeviceOfflineError("DV1007", "offline")):
+        coordinator.commanded.clear()
+        client.props["1027"], client.props["1028"] = 2, 2
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        client.fail_control_with = failure
         try:
-            await call("select", "select_option", "suction_level", option="quiet")
-        except HomeAssistantError:
-            check(f"{type(failure).__name__} on the write -> error, no WindWater attempt", client.calls == [("set", "TESTDEVICE0001", {"1027": 1})], str(client.calls))
+            await call("select", "select_option", "suction_level", option="max")
+        except HomeAssistantError as err:
+            check(f"{type(failure).__name__} on WindWater -> error with code and msg, no property write", str(failure) in str(err) and [c[0] for c in client.calls] == ["control"], f"{err} {client.calls}")
         else:
-            check(f"{type(failure).__name__} on the write -> error", False, "no error")
-    client.fail_set_with = api.ImouApiError("OP1005", "property not writable")
-    client.fail_control_with = api.ImouApiError("OP2000", "service refused")
-    try:
-        await call("select", "select_option", "suction_level", option="quiet")
-    except HomeAssistantError as err:
-        check("write and fallback both rejected -> error naming the fallback failure", "OP2000: service refused" in str(err) and len(client.calls) == 2, f"{err} {client.calls}")
-    else:
-        check("write and fallback both rejected -> error", False, "no error")
-    client.fail_set_with = client.fail_control_with = None
+            check(f"{type(failure).__name__} on WindWater -> error", False, "no error")
+        check(f"{type(failure).__name__}: a failed command does not change the state", state("suction_level").state == "standard")
+    client.fail_control_with = None
     coordinator.commanded.clear()
     await coordinator.async_refresh()
     await hass.async_block_till_done()
@@ -1032,7 +1120,7 @@ def test_full_setup() -> None:
 
 
 def main() -> int:
-    for func in (test_imports, test_entities, test_files, test_config_flow_schema, test_full_setup):
+    for func in (test_imports, test_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup):
         print(f"\n=== {func.__name__} ===")
         try:
             func()

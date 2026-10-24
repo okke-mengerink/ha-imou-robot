@@ -3,7 +3,7 @@
 Home Assistant custom integration for Imou robot vacuums, controlled through the Imou Open Platform cloud API.
 
 - Domain: `imou_robot`
-- Version: 0.1.0
+- Version: 0.1.1
 - Tested with: RV-L11-A (deviceModel `L11-A`), Home Assistant 2026.10.2
 - License: MIT
 
@@ -94,7 +94,7 @@ The Imou app shows suction and water as 3 levels, and the L11-A uses the raw val
 | Suction (`WindPower`), also the vacuum fan speed | quiet | standard | max |
 | Water (`Water`) | low | medium | high |
 
-The level maps live in `const.py` (`LEVEL_KEYS`), per identifier. A raw value that is not in the map (0, 4, 99, ...) is shown as `unknown_<n>`, so robots with another scale still show something useful. Levels are written with `setIotDeviceProperties`; only if the cloud rejects that write with an API error, the `WindWater` service (which sets both levels together) is tried.
+The level maps live in `const.py` (`LEVEL_KEYS`), per identifier. A raw value that is not in the map (0, 4, 99, ...) is shown as `unknown_<n>`, so robots with another scale still show something useful. Levels are set with the `WindWater` service, which always receives both levels: the new one and the current value of the other one. The L11-A accepts a plain `setIotDeviceProperties` write for suction or water (code 0) but ignores it, so property writes are only used for a model that has no `WindWater` service.
 
 ### Names and unknown values
 
@@ -130,12 +130,13 @@ Contributions of identifier and enum mappings are welcome.
 
 ## Known limitations and unverified points
 
-- Suction and water levels (1-3) were read correctly on an L11-A; changing them from Home Assistant has not been verified on a real robot yet. Other models may use another scale; those values show as `unknown_<n>` and can be added to `LEVEL_KEYS`.
+- Suction, water level and fan speed are set through the `WindWater` service, verified on an L11-A. Plain property writes for these are ignored by the L11-A. Models without a `WindWater` service get property writes instead (unverified). Other models may use another scale; those values show as `unknown_<n>` and can be added to `LEVEL_KEYS`.
+- Whether property writes for the switches (auto-empty, carpet boost, resume after charging) are applied by the robot is unverified. Return to dock, which is also a property write, works.
 - The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.)
 - Consumable values are assumed to be hours used. A new robot reports 0.
 - There is no map, room, zone or schedule control yet.
 - Commands are fire-and-forget: the cloud output code is not interpreted.
-- The cloud does not always report a setting until it was changed once. Until it does, switches show the last value you set from Home Assistant.
+- A value you set from Home Assistant is shown for at most 30 s while the robot still reports the old value; after that the reported value wins, so a command the robot ignores is visible. Only for settings the cloud never reports (auto-empty and resume after charging on the L11-A) the last value you set stays.
 - Error information that the robot flags as not valid is ignored (the error sensor shows "none").
 
 ## Development

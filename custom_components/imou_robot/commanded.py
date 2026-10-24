@@ -7,17 +7,18 @@ from __future__ import annotations
 
 import time
 
-from .const import COMMAND_BOOST_SECONDS
+from .const import COMMAND_GRACE_SECONDS
 
 
 class CommandedValue[T]:
     """Remember the last value commanded for a setting.
 
-    The cloud may lag behind a command, or may not report a setting at all until
-    it was changed once. The commanded value is therefore shown while the cloud
-    is silent, and while it still reports the old value within
-    ``COMMAND_BOOST_SECONDS`` of the command. After that the cloud wins, so a
-    rejected command cannot leave a wrong state behind.
+    A commanded value is shown while the cloud has not reported that setting at
+    all (some robots never report auto-empty or resume-after-charging), and for at
+    most ``COMMAND_GRACE_SECONDS`` after the command while the cloud still reports
+    the old value (it can lag by a few seconds). After that a reported value
+    always wins, so a command that the robot ignores is visible instead of being
+    masked.
 
     One instance per setting lives on the coordinator, so every entity that
     shows the same setting (for example the fan speed of the vacuum and the
@@ -32,7 +33,7 @@ class CommandedValue[T]:
     def set(self, value: T) -> None:
         """Remember a value that was just commanded."""
         self._value = value
-        self._until = time.monotonic() + COMMAND_BOOST_SECONDS
+        self._until = time.monotonic() + COMMAND_GRACE_SECONDS
 
     def resolve(self, reported: T | None) -> T | None:
         """Return what to show, given the value reported by the cloud."""
@@ -44,5 +45,5 @@ class CommandedValue[T]:
             and time.monotonic() < self._until
         ):
             return self._value
-        self._value = None  # confirmed by the cloud, or the command window is over
+        self._value = None  # confirmed by the cloud, or the grace period is over
         return reported

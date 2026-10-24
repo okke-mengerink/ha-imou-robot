@@ -34,6 +34,10 @@ SCAN_INTERVAL_IDLE: Final = 300  # seconds, docked / idle
 SCAN_INTERVAL_ACTIVE: Final = 30  # seconds, robot is doing something
 COMMAND_REFRESH_DELAY: Final = 3  # seconds, one refresh after any command
 COMMAND_BOOST_SECONDS: Final = 120  # keep fast polling this long after a command
+# A commanded value may be shown for at most this long while the cloud reports a
+# different value for the same setting; after that the cloud value wins, so a
+# command the robot ignores becomes visible.
+COMMAND_GRACE_SECONDS: Final = 30
 
 # work_status values during which the robot is considered active.
 ACTIVE_WORK_STATUSES: Final = frozenset({2, 4, 5, 7, 8, 9, 10, 11, 12, 13})
@@ -45,7 +49,7 @@ ACTIVE_WORK_STATUSES: Final = frozenset({2, 4, 5, 7, 8, 9, 10, 11, 12, 13})
 SERVICE_CLEAN_CONTROL: Final = "clean_control"
 SERVICE_LOCATION: Final = "location"
 SERVICE_DUST: Final = "dust"
-SERVICE_WIND_WATER: Final = "windwater"  # fallback only: sets suction and water together
+SERVICE_WIND_WATER: Final = "windwater"  # sets suction and water together (the way to set levels)
 
 INPUT_STATUS: Final = "status"
 INPUT_MODE: Final = "mode"
@@ -211,8 +215,13 @@ WIFI_KEYS: Final[dict[int, str]] = {
 #   Water     1/2/3 = low / medium / high
 # Any other raw value (0, 4, 99, ...) is shown as "unknown_<n>". Other models may
 # use other scales; add them here per identifier.
+# On the L11-A the levels must be set with the WindWater service (it always gets
+# both levels): a plain setIotDeviceProperties write is accepted (code 0) but
+# ignored by the robot. Only a model without that service gets property writes.
 # ---------------------------------------------------------------------------
 LEVEL_KEYS: Final[dict[str, dict[int, str]]] = {
     PROP_WIND_POWER: {1: "quiet", 2: "standard", 3: "max"},
     PROP_WATER: {1: "low", 2: "medium", 3: "high"},
 }
+# Level sent for the other setting when neither the cloud nor a command knows it.
+DEFAULT_LEVEL: Final = 2

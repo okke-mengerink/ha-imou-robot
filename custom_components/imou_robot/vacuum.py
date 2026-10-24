@@ -174,7 +174,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
 
     @override
     async def async_set_fan_speed(self, fan_speed: str, **kwargs: Any) -> None:
-        """Set the suction level; the property is written, WindWater is only a fallback."""
+        """Set the suction level (through the WindWater service, see the coordinator)."""
         levels = {key: level for level, key in FAN_SPEEDS.items()}
         if (level := levels.get(fan_speed)) is None:
             raise ServiceValidationError(

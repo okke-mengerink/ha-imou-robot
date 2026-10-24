@@ -65,12 +65,60 @@ def test_falsy_values_work() -> None:
     assert flag.resolve(True) is False
 
 
-def test_window_is_the_command_boost() -> None:
+class FakeClock:
+    """Stands in for the ``time`` module inside commanded.py."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def with_clock(test: object) -> None:
+    clock = FakeClock()
+    real_time = commanded_mod.time
+    commanded_mod.time = clock
+    try:
+        test(clock)
+    finally:
+        commanded_mod.time = real_time
+
+
+def test_grace_period_is_30_seconds() -> None:
     const = load("const")
-    value = make()
-    value.set(1)
-    left = value._until - commanded_mod.time.monotonic()
-    assert abs(left - const.COMMAND_BOOST_SECONDS) < 2
+    assert const.COMMAND_GRACE_SECONDS == 30
+
+    def check(clock: FakeClock) -> None:
+        value = make()
+        value.set(1)
+        assert abs(value._until - (clock.now + const.COMMAND_GRACE_SECONDS)) < 0.001
+
+    with_clock(check)
+
+
+def test_reported_value_overrides_a_stale_commanded_one_after_the_grace_period() -> None:
+    def check(clock: FakeClock) -> None:
+        value = make()
+        value.set(1)  # commanded 1; the robot ignores it and keeps reporting 2
+        clock.now += 29
+        assert value.resolve(2) == 1  # inside the grace period the cloud may still lag
+        clock.now += 2  # 31 s after the command
+        assert value.resolve(2) == 2  # the stale commanded value no longer masks the cloud
+        assert value.resolve(2) == 2
+        assert value.resolve(None) is None  # and it is forgotten
+
+    with_clock(check)
+
+
+def test_settings_the_cloud_never_reports_keep_the_commanded_value() -> None:
+    def check(clock: FakeClock) -> None:
+        value = make()
+        value.set(True)  # e.g. auto-empty: the robot never reports it
+        clock.now += 10_000
+        assert value.resolve(None) is True
+
+    with_clock(check)
 
 
 if __name__ == "__main__":

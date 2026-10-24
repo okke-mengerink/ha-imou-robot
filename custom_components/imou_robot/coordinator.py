@@ -17,10 +17,8 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
-    ImouApiError,
     ImouAuthError,
     ImouClient,
-    ImouConnectionError,
     ImouDevice,
     ImouDeviceOfflineError,
     ImouError,
@@ -29,6 +27,7 @@ from .const import (
     ACTIVE_WORK_STATUSES,
     COMMAND_BOOST_SECONDS,
     COMMAND_REFRESH_DELAY,
+    DEFAULT_LEVEL,
     DOMAIN,
     ERROR_CODE,
     ERROR_VALID,
@@ -216,59 +215,42 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
     async def async_set_level(self, identifier: str, level: int) -> None:
         """Set suction (WindPower) or water (Water) to a level.
 
-        Writing the property is the normal route. Only when the cloud rejects
-        that write with an API error is the WindWater service tried, which sets
-        both levels together.
+        The WindWater service is the way to do it: on the L11-A a plain
+        property write is accepted (code 0) but ignored by the robot. Only a
+        model without that service gets a property write.
         """
-        if (prop := self.model.prop(identifier)) is None:
-            raise _unsupported(identifier)
-        try:
-            await self._async_call(
-                self.client.async_set_properties(
-                    self.device.product_id, self.device.device_id, {prop.ref: level}
-                )
-            )
-        except (ImouConnectionError, ImouAuthError, ImouDeviceOfflineError) as err:
-            raise _command_failed(err) from err  # a second route would not help
-        except ImouApiError as err:
-            if (inputs := self._wind_water_inputs(identifier, level)) is None:
-                raise _command_failed(err) from err
-            _LOGGER.debug(
-                "Writing %s was rejected (%s); trying the WindWater service",
-                identifier,
-                err,
-            )
+        if (inputs := self._wind_water_inputs(identifier, level)) is not None:
             await self.async_control(SERVICE_WIND_WATER, inputs)
+        else:
+            await self.async_set_properties({identifier: level})
 
     def _wind_water_inputs(self, identifier: str, level: int) -> dict[str, int] | None:
-        """Inputs for the WindWater fallback: the new level and the other, current one."""
+        """Inputs for the WindWater service, or None if the model has no such service.
+
+        Both levels are always sent: the new one, and the current value of the
+        other one. That is a command that is still pending (the cloud can lag a
+        few seconds), else the latest value reported by the cloud, else
+        ``DEFAULT_LEVEL``.
+        """
         service = self.model.service(SERVICE_WIND_WATER)
-        changed = {PROP_WIND_POWER: INPUT_WIND, PROP_WATER: INPUT_WATER}.get(identifier)
+        pair = {PROP_WIND_POWER: INPUT_WIND, PROP_WATER: INPUT_WATER}
+        changed = pair.get(identifier)
         if service is None or changed is None or service.input_ref(changed) is None:
             return None
         values = self.data.values if self.data is not None else {}
-        levels = {
-            INPUT_WIND: to_int(values.get(PROP_WIND_POWER)),
-            INPUT_WATER: to_int(values.get(PROP_WATER)),
-            changed: level,
-        }
-        return {
-            name: value
-            for name, value in levels.items()
-            if value is not None and service.input_ref(name) is not None
-        }
+        inputs = {changed: level}
+        for prop, name in pair.items():
+            if name != changed and service.input_ref(name) is not None:
+                current = self.commanded[prop].resolve(to_int(values.get(prop)))
+                inputs[name] = DEFAULT_LEVEL if current is None else current
+        return inputs
 
     async def _async_command(self, call: Awaitable[Any]) -> Any:
         """Run a command; map API errors and schedule a quick refresh."""
         try:
-            return await self._async_call(call)
+            return await call
         except ImouError as err:
             raise _command_failed(err) from err
-
-    async def _async_call(self, call: Awaitable[Any]) -> Any:
-        """Run a command, letting errors through; always schedule a quick refresh."""
-        try:
-            return await call
         finally:
             self._async_after_command()
 

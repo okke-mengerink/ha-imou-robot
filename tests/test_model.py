@@ -110,6 +110,9 @@ def test_mixed_case_api_keys_and_identifiers() -> None:
     assert model.prop("work_status").enum_labels[3]  # label present
     assert model.member("life", "main_brush_time").ref == "12204"
     assert model.service("clean_control").input_ref("status") == "2701"
+    assert model.service("windwater").ref == "3100"
+    assert model.service("windwater").input_ref("wind") == "3103"
+    assert model.service("windwater").input_ref("water") == "3102"
     assert model.poll_refs() == EXPECTED_POLL_REFS
 
 
@@ -213,6 +216,7 @@ def test_level_maps_and_unknown_values() -> None:
     model = l11a()
     assert model.prop("windpower").maximum == 100.0 and model.prop("water").maximum == 100.0
     assert all(identifier in const.POLL_IDENTIFIERS for identifier in const.LEVEL_KEYS)
+    assert const.DEFAULT_LEVEL == 2 and const.DEFAULT_LEVEL in const.LEVEL_KEYS["windpower"] and const.DEFAULT_LEVEL in const.LEVEL_KEYS["water"]
 
 
 def test_parse_values_on_observed_data() -> None:

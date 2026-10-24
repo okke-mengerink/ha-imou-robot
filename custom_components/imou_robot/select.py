@@ -55,10 +55,11 @@ async def async_setup_entry(
 
 
 class ImouLevelSelect(ImouEntity, SelectEntity):
-    """A 1/2/3 level setting, written with ``setIotDeviceProperties``.
+    """A 1/2/3 level setting, set through the WindWater service.
 
-    The L11-A uses 3 levels although its things model declares 0-100. A raw value
-    that is not a known level is shown as ``unknown_<n>``.
+    The L11-A uses 3 levels although its things model declares 0-100, and it
+    ignores plain property writes for them. A raw value that is not a known level
+    is shown as ``unknown_<n>``.
     """
 
     entity_description: ImouSelectDescription
