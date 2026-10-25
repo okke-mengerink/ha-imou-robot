@@ -250,6 +250,19 @@ def test_l11a_fixture_reports_carpet_boost_but_not_auto_dust_or_keep_clean() -> 
     assert all(model.prop(identifier) for identifier in ("rug_press", "auto_dust", "keep_clean"))
 
 
+def test_consumable_counters_are_minutes_per_identifier() -> None:
+    # the L11-A reports minutes although its things model declares the unit "h"
+    life = l11a().prop("life")
+    assert {k: v.unit for k, v in life.children.items()} == {k: "h" for k in life.children}
+    assert const.LIFE_RAW_PER_HOUR == {
+        "brush_time": 60,
+        "main_brush_time": 60,
+        "rosebox_time": 60,
+        "sensor_time": 60,
+    }
+    assert set(const.LIFE_RAW_PER_HOUR) == set(life.children)  # every member has a divisor
+
+
 def test_parse_values_on_observed_data() -> None:
     model = l11a()
     values = model.parse_values(fixture("l11a_values.json")["properties"])

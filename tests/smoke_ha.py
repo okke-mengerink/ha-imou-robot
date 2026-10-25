@@ -150,7 +150,7 @@ def by_key(entities: list[Any]) -> dict[str, Any]:
 
 
 def test_entities() -> None:
-    from homeassistant.components.sensor import SensorDeviceClass  # noqa: PLC0415
+    from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass  # noqa: PLC0415
     from homeassistant.components.vacuum import VacuumActivity, VacuumEntityFeature  # noqa: PLC0415
     from homeassistant.const import EntityCategory  # noqa: PLC0415
     from homeassistant.exceptions import ServiceValidationError  # noqa: PLC0415
@@ -284,8 +284,15 @@ def test_entities() -> None:
     check("cleaned area 0 m2 / cleaning time 0 min", sensors["cleaned_area"].native_value == 0 and sensors["cleaned_area"].native_unit_of_measurement == "m²" and sensors["cleaning_time"].native_value == 0 and sensors["cleaning_time"].native_unit_of_measurement == "min")
     consumables = [sensors[k] for k in ("side_brush", "main_brush", "filter", "sensors")]
     check("4 consumable sensors: hours, diagnostic, value 0", all(s.native_value == 0 and s.native_unit_of_measurement == "h" and s.entity_category == EntityCategory.DIAGNOSTIC for s in consumables))
+    check(
+        "consumable sensors: duration, measurement, display precision 1",
+        all(s.device_class == SensorDeviceClass.DURATION and s.state_class == SensorStateClass.MEASUREMENT and s.suggested_display_precision == 1 for s in consumables),
+    )  # fmt: skip
     coordinator.set_values(life={"brush_time": 12, "main_brush_time": 34, "rosebox_time": 56, "sensor_time": 78})
-    check("consumable members map to the right sensors", [s.native_value for s in consumables] == [12, 34, 56, 78])
+    check("consumables are minutes from the robot, native value in hours (12, 34, 56, 78 min)", [s.native_value for s in consumables] == [0.2, 0.5667, 0.9333, 1.3], str([s.native_value for s in consumables]))
+    check("34 raw (the real run: 34 min) gives 0.5667 h native, 0.6 h displayed", sensors["main_brush"].native_value == 0.5667 and f"{sensors['main_brush'].native_value:.1f}" == "0.6")
+    coordinator.set_values(life={"brush_time": "90", "main_brush_time": None, "rosebox_time": "x", "sensor_time": 600})
+    check("raw values are coerced; unusable ones give no value", [s.native_value for s in consumables] == [1.5, None, None, 10.0], str([s.native_value for s in consumables]))
     coordinator.set_values(life={"brush_time": 0, "main_brush_time": 0, "rosebox_time": 0, "sensor_time": 0})
 
     # unknown enum values: unknown_<n> + model label
@@ -831,8 +838,8 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("vacuum fan speed attributes", vac_attrs["fan_speed"] == "standard" and list(vac_attrs["fan_speed_list"]) == ["quiet", "standard", "max"], str(dict(vac_attrs)))
     expected_states = {
         "battery": "1", "status": "charging", "error": "none", "wifi_signal": "fair",
-        "cleaned_area": "0", "cleaning_time": "0", "side_brush": "0", "main_brush": "0",
-        "filter": "0", "sensors": "0", "mop_fitted": "off", "auto_empty": "unknown",
+        "cleaned_area": "0", "cleaning_time": "0", "side_brush": "0.0", "main_brush": "0.0",
+        "filter": "0.0", "sensors": "0.0", "mop_fitted": "off", "auto_empty": "unknown",
         "carpet_boost": "on", "resume_after_charging": "unknown",
         "suction_level": "standard", "mop_water_level": "medium",
     }  # fmt: skip
@@ -844,6 +851,21 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("diagnostic entities are categorised", ent_reg.async_get(ids["wifi_signal"]).entity_category == "diagnostic" and ent_reg.async_get(ids["side_brush"]).entity_category == "diagnostic" and ent_reg.async_get(ids["battery"]).entity_category is None)
 
     check("idle polling interval is 300 s", coordinator.update_interval.total_seconds() == 300, str(coordinator.update_interval))
+
+    # ---- consumables: the robot reports minutes, the sensors show hours -----------------------------
+    from homeassistant.components.sensor import async_rounded_state  # noqa: PLC0415
+
+    consumable_keys = ("side_brush", "main_brush", "filter", "sensors")
+    client.props["12200"] = {"12202": 34, "12204": 34, "12206": 34, "12208": 34}  # after a real 34-minute run
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("34 raw (minutes) -> state 0.5667 h on all four consumable sensors", [state(k).state for k in consumable_keys] == ["0.5667"] * 4, str([state(k).state for k in consumable_keys]))
+    check("... displayed as 0.6 h (display precision 1)", [async_rounded_state(hass, ids[k], state(k)) for k in consumable_keys] == ["0.6"] * 4, str([async_rounded_state(hass, ids[k], state(k)) for k in consumable_keys]))
+    check("... unit h, device class duration, state class measurement", all(state(k).attributes["unit_of_measurement"] == "h" and state(k).attributes["device_class"] == "duration" and state(k).attributes["state_class"] == "measurement" for k in consumable_keys))
+    client.props["12200"] = {"12202": 0, "12204": 0, "12206": 0, "12208": 0}
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("a new robot (0 raw) shows 0.0 h", [state(k).state for k in consumable_keys] == ["0.0"] * 4)
 
     # ---- commands -> exact API calls (refs resolved from the model) ------------
     async def call(domain: str, service: str, entity: str, **data: Any) -> None:

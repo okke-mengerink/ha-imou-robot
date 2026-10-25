@@ -23,6 +23,7 @@ from .const import (
     ERROR_KEYS,
     LIFE_FILTER,
     LIFE_MAIN_BRUSH,
+    LIFE_RAW_PER_HOUR,
     LIFE_SENSORS,
     LIFE_SIDE_BRUSH,
     PROP_CLEAN_AREA,
@@ -71,6 +72,21 @@ class ImouEnumSensorDescription(SensorEntityDescription):
     base_values: tuple[int, ...] = ()
 
 
+def _hours(child: str) -> Callable[[Any], float | None]:
+    """Convert a consumable counter to hours.
+
+    The L11-A reports minutes used although its things model says "h", see
+    ``LIFE_RAW_PER_HOUR``. Rounded to 4 decimals (0.36 s) to keep the state short.
+    """
+    per_hour = LIFE_RAW_PER_HOUR[child]
+
+    def convert(value: Any) -> float | None:
+        raw = to_int(value)
+        return None if raw is None else round(raw / per_hour, 4)
+
+    return convert
+
+
 def _consumable(key: str, child: str) -> ImouSensorDescription:
     return ImouSensorDescription(
         key=key,
@@ -79,7 +95,10 @@ def _consumable(key: str, child: str) -> ImouSensorDescription:
         child=child,
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.HOURS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
         entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_hours(child),
     )
 
 

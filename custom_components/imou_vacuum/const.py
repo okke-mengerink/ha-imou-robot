@@ -84,6 +84,17 @@ LIFE_MAIN_BRUSH: Final = "main_brush_time"
 LIFE_FILTER: Final = "rosebox_time"
 LIFE_SENSORS: Final = "sensor_time"
 
+# The L11-A reports the consumable counters in MINUTES used, although its things
+# model declares the unit "h" (after a 34 minute cleaning run all four read 34).
+# Raw units per hour, per member identifier of the "life" struct; the sensors show
+# hours (raw / this value). Another model that really reports hours would use 1.
+LIFE_RAW_PER_HOUR: Final[dict[str, int]] = {
+    LIFE_SIDE_BRUSH: 60,
+    LIFE_MAIN_BRUSH: 60,
+    LIFE_FILTER: 60,
+    LIFE_SENSORS: 60,
+}
+
 ERROR_CODE: Final = "errcode"
 ERROR_VALID: Final = "valid"
 

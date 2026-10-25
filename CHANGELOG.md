@@ -7,6 +7,7 @@
 - Breaking: the folder is now `custom_components/imou_vacuum`, and the logger is `custom_components.imou_vacuum`.
 - Upgrading from 0.1.x: delete the old integration in Home Assistant (Settings > Devices & services), delete the folder `custom_components/imou_robot`, install 0.2.0, restart Home Assistant, and add "Imou Vacuum (Open Platform)" again with your App ID and App Secret. Entity IDs are derived from the device name, so they normally come back the same.
 - The display name is changed in `manifest.json`, `hacs.json`, the config flow title and the translations.
+- Fixed: the consumable sensors (side brush, main brush, filter, sensors) treat the robot's value as minutes used and show hours (minutes / 60, one decimal). The L11-A reports minutes although its things model says hours: after a 34-minute run all four read 34 h. They are also recorded as statistics now (state class measurement).
 - No other behaviour changes. The GitHub repository keeps its name.
 
 ## 0.1.3

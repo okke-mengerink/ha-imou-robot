@@ -36,7 +36,7 @@ Verified on a real RV-L11-A:
 ## Features
 
 - **Vacuum entity:** start (a whole-house clean, or resume when paused), pause, stop, return to dock, locate, and fan speed (the suction level: quiet, standard or max).
-- **Sensors:** battery, status, error, cleaned area (m²), cleaning time (min), consumable usage (side brush, main brush, filter, sensors), Wi-Fi signal and a mop-fitted binary sensor.
+- **Sensors:** battery, status, error, cleaned area (m²), cleaning time (min), consumable usage in hours (side brush, main brush, filter, sensors), Wi-Fi signal and a mop-fitted binary sensor.
 - **Controls:** suction and water level selects, carpet boost and other switches, and an empty-bin button. See [Entities](#entities).
 - **Set up in the UI:** App ID, App Secret and region, with re-authentication when the App Secret changes. English and Dutch translations. A diagnostics download for mapping new models.
 - **Automatic discovery:** every robot on your Imou account is found, and only the entities its model supports are created.
@@ -160,7 +160,7 @@ Entities are created per robot, and only when the robot's model supports them.
 - Error (enum)
 - Cleaned area (m²)
 - Cleaning time (min)
-- Consumable usage in hours: side brush, main brush, filter and sensors (diagnostic)
+- Consumable usage in hours: side brush, main brush, filter and sensors (diagnostic). The robot reports minutes used; the sensors show hours (minutes / 60, one decimal).
 - Wi-Fi signal (enum, diagnostic)
 
 ### Other entities
@@ -223,7 +223,7 @@ Contributions of identifier and enum mappings are welcome.
 - Property writes work on an L11-A for carpet boost (the cloud confirms the new value) and for return to dock. The L11-A never reports auto-empty or resume after charging, before or after a write, and the Imou app has no such settings, so its firmware probably does not implement them although the shared things model lists them. Whether such a write has any effect cannot be verified.
 - A switch whose setting the robot did not report in its first poll is created but disabled by default (the poll must be of an online robot; otherwise nothing is disabled). Enable it in the entity settings if your model supports it. Every switch has the attribute `reported_by_device`. Entities created by an earlier version keep their state: disable or delete those two switches by hand.
 - The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.)
-- Consumable values are assumed to be hours used. A new robot reports 0.
+- Consumable usage: the L11-A reports minutes used, although its things model says hours (after a 34-minute run all four counters read 34). The sensors therefore show hours (minutes / 60, displayed with one decimal). The conversion is the constant `LIFE_RAW_PER_HOUR` in `const.py`; a model that really reports hours would need 1 there.
 - There is no map, room, zone or schedule control yet.
 - Only the Europe region has been verified. Singapore and North America use the same calls on other Imou hosts.
 - Commands are fire-and-forget: the cloud output code is not interpreted.
