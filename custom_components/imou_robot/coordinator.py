@@ -42,6 +42,7 @@ from .const import (
     SERVICE_WIND_WATER,
 )
 from .commanded import CommandedValue
+from .health import PollHealth
 from .model import ReportTracker, ThingsModel, to_bool, to_int
 
 _LOGGER = logging.getLogger(__name__)
@@ -129,6 +130,8 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         # which settings the robot reports; filled by the first refresh, which
         # runs before any entity is created
         self.reports = ReportTracker()
+        # consecutive failed polls: one hiccup must not make the entities unavailable
+        self.health = PollHealth()
         # last value commanded per identifier, shared by all entities of the setting
         self.commanded: defaultdict[str, CommandedValue[Any]] = defaultdict(
             CommandedValue
@@ -138,43 +141,81 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
 
     # -- polling -------------------------------------------------------------
     async def _async_update_data(self) -> ImouRobotState:
-        """Fetch the latest values and pick the next polling interval."""
+        """Fetch the latest values and pick the next polling interval.
+
+        A failed poll, or a robot that the cloud calls "offline", keeps the last
+        good data (the entities stay available) until it has happened several
+        times in a row or the last good data is too old. Any other status, such as
+        "sleep" or "upgrading", is not a failure: the last data is shown.
+        """
         try:
             result = await self.client.async_get_properties(
                 self.device.product_id, self.device.device_id, self.poll_refs
             )
         except ImouDeviceOfflineError:
-            state = ImouRobotState(online=False, values={})
+            return self._poll_failed("the robot is offline")
         except ImouAuthError as err:
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN, translation_key="auth_failed"
             ) from err
         except ImouError as err:
-            self._back_off()
+            return self._poll_failed(str(err), err)
+
+        # A missing status is treated as online.
+        status = (result.status or "online").lower()
+        if status == "offline":
+            return self._poll_failed("the robot is offline")
+
+        values = self.model.parse_values(result.values)
+        if status != "online" and not values and self.data is not None:
+            values = dict(self.data.values)  # asleep or upgrading: show the last data
+        if status == "online":
+            self.reports.update(True, values)  # only an online robot is evidence
+
+        state = ImouRobotState(online=True, values=values)
+        failed = self.health.success()
+        if failed and self.last_update_success:
+            # (after unavailable entities Home Assistant logs the recovery itself)
+            _LOGGER.info(
+                "Reading %s works again after %d failed poll(s)",
+                self.device.name,
+                failed,
+            )
+        self._update_polling_interval(state)
+        return state
+
+    def _poll_failed(self, reason: str, err: ImouError | None = None) -> ImouRobotState:
+        """Count a failed poll and decide what the entities see.
+
+        ``err`` is the API error of a failed call; it is None when the cloud said
+        the robot is offline, which becomes an offline state instead of an error.
+        """
+        keep = self.health.failure()
+        self.update_interval = timedelta(
+            seconds=self.health.retry_interval(self._interval_seconds())
+        )
+        if keep and self.data is not None:
+            if self.health.failures == 1:  # one warning, not one per failed poll
+                _LOGGER.warning(
+                    "Could not read %s (%s); keeping the last data",
+                    self.device.name,
+                    reason,
+                )
+            return self.data
+        if err is not None:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="update_failed",
                 translation_placeholders={"error": str(err)},
             ) from err
-        else:
-            # A missing status is treated as online; only an explicit
-            # "offline"/"sleep"/... marks the robot as unavailable.
-            online = result.status is None or result.status.lower() == "online"
-            state = ImouRobotState(
-                online=online, values=self.model.parse_values(result.values)
-            )
-        self.reports.update(state.online, state.values)
-        self._update_polling_interval(state)
-        return state
-
-    def _back_off(self) -> None:
-        """After a failed poll wait longer: 30 s -> 60 s -> ... -> 300 s."""
-        current = (
-            self.update_interval.total_seconds()
-            if self.update_interval
-            else SCAN_INTERVAL_IDLE
+        return ImouRobotState(
+            online=False, values=self.data.values if self.data is not None else {}
         )
-        self.update_interval = timedelta(seconds=min(SCAN_INTERVAL_IDLE, current * 2))
+
+    def _interval_seconds(self) -> float:
+        if self.update_interval is None:
+            return float(SCAN_INTERVAL_IDLE)
+        return self.update_interval.total_seconds()
 
     def _update_polling_interval(self, state: ImouRobotState) -> None:
         """30 s while the robot is active (or just got a command), else 300 s."""

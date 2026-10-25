@@ -85,7 +85,7 @@ No. At the time of writing (October 2026), Home Assistant's built-in `imou` inte
 
 ### Can I control my Imou robot vacuum locally?
 
-No. This integration is cloud only: every command and status update goes through the Imou cloud, so Home Assistant needs internet access and the robot must be online. Entities become unavailable when the robot is not online. There is no local control.
+No. This integration is cloud only: every command and status update goes through the Imou cloud, so Home Assistant needs internet access and the robot must be online. Entities become unavailable when the robot stays offline or the cloud cannot be reached for a few polls, see [Failed polls and the robot's status](#failed-polls-and-the-robots-status). There is no local control.
 
 ### Is it free?
 
@@ -182,13 +182,17 @@ The integration makes one API call per robot per poll. The poll interval depends
 | Active: returning, relocating, remote control, room / zone / spot / go-to / whole-house cleaning, emptying bin, return paused | every 30 s |
 | After any command | one extra refresh about 3 s after the command, then 30 s polling for 2 minutes |
 
-Pressing start polls the robot once first, so that it can tell "start" from "resume". After failed polls the interval doubles (30 s, 60 s, ... up to 300 s) until the cloud answers again.
+Pressing start polls the robot once first, so that it can tell "start" from "resume".
 
 Typical use is about 12,000 API calls per month. Imou's free tier allows 30,000 calls per month per App ID.
 
 **Do not** also run Home Assistant's core `imou` integration with the same App ID. It polls every 2 minutes and will exhaust the quota.
 
-Entities become unavailable when the robot is not online.
+### Failed polls and the robot's status
+
+One failed poll does not make the entities unavailable. A failed poll (API error, timeout, network) or a cloud status of `offline` keeps the last good data on screen, and the next poll comes after 60 s instead of 300 s (30 s while the robot is active). The entities become unavailable after 3 failed polls in a row, or when the last good poll is older than 15 minutes. During a longer outage the interval grows to 120 s, 240 s and 300 s, which saves API quota. The statuses `sleep` and `upgrading` are not failures: the last data stays visible.
+
+The log gets one warning at the first failed poll and one info line when polling works again. It never contains your App ID, App Secret or tokens.
 
 ## Help us map other models
 
@@ -222,6 +226,7 @@ python3 -I tests/test_sign.py
 python3 -I tests/test_api.py
 python3 -I tests/test_model.py
 python3 -I tests/test_commanded.py
+python3 -I tests/test_health.py
 ```
 
 The smoke test sets the integration up in a bare Home Assistant core with a fake API client (no network, no credentials):

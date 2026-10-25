@@ -37,6 +37,7 @@ async def async_get_config_entry_diagnostics(
                 },
                 "poll_refs": coordinator.poll_refs,
                 "reports": coordinator.reports.as_diagnostics(),
+                "failed_polls_in_a_row": coordinator.health.failures,
                 "update_interval": coordinator.update_interval.total_seconds()
                 if coordinator.update_interval
                 else None,

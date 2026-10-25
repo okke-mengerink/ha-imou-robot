@@ -34,6 +34,13 @@ SCAN_INTERVAL_IDLE: Final = 300  # seconds, docked / idle
 SCAN_INTERVAL_ACTIVE: Final = 30  # seconds, robot is doing something
 COMMAND_REFRESH_DELAY: Final = 3  # seconds, one refresh after any command
 COMMAND_BOOST_SECONDS: Final = 120  # keep fast polling this long after a command
+# A failed poll keeps the last good data. Entities become unavailable only after
+# this many failed polls in a row, or when the last good poll is older than
+# MAX_STALE_SECONDS, whichever comes first. A failure is retried after
+# RETRY_INTERVAL seconds, not after the idle interval.
+FAILURES_BEFORE_UNAVAILABLE: Final = 3
+MAX_STALE_SECONDS: Final = 15 * 60
+RETRY_INTERVAL: Final = 60
 # A commanded value may be shown for at most this long while the cloud reports a
 # different value for the same setting; after that the cloud value wins, so a
 # command the robot ignores becomes visible.

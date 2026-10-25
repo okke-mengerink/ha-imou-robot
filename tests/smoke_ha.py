@@ -61,7 +61,7 @@ def mod(name: str) -> Any:
 # ---------------------------------------------------------------------------
 MODULES = [
     "api", "binary_sensor", "button", "commanded", "config_flow", "const", "coordinator",
-    "diagnostics", "entity", "model", "select", "sensor", "switch", "vacuum",
+    "diagnostics", "entity", "health", "model", "select", "sensor", "switch", "vacuum",
 ]  # fmt: skip
 
 
@@ -555,7 +555,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_robot" and manifest["name"] == "Imou Robot Vacuum" and manifest["version"] == "0.1.2"
+        manifest["domain"] == "imou_robot" and manifest["name"] == "Imou Robot Vacuum" and manifest["version"] == "0.1.3"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -612,6 +612,7 @@ class FakeClient:
     robot_id = "TESTDEVICE0001"
     initial_status = "online"
     report_optional = False  # a firmware that also reports 11700/11800
+    initial_fail_with: Exception | None = None  # the first polls fail
 
     def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
         FakeClient.instance = self
@@ -622,7 +623,8 @@ class FakeClient:
             self.props.update({"11700": 0, "11800": 0})
         self.calls: list[tuple[Any, ...]] = []
         self.poll_count = 0
-        self.fail_with: Exception | None = None  # makes polls and commands fail
+        self.fail_with: Exception | None = FakeClient.initial_fail_with  # makes polls and commands fail
+        self.report_while_not_online = False  # a cloud that still returns the last values while asleep
         self.fail_commands_with: Exception | None = None  # makes only commands fail
         self.fail_set_with: Exception | None = None  # makes only property writes fail
         self.fail_control_with: Exception | None = None  # makes only service calls fail
@@ -658,7 +660,7 @@ class FakeClient:
         self.last_refs = list(refs)
         if self.fail_with is not None:
             raise self.fail_with
-        values = {ref: self.props[ref] for ref in refs if ref in self.props} if self.status == "online" else {}
+        values = {ref: self.props[ref] for ref in refs if ref in self.props} if self.status == "online" or self.report_while_not_online else {}
         return api.ImouProperties(status=self.status, values=values)
 
     async def async_set_properties(self, product_id: str, device_id: str, properties: dict[str, Any]) -> None:
@@ -1013,44 +1015,124 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     client.props["12300"] = 3
     await coordinator.async_refresh()
 
-    # ---- failed polls back off instead of hammering the cloud ------------------------------
-    client.props["12300"] = 7
-    await coordinator.async_refresh()
-    steps = [coordinator.update_interval.total_seconds()]
-    client.fail_with = api.ImouConnectionError("TIMEOUT", "getIotDeviceProperties")
-    for _ in range(4):
-        await coordinator.async_refresh()
-        steps.append(coordinator.update_interval.total_seconds())
-    client.fail_with = None
-    await coordinator.async_refresh()
-    steps.append(coordinator.update_interval.total_seconds())
-    check("backoff 30 -> 60 -> 120 -> 240 -> 300 s, then back to 30 s when active again", steps == [30, 60, 120, 240, 300, 30], str(steps))
-    client.props["12300"] = 3
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
-    check("idle robot polls every 300 s again", coordinator.update_interval.total_seconds() == 300)
+    # ---- transient cloud failures keep the last data ------------------------------------------------
+    log_records: list[logging.LogRecord] = []
 
-    # ---- offline -> unavailable; back online -------------------------------------------
-    client.status = "offline"
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
-    check("offline robot: all entities unavailable", all(hass.states.get(e).state == "unavailable" for e in ids.values()), str({k: hass.states.get(e).state for k, e in ids.items() if hass.states.get(e).state != "unavailable"}))
-    for status in ("sleep", "upgrading"):
-        client.status = status
-        await coordinator.async_refresh()
-        await hass.async_block_till_done()
-        check(f"status '{status}' is not online -> unavailable", state("vacuum").state == "unavailable")
-    client.status = "online"
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
-    check("back online: entities available again", state("vacuum").state == "docked" and state("battery").state == "1")
-    client.fail_with = api.ImouDeviceOfflineError("DV1007", "device offline")
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
-    check("offline API error: entities unavailable, no crash", state("vacuum").state == "unavailable")
+    class CaptureCoordinatorLog(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            log_records.append(record)
+
+    coordinator_logger = logging.getLogger(f"{PKG}.coordinator")
+    log_handler = CaptureCoordinatorLog(level=logging.DEBUG)
+    coordinator_logger.addHandler(log_handler)
+
+    def levels() -> list[str]:  # (Home Assistant's own DEBUG lines are not interesting here)
+        return [r.levelname for r in log_records if r.levelno >= logging.INFO]
+
+    async def poll(times: int = 1) -> list[tuple[str, float]]:
+        seen = []
+        for _ in range(times):
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+            seen.append((state("vacuum").state, coordinator.update_interval.total_seconds()))
+        return seen
+
+    def all_unavailable() -> bool:
+        return all(hass.states.get(e).state == "unavailable" for e in ids.values())
+
+    timeout = api.ImouConnectionError("TIMEOUT", "getIotDeviceProperties")
+    coordinator._boost_until = 0.0
+    client.props["12300"] = 3
+    await poll()
+    check("idle robot polls every 300 s", coordinator.update_interval.total_seconds() == 300)
+
+    # a single failed poll
+    log_records.clear()
+    client.fail_with = timeout
+    ((first, first_interval),) = await poll()
+    check("a single failed poll: entities stay available and show the last data", first == "docked" and state("battery").state == "1" and coordinator.last_update_success and not all_unavailable())
+    check("a single failed poll: the next poll comes in 60 s, not 300 s", first_interval == 60, str(first_interval))
     client.fail_with = None
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
+    await poll()
+    check("recovery: the failure count is reset and polling is idle again", coordinator.health.failures == 0 and coordinator.update_interval.total_seconds() == 300)
+    check("logs for a short hiccup: one warning at the first failure, one info on recovery", levels() == ["WARNING", "INFO"], str([(r.levelname, r.getMessage()) for r in log_records if r.levelno >= logging.INFO]))
+    check("the warning names the robot and the error code, nothing secret", "Could not read RV-L11-A-TEST (TIMEOUT: getIotDeviceProperties); keeping the last data" in [r.getMessage() for r in log_records if r.levelno == logging.WARNING], str([r.getMessage() for r in log_records]))
+
+    # three failed polls in a row
+    log_records.clear()
+    client.fail_with = timeout
+    seen = await poll(3)
+    check("two failed polls stay available, the third makes the entities unavailable", [x for x, _ in seen] == ["docked", "docked", "unavailable"] and not coordinator.last_update_success and all_unavailable(), str(seen))
+    check("retry after 60 s, 60 s, then backing off to 120 s", [i for _, i in seen] == [60, 60, 120], str(seen))
+    seen = await poll(2)
+    check("a longer outage keeps backing off: 240 s, then 300 s; still unavailable", [i for _, i in seen] == [240, 300] and all_unavailable(), str(seen))
+    check("logs for an outage: one warning (first failure) and one error (unavailable), no spam", levels() == ["WARNING", "ERROR"], str([(r.levelname, r.getMessage()) for r in log_records if r.levelno >= logging.INFO]))
+    client.fail_with = None
+    await poll()
+    check("recovery after an outage: available again, count reset", state("vacuum").state == "docked" and coordinator.health.failures == 0 and not all_unavailable())
+    check("recovery after an outage logs one info line (Home Assistant's own)", levels() == ["WARNING", "ERROR", "INFO"], str(levels()))
+
+    # recovery resets the count
+    client.fail_with = timeout
+    await poll(2)
+    client.fail_with = None
+    await poll()
+    client.fail_with = timeout
+    seen = await poll(2)
+    check("recovery resets the count: 2 failures, a good poll, 2 failures never make it unavailable", all(x == "docked" for x, _ in seen) and coordinator.last_update_success)
+    client.fail_with = None
+    await poll()
+
+    # an active robot is retried after 30 s: never later than a normal poll
+    client.props["12300"] = 7
+    await poll()
+    client.fail_with = timeout
+    ((active, active_interval),) = await poll()
+    check("active robot: a failed poll is retried after 30 s", active == "cleaning" and active_interval == 30, f"{active} {active_interval}")
+    client.fail_with = None
+    client.props["12300"] = 3
+    await poll()
+
+    # a last good poll older than 15 minutes
+    coordinator.health.last_success -= 16 * 60
+    client.fail_with = timeout
+    ((stale, _),) = await poll()
+    check("last good data older than 15 minutes: unavailable at the first failure", stale == "unavailable", stale)
+    client.fail_with = None
+    await poll()
+    check("available again after a good poll", state("vacuum").state == "docked")
+
+    # a robot that the cloud calls offline counts the same way (status, or API error)
+    for label, go_offline, go_online in (
+        ("status 'offline'", lambda: setattr(client, "status", "offline"), lambda: setattr(client, "status", "online")),
+        ("API error 'device offline'", lambda: setattr(client, "fail_with", api.ImouDeviceOfflineError("DV1007", "device offline")), lambda: setattr(client, "fail_with", None)),
+    ):  # fmt: skip
+        go_offline()
+        seen = await poll(3)
+        check(f"{label}: available for 2 polls, unavailable from the 3rd", [x for x, _ in seen] == ["docked", "docked", "unavailable"] and all_unavailable(), str(seen))
+        go_online()
+        await poll()
+        check(f"{label}: back online, available again", state("vacuum").state == "docked" and state("battery").state == "1" and coordinator.health.failures == 0)
+
+    # sleep / upgrading are not failures: the last data is shown
+    for status in ("sleep", "upgrading", "something-new"):
+        client.status = status
+        seen = await poll(4)
+        check(f"status '{status}': stays available with the last data", all(x == "docked" for x, _ in seen) and coordinator.health.failures == 0 and state("battery").state == "1" and state("suction_level").state == "standard", str(seen))
+    client.status = "sleep"
+    client.report_while_not_online = True
+    client.props["11600"] = 55
+    await poll()
+    check("status 'sleep' with values: the reported values are shown", state("battery").state == "55" and state("vacuum").state == "docked")
+    client.report_while_not_online = False
+    client.props["11600"] = 1
+    client.status = "online"
+    await poll()
+    check("online again: fresh data", state("battery").state == "1")
+
+    coordinator_logger.removeHandler(log_handler)
+    secrets = ("test-app", "test-secret", "new-secret", "TESTDEVICE0001")
+    check("no secrets in the coordinator log lines", not any(sv in r.getMessage() for r in log_records for sv in secrets))
 
     # ---- errors ----------------------------------------------------------------------------
     client.fail_commands_with = api.ImouApiError("OP1001", "param error")
@@ -1063,15 +1145,6 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         check("command failure -> HomeAssistantError", False)
     client.fail_commands_with = None
     await asyncio.sleep(0)
-
-    client.fail_with = api.ImouConnectionError("TIMEOUT", "getIotDeviceProperties")
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
-    check("update failure -> entities unavailable", state("vacuum").state == "unavailable" and not coordinator.last_update_success)
-    client.fail_with = None
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
-    check("recovers after an update failure", state("vacuum").state == "docked")
 
     # ---- reauth ---------------------------------------------------------------------------
     client.fail_with = api.ImouAuthError("TK1002", "token invalid")
@@ -1125,12 +1198,19 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     FakeClient.model_error = None
     FakeClient.devices_override = None
 
+    FakeClient.initial_fail_with = api.ImouConnectionError("TIMEOUT", "getIotDeviceProperties")
+    failing = await add_entry("first-poll-fails")
+    check("first poll fails (no data to keep): setup is retried later", failing.state is config_entries.ConfigEntryState.SETUP_RETRY, str(failing.state))
+    await hass.config_entries.async_remove(failing.entry_id)
+    FakeClient.initial_fail_with = None
+
     # ---- fresh installs: which switches are enabled by default ---------------------------------------
     switch_keys = ("auto_empty", "carpet_boost", "resume_after_charging")
     for label, app_id, robot_id, flags, expected_disabled in (
         ("the real L11-A (11700 and 11800 never reported)", "fresh-l11a", "FRESHROBOT0001", {}, {"auto_empty", "resume_after_charging"}),
         ("a firmware that reports all three", "fresh-all", "FRESHROBOT0002", {"report_optional": True}, set()),
         ("a robot that is offline at the first poll (no evidence)", "fresh-offline", "FRESHROBOT0003", {"initial_status": "offline"}, set()),
+        ("a robot that is asleep at the first poll (no evidence)", "fresh-sleep", "FRESHROBOT0004", {"initial_status": "sleep"}, set()),
     ):  # fmt: skip
         FakeClient.robot_id = robot_id
         for name, value in flags.items():
