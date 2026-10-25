@@ -39,7 +39,7 @@ body:
     attributes:
       label: Diagnostics file
       description: |
-        Go to Settings > Devices & services > Imou Robot Vacuum, open the three-dot menu and choose Download diagnostics. Drag the file into this box. If GitHub does not accept the .json file, zip it or rename it to .txt first.
+        Go to Settings > Devices & services > Imou Vacuum (Open Platform), open the three-dot menu and choose Download diagnostics. Drag the file into this box. If GitHub does not accept the .json file, zip it or rename it to .txt first.
         If nothing can be downloaded (for example because setup fails), say so here and add the log.
     validations:
       required: true
@@ -53,7 +53,7 @@ body:
     id: integration_version
     attributes:
       label: Integration version
-      description: "Shown in HACS. For a manual install, it is the version in custom_components/imou_robot/manifest.json."
+      description: "Shown in HACS. For a manual install, it is the version in custom_components/imou_vacuum/manifest.json."
       placeholder: "0.1.2"
   - type: checkboxes
     id: privacy_check

@@ -1,5 +1,5 @@
 name: Bug report
-description: Something does not work as expected with the Imou Robot Vacuum integration.
+description: Something does not work as expected with the Imou Vacuum (Open Platform) integration.
 title: "[Bug]: "
 labels:
   - bug
@@ -24,7 +24,7 @@ body:
     id: integration_version
     attributes:
       label: Integration version
-      description: "Shown in HACS. For a manual install, it is the version in custom_components/imou_robot/manifest.json."
+      description: "Shown in HACS. For a manual install, it is the version in custom_components/imou_vacuum/manifest.json."
       placeholder: "0.1.2"
     validations:
       required: true
@@ -58,7 +58,7 @@ body:
     attributes:
       label: Logs
       description: |
-        Relevant lines from Settings > System > Logs. For more detail, go to Settings > Devices & services > Imou Robot Vacuum, open the three-dot menu and choose Enable debug logging. Reproduce the problem, then disable debug logging again to download the log.
+        Relevant lines from Settings > System > Logs. For more detail, go to Settings > Devices & services > Imou Vacuum (Open Platform), open the three-dot menu and choose Enable debug logging. Reproduce the problem, then disable debug logging again to download the log.
         Remove anything you do not want to share, such as serial numbers, tokens or secrets.
       render: text
   - type: textarea
@@ -66,7 +66,7 @@ body:
     attributes:
       label: Diagnostics file
       description: |
-        Go to Settings > Devices & services > Imou Robot Vacuum, open the three-dot menu and choose Download diagnostics. Drag the file into this box. If GitHub does not accept the .json file, zip it or rename it to .txt first.
+        Go to Settings > Devices & services > Imou Vacuum (Open Platform), open the three-dot menu and choose Download diagnostics. Drag the file into this box. If GitHub does not accept the .json file, zip it or rename it to .txt first.
         If the integration did not set up and nothing can be downloaded, say so here.
   - type: checkboxes
     id: privacy_check

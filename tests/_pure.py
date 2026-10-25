@@ -16,7 +16,7 @@ from typing import Any
 
 TESTS_DIR = Path(__file__).resolve().parent
 ROOT = TESTS_DIR.parent
-PKG_DIR = ROOT / "custom_components" / "imou_robot"
+PKG_DIR = ROOT / "custom_components" / "imou_vacuum"
 FIXTURES = TESTS_DIR / "fixtures"
 
 
@@ -32,7 +32,7 @@ def _ensure_aiohttp() -> None:
 
 
 def load(name: str) -> Any:
-    """Import ``custom_components/imou_robot/<name>.py`` without Home Assistant."""
+    """Import ``custom_components/imou_vacuum/<name>.py`` without Home Assistant."""
     if "imou_pure" not in sys.modules:
         package = types.ModuleType("imou_pure")
         package.__path__ = [str(PKG_DIR)]  # type: ignore[attr-defined]

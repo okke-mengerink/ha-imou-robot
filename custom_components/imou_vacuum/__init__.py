@@ -1,4 +1,4 @@
-"""The Imou Robot Vacuum integration.
+"""The Imou Vacuum (Open Platform) integration.
 
 Controls Imou robot vacuums through the Imou Open Platform cloud API. Property
 and service refs are resolved at runtime, by identifier, from each device's
@@ -87,7 +87,7 @@ async def _async_discover_robots(
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool:
-    """Set up Imou Robot Vacuum from a config entry."""
+    """Set up Imou Vacuum (Open Platform) from a config entry."""
     client = ImouClient(
         async_get_clientsession(hass),
         entry.data[CONF_APP_ID],

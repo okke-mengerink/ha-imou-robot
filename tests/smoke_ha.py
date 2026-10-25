@@ -37,8 +37,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-PKG = "custom_components.imou_robot"
-PKG_DIR = ROOT / "custom_components" / "imou_robot"
+PKG = "custom_components.imou_vacuum"
+PKG_DIR = ROOT / "custom_components" / "imou_vacuum"
 MODEL_JSON = json.loads((ROOT / "tests/fixtures/l11a_model.json").read_text("utf-8"))
 VALUES_JSON = json.loads((ROOT / "tests/fixtures/l11a_values.json").read_text("utf-8"))
 
@@ -426,7 +426,7 @@ def test_entities() -> None:
 
     # --- device info / names -------------------------------------------------
     info = vac.device_info
-    check("DeviceInfo identifiers/name/model/manufacturer/sw_version", info["identifiers"] == {("imou_robot", "TESTDEVICE0001")} and info["name"] == "RV-L11-A-TEST" and info["model"] == "L11-A" and info["manufacturer"] == "Imou" and info["sw_version"] == "0.4.50", str(info))
+    check("DeviceInfo identifiers/name/model/manufacturer/sw_version", info["identifiers"] == {("imou_vacuum", "TESTDEVICE0001")} and info["name"] == "RV-L11-A-TEST" and info["model"] == "L11-A" and info["manufacturer"] == "Imou" and info["sw_version"] == "0.4.50", str(info))
     check("every entity has has_entity_name and a translation_key (except the vacuum)", all(e.has_entity_name for v in ents.values() for e in v) and all(e.translation_key for p, v in ents.items() if p != "vacuum" for e in v))
 
     # --- availability --------------------------------------------------------
@@ -555,15 +555,33 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_robot" and manifest["name"] == "Imou Robot Vacuum" and manifest["version"] == "0.1.3"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.2.0"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
         and manifest["issue_tracker"] == "https://github.com/okke-mengerink/ha-imou-robot/issues",
     )  # fmt: skip
     hacs = json.loads((ROOT / "hacs.json").read_text("utf-8"))
-    check("hacs.json", hacs == {"name": "Imou Robot Vacuum", "homeassistant": "2026.1.0", "render_readme": True}, str(hacs))
+    check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True}, str(hacs))
     check("brand icons present", (PKG_DIR / "brand/icon.png").is_file() and (PKG_DIR / "brand/icon@2x.png").is_file())
+
+    # the domain was renamed in 0.2.0: manifest, folder and DOMAIN agree, and nothing of the old name is left
+    check("domain: manifest, folder name and DOMAIN are all 'imou_vacuum'", manifest["domain"] == PKG_DIR.name == const.DOMAIN == "imou_vacuum", f"{manifest['domain']} {PKG_DIR.name} {const.DOMAIN}")
+    check("display name 'Imou Vacuum (Open Platform)' in manifest, hacs.json and both translations", {manifest["name"], hacs["name"], en["title"], nl["title"]} == {"Imou Vacuum (Open Platform)"}, str({manifest["name"], hacs["name"], en["title"], nl["title"]}))
+    old_domain, old_name = "imou" + "_robot", "Imou Robot" + " Vacuum"  # (built from parts so that this file does not match itself)
+    leftovers = []
+    for path in sorted(ROOT.rglob("*")):
+        if not path.is_file() or ".git" in path.parts or "__pycache__" in path.parts or path.suffix == ".png":
+            continue
+        if path.name in ("README.md", "CHANGELOG.md"):
+            continue  # the migration notes mention the old names on purpose
+        text = path.read_text("utf-8", errors="ignore")
+        if old_domain in text or old_name in text:
+            leftovers.append(str(path.relative_to(ROOT)))
+    check("no trace of the old domain or name outside the README and CHANGELOG migration notes", not leftovers, str(leftovers))
+    for doc in ("README.md", "CHANGELOG.md"):
+        text = (ROOT / doc).read_text("utf-8")
+        check(f"{doc} explains the rename and the migration", old_domain in text and "imou_vacuum" in text and "0.2.0" in text)
 
 
 # ---------------------------------------------------------------------------
@@ -721,7 +739,7 @@ async def full_setup_checks(config_dir: str) -> None:
         hass.config.language = "en"
         hass.config_entries = config_entries.ConfigEntries(hass, {})
         await loader.async_get_custom_components(hass)
-        check("custom integration is discovered", "imou_robot" in await loader.async_get_custom_components(hass))
+        check("custom integration is discovered", "imou_vacuum" in await loader.async_get_custom_components(hass))
         await bootstrap.async_load_base_functionality(hass)
         await hass.async_start()
         try:
@@ -740,14 +758,14 @@ async def full_setup_checks(config_dir: str) -> None:
     secrets = ("test-secret", "new-secret", "test-app", "TESTDEVICE0001", '"2701"')
     leaked = [m for m in messages if any(sv in m for sv in secrets)]
     check("no secrets, App ID or device serial in any log line", not leaked, str(leaked[:3]))
-    blocking = [m for m in messages if "blocking call" in m.lower() and "imou_robot" in m]
+    blocking = [m for m in messages if "blocking call" in m.lower() and "imou_vacuum" in m]
     check("no blocking calls inside the event loop from the integration", not blocking, str(blocking[:2]))
     errors = [r.getMessage() for r in records if r.levelno >= logging.ERROR and r.name.startswith(PKG)]
     allowed = [
-        r"^Authentication failed while fetching imou_robot RV-L11-A-TEST data",
-        r"^Error fetching imou_robot RV-L11-A-TEST data: Could not read the robot's state: TIMEOUT: getIotDeviceProperties$",
+        r"^Authentication failed while fetching imou_vacuum RV-L11-A-TEST data",
+        r"^Error fetching imou_vacuum RV-L11-A-TEST data: Could not read the robot's state: TIMEOUT: getIotDeviceProperties$",
         r"^Unexpected error while validating Imou credentials$",
-        r"^Error setting up entry t for imou_robot: No Imou robot vacuum was found",
+        r"^Error setting up entry t for imou_vacuum: No Imou robot vacuum was found",
     ]
     unexpected = [m for m in errors if not any(re.search(pattern, m) for pattern in allowed)]
     check("only the injected failures were logged as errors", not unexpected, str(unexpected))
@@ -759,10 +777,10 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     # an upgrade from 0.1.0/0.1.1: two switches already exist (enabled) in the entity registry
     pre_registry = er.async_get(hass)
     for key in ("auto_empty", "resume_after_charging"):
-        pre_registry.async_get_or_create("switch", "imou_robot", f"TESTDEVICE0001_{key}", suggested_object_id=f"rv_l11_a_test_{key}")
+        pre_registry.async_get_or_create("switch", "imou_vacuum", f"TESTDEVICE0001_{key}", suggested_object_id=f"rv_l11_a_test_{key}")
 
     # ---- config flow: errors, success ------------------------------------
-    result = await hass.config_entries.flow.async_init("imou_robot", context={"source": "user"})
+    result = await hass.config_entries.flow.async_init("imou_vacuum", context={"source": "user"})
     check("config flow shows the user form", result["type"] == "form" and result["step_id"] == "user", str(result["type"]))
     flow_id = result["flow_id"]
     user_input = {"app_id": "test-app", "app_secret": "test-secret", "region": "sg"}
@@ -774,12 +792,13 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
 
     result = await hass.config_entries.flow.async_configure(flow_id, user_input)
     check("config flow creates the entry", result["type"] == "create_entry" and result["data"] == user_input and result["result"].unique_id == "test-app", str(result))
+    check("the config entry is titled 'Imou Vacuum (Open Platform)'", result["title"] == "Imou Vacuum (Open Platform)", str(result.get("title")))
     entry = result["result"]
     await hass.async_block_till_done()
     check("entry is loaded", entry.state is config_entries.ConfigEntryState.LOADED, str(entry.state))
     check("client used the region host", FakeClient.instance.host == "openapi-sg.easy4ip.com")
 
-    dup = await hass.config_entries.flow.async_init("imou_robot", context={"source": "user"})
+    dup = await hass.config_entries.flow.async_init("imou_vacuum", context={"source": "user"})
     dup = await hass.config_entries.flow.async_configure(dup["flow_id"], user_input)
     check("same App ID aborts as already_configured", dup["type"] == "abort" and dup["reason"] == "already_configured", str(dup))
 
@@ -794,7 +813,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     dev_reg, ent_reg = dr.async_get(hass), er.async_get(hass)
     devices = dr.async_entries_for_config_entry(dev_reg, entry.entry_id)
     device = devices[0] if len(devices) == 1 else None
-    check("one device with name/model/manufacturer/sw_version", device is not None and (device.name, device.model, device.manufacturer, device.sw_version) == ("RV-L11-A-TEST", "L11-A", "Imou", "0.4.50") and ("imou_robot", "TESTDEVICE0001") in device.identifiers, str(device))
+    check("one device with name/model/manufacturer/sw_version", device is not None and (device.name, device.model, device.manufacturer, device.sw_version) == ("RV-L11-A-TEST", "L11-A", "Imou", "0.4.50") and ("imou_vacuum", "TESTDEVICE0001") in device.identifiers, str(device))
     entities = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
     check("18 entities registered", len(entities) == 18, str(len(entities)))
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in entities}
@@ -1150,7 +1169,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     client.fail_with = api.ImouAuthError("TK1002", "token invalid")
     await coordinator.async_refresh()
     await hass.async_block_till_done()
-    flows = hass.config_entries.flow.async_progress_by_handler("imou_robot")
+    flows = hass.config_entries.flow.async_progress_by_handler("imou_vacuum")
     check("auth failure at runtime starts a reauth flow", any(f["context"]["source"] == "reauth" for f in flows), str(flows))
     reauth = next(f for f in flows if f["context"]["source"] == "reauth")
     FakeClient.validate_error = api.ImouAuthError("SN1004", "bad sign")
@@ -1179,7 +1198,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     async def add_entry(app_id: str) -> Any:
         extra = config_entries.ConfigEntry(
             data={"app_id": app_id, "app_secret": "s", "region": "eu"}, discovery_keys={},
-            domain="imou_robot", entry_id=app_id, minor_version=1, options={}, source="user",
+            domain="imou_vacuum", entry_id=app_id, minor_version=1, options={}, source="user",
             subentries_data=None, title="t", unique_id=app_id, version=1,
         )  # fmt: skip
         await hass.config_entries.async_add(extra)

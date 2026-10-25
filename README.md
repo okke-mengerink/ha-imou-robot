@@ -1,4 +1,4 @@
-# Imou Robot Vacuum for Home Assistant
+# Imou Vacuum for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/v/release/okke-mengerink/ha-imou-robot)](https://github.com/okke-mengerink/ha-imou-robot/releases)
@@ -8,7 +8,7 @@
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=okke-mengerink&repository=ha-imou-robot&category=integration)
 
-This custom integration adds your Imou robot vacuum (robot cleaner) to Home Assistant as a standard vacuum entity, with sensors for battery, status, cleaned area and cleaning time. You install it through HACS, set it up in the Home Assistant UI, and it controls the robot through the official Imou Open Platform cloud API (cloud only, with a free developer account). It is tested on the Imou RV-L11-A (L11 series, with the auto-empty dock). Other Imou robots that use the same things-model identifiers may work, but none are verified. Home Assistant's built-in Imou integration and the Imou Life and Imou-OpenPlatform integrations in HACS do not support robot vacuums, which is why this one exists.
+This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot vacuum (robot cleaner) to Home Assistant as a standard vacuum entity, with sensors for battery, status, cleaned area and cleaning time. You install it through HACS, set it up in the Home Assistant UI, and it controls the robot through the official Imou Open Platform cloud API (cloud only, with a free developer account). It is tested on the Imou RV-L11-A (L11 series, with the auto-empty dock). Other Imou robots that use the same things-model identifiers may work, but none are verified. Home Assistant's built-in Imou integration and the Imou Life and Imou-OpenPlatform integrations in HACS do not support robot vacuums, which is why this one exists.
 
 ## Why this integration?
 
@@ -63,7 +63,7 @@ If HACS reports "Could not download" (a known problem in some Home Assistant/HAC
 
 ### Manual
 
-1. Copy the `custom_components/imou_robot` folder into the `config/custom_components` folder of your Home Assistant installation.
+1. Copy the `custom_components/imou_vacuum` folder into the `config/custom_components` folder of your Home Assistant installation.
 2. Restart Home Assistant.
 
 Then set up the integration as described under [Setup](#setup).
@@ -73,9 +73,22 @@ Then set up the integration as described under [Setup](#setup).
 1. Create a free developer account on the Imou Open Platform at https://open.imoulife.com and sign in.
 2. Open the **Control Board**, go to **Device Access Service** and add your robot with its serial number and safety code (both on the label on the robot), or check that it is already listed.
 3. Open **App Information**. It shows your **App ID** and **App Secret**. Keep the App Secret private, like a password.
-4. In Home Assistant, go to **Settings > Devices & services > Add integration**, select **Imou Robot Vacuum**, and enter the App ID and App Secret. Choose the region that matches the data centre of your Imou account: Europe (default), Singapore (Asia) or North America.
+4. In Home Assistant, go to **Settings > Devices & services > Add integration**, select **Imou Vacuum (Open Platform)**, and enter the App ID and App Secret. Choose the region that matches the data centre of your Imou account: Europe (default), Singapore (Asia) or North America.
 
 If the App Secret changes, Home Assistant offers a re-authentication.
+
+## Renamed in 0.2.0 (was imou_robot)
+
+Up to version 0.1.3 this integration used the domain `imou_robot` and the name "Imou Robot Vacuum". Another community integration uses the same domain, so the two could not be installed side by side, and the names would also clash in the HACS default store. Since 0.2.0 the domain is `imou_vacuum` and the name is **Imou Vacuum (Open Platform)**. The GitHub repository keeps its name.
+
+Home Assistant ties the configuration and the entities to the domain, so upgrading from 0.1.x needs these steps once:
+
+1. In Home Assistant, go to **Settings > Devices & services**, open the old integration and delete it.
+2. Delete the folder `custom_components/imou_robot` from your Home Assistant configuration folder.
+3. Install 0.2.0 (through HACS, or copy `custom_components/imou_vacuum` as described under [Manual](#manual)) and restart Home Assistant.
+4. Go to **Settings > Devices & services > Add integration**, select **Imou Vacuum (Open Platform)** and enter your App ID and App Secret again.
+
+Entity IDs are derived from the device name, so they normally come back the same, and automations and dashboards that use them keep working.
 
 ## FAQ
 
@@ -118,7 +131,7 @@ The integration controls Imou robot vacuums with generic "things model" calls th
 - It discovers every robot on your Imou account. A device counts as a robot when its things model has the service `clean_control`.
 - Properties and services are resolved at runtime by their identifier in the device's things model. Models that use the same identifiers may work; none other than the RV-L11-A are verified.
 - Entities are only created when the identifier exists in the model.
-- The integration domain is `imou_robot`. In the Home Assistant log it shows up as `custom_components.imou_robot`.
+- The integration domain is `imou_vacuum`. In the Home Assistant log it shows up as `custom_components.imou_vacuum`.
 
 ## Entities
 
@@ -196,7 +209,7 @@ The log gets one warning at the first failed poll and one info line when polling
 
 ## Help us map other models
 
-The integration supports **Download diagnostics** (Settings > Devices & services > Imou Robot Vacuum > three-dot menu). The file contains the product-level things model and the current values. The App ID and App Secret are redacted, and the device serial and name are not included. Still, open the file and check it before you share it.
+The integration supports **Download diagnostics** (Settings > Devices & services > Imou Vacuum (Open Platform) > three-dot menu). The file contains the product-level things model and the current values. The App ID and App Secret are redacted, and the device serial and name are not included. Still, open the file and check it before you share it.
 
 If your model is not (fully) working, open a [Help support my Imou robot](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml) issue, attach the diagnostics file and mention the model name. For anything else that goes wrong, use the [bug report](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=bug_report.yml) form.
 

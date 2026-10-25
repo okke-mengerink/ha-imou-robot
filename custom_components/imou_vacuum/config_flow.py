@@ -1,4 +1,4 @@
-"""Config flow for the Imou Robot Vacuum integration."""
+"""Config flow for the Imou Vacuum (Open Platform) integration."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def _error_for(err: Exception) -> str:
 
 
 class ImouRobotConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Imou Robot Vacuum."""
+    """Handle a config flow for Imou Vacuum (Open Platform)."""
 
     VERSION = 1
 
@@ -95,7 +95,7 @@ class ImouRobotConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 return self.async_create_entry(
-                    title="Imou Robot Vacuum",
+                    title="Imou Vacuum (Open Platform)",
                     data={
                         CONF_APP_ID: app_id,
                         CONF_APP_SECRET: app_secret,

@@ -1,4 +1,4 @@
-"""Diagnostics for the Imou Robot Vacuum integration.
+"""Diagnostics for the Imou Vacuum (Open Platform) integration.
 
 The download contains the product-level things model and the current values so
 that other robot models can be mapped. App ID/Secret are redacted and neither

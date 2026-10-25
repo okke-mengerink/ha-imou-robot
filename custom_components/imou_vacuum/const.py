@@ -1,4 +1,4 @@
-"""Constants for the Imou Robot Vacuum integration.
+"""Constants for the Imou Vacuum (Open Platform) integration.
 
 This module is deliberately free of Home Assistant imports so that the pure
 parts of the integration (API client, things-model parsing) can be unit tested
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Final
 
-DOMAIN: Final = "imou_robot"
+DOMAIN: Final = "imou_vacuum"
 MANUFACTURER: Final = "Imou"
 
 # Config entry data

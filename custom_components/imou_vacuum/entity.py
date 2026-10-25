@@ -1,4 +1,4 @@
-"""Base entity for the Imou Robot Vacuum integration."""
+"""Base entity for the Imou Vacuum (Open Platform) integration."""
 
 from __future__ import annotations
 
