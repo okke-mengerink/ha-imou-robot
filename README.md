@@ -1,32 +1,61 @@
-# Imou Robot Vacuum
+# Imou Robot Vacuum for Home Assistant
 
-Home Assistant custom integration for Imou robot vacuums, controlled through the Imou Open Platform cloud API.
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![GitHub release](https://img.shields.io/github/v/release/okke-mengerink/ha-imou-robot)](https://github.com/okke-mengerink/ha-imou-robot/releases)
+[![Validate workflow status](https://img.shields.io/github/actions/workflow/status/okke-mengerink/ha-imou-robot/validate.yml?branch=main&label=validate)](https://github.com/okke-mengerink/ha-imou-robot/actions/workflows/validate.yml)
+[![License: MIT](https://img.shields.io/github/license/okke-mengerink/ha-imou-robot)](https://github.com/okke-mengerink/ha-imou-robot/blob/main/LICENSE)
+[![Home Assistant 2026.1 or newer](https://img.shields.io/badge/Home%20Assistant-2026.1%2B-18BCF2?logo=homeassistant&logoColor=white)](https://www.home-assistant.io/)
 
-- Domain: `imou_robot`
-- Version: 0.1.2
-- Tested with: RV-L11-A (deviceModel `L11-A`), Home Assistant 2026.10.2
-- License: MIT
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=okke-mengerink&repository=ha-imou-robot&category=integration)
 
-## Overview
+This custom integration adds your Imou robot vacuum (robot cleaner) to Home Assistant as a standard vacuum entity, with sensors for battery, status, cleaned area and cleaning time. You install it through HACS, set it up in the Home Assistant UI, and it controls the robot through the official Imou Open Platform cloud API (cloud only, with a free developer account). It is tested on the Imou RV-L11-A (L11 series, with the auto-empty dock). Other Imou robots that use the same things-model identifiers may work, but none are verified. Home Assistant's built-in Imou integration and the Imou Life and Imou-OpenPlatform integrations in HACS do not support robot vacuums, which is why this one exists.
 
-The integration controls Imou robot vacuums with generic "things model" calls through the Imou Open Platform cloud API.
+## Why this integration?
 
-- It discovers every robot on your Imou account. A device counts as a robot when its things model has the service `clean_control`.
-- Properties and services are resolved at runtime by their identifier in the device's things model. Models that use the same identifiers should work.
-- Entities are only created when the identifier exists in the model.
+- **The existing Imou integrations do not cover robot vacuums.** Home Assistant's built-in `imou` integration and the `imou_life` (Imou Life) and `Imou-OpenPlatform` integrations from HACS do not support them.
+- **Official API.** It uses the Imou Open Platform cloud API with generic "things model" calls. It is cloud only: there is no local control.
+- **A normal vacuum entity.** The robot shows up as a standard Home Assistant `vacuum` entity with sensors, so it works in dashboards, automations and scripts like any other robot vacuum.
+- **Model-driven.** Entities are created from the robot's things model at runtime, so models that use the same identifiers can work without code changes.
+- **Quota-friendly.** Polling adapts to what the robot is doing. Typical use is about 12,000 API calls per month, against 30,000 included in Imou's free tier.
+
+## Supported devices
+
+| Robot | Status | Notes |
+|---|---|---|
+| Imou RV-L11-A (L11 series, with auto-empty dock) | Tested | Imou cloud `deviceModel` `L11-A`, Home Assistant 2026.10 |
+| Any other Imou robot vacuum | unverified — please share diagnostics | Might work if its things model uses the same identifiers. See [Help us map other models](#help-us-map-other-models). |
+
+Verified on a real RV-L11-A:
+
+- Locate, start, pause, resume and return to dock.
+- Suction levels quiet, standard and max (set through the `WindWater` service).
+- Carpet boost.
+- Battery and status, including "emptying bin" after a run.
+- Cleaned area (m²) and cleaning time (min). A first real run of 31 m² in 34 min was tracked correctly.
+
+## Features
+
+- **Vacuum entity:** start (a whole-house clean, or resume when paused), pause, stop, return to dock, locate, and fan speed (the suction level: quiet, standard or max).
+- **Sensors:** battery, status, error, cleaned area (m²), cleaning time (min), consumable usage (side brush, main brush, filter, sensors), Wi-Fi signal and a mop-fitted binary sensor.
+- **Controls:** suction and water level selects, carpet boost and other switches, and an empty-bin button. See [Entities](#entities).
+- **Set up in the UI:** App ID, App Secret and region, with re-authentication when the App Secret changes. English and Dutch translations. A diagnostics download for mapping new models.
+- **Automatic discovery:** every robot on your Imou account is found, and only the entities its model supports are created.
+- **Adaptive polling:** every 300 s when idle or docked, every 30 s while active, plus a quick refresh after each command.
+
+Not supported yet: rooms and zones, map, schedules. The integration is cloud only; there is no local control.
 
 ## Requirements
 
 - Home Assistant 2026.1.0 or newer.
 - Cloud only: internet access and the Imou cloud are required. There is no local control.
 - The robot must be online (2.4 GHz Wi-Fi) and bound to your Imou account.
-- A free Imou Open Platform developer account (see Setup).
+- A free Imou Open Platform developer account (see [Setup](#setup)).
 
 ## Installation
 
 ### HACS
 
-1. In HACS, add a custom repository with category **Integration** and URL `https://github.com/okke-mengerink/ha-imou-robot`.
+1. In HACS, add a custom repository with category **Integration** and URL `https://github.com/okke-mengerink/ha-imou-robot`, or click the "Open your Home Assistant instance" badge at the top of this page.
 2. Install the integration from HACS.
 3. Restart Home Assistant.
 
@@ -37,16 +66,59 @@ If HACS reports "Could not download" (a known problem in some Home Assistant/HAC
 1. Copy the `custom_components/imou_robot` folder into the `config/custom_components` folder of your Home Assistant installation.
 2. Restart Home Assistant.
 
-Then set up the integration as described under Setup.
+Then set up the integration as described under [Setup](#setup).
 
 ## Setup
 
 1. Create a free developer account on the Imou Open Platform at https://open.imoulife.com and sign in.
 2. Open the **Control Board**, go to **Device Access Service** and add your robot with its serial number and safety code (both on the label on the robot), or check that it is already listed.
-3. Open **App Information**. It shows your **App ID** and **App Secret**.
+3. Open **App Information**. It shows your **App ID** and **App Secret**. Keep the App Secret private, like a password.
 4. In Home Assistant, go to **Settings > Devices & services > Add integration**, select **Imou Robot Vacuum**, and enter the App ID and App Secret. Choose the region that matches the data centre of your Imou account: Europe (default), Singapore (Asia) or North America.
 
 If the App Secret changes, Home Assistant offers a re-authentication.
+
+## FAQ
+
+### Does the official Imou integration support robot vacuums?
+
+No. At the time of writing (October 2026), Home Assistant's built-in `imou` integration and the `imou_life` (Imou Life) and `Imou-OpenPlatform` integrations from HACS do not support robot vacuums. This integration adds that support through the official Imou Open Platform cloud API.
+
+### Can I control my Imou robot vacuum locally?
+
+No. This integration is cloud only: every command and status update goes through the Imou cloud, so Home Assistant needs internet access and the robot must be online. Entities become unavailable when the robot is not online. There is no local control.
+
+### Is it free?
+
+Yes. The integration is free and open source (MIT license). You need a free Imou Open Platform developer account, which allows 30,000 API calls per month per App ID. Typical use is about 12,000 calls per month, see [Polling and API quota](#polling-and-api-quota). Imou sets the quota and its terms, so check the Open Platform console if you want to be sure about your own account.
+
+### Which region do I choose?
+
+Choose the region that matches the data centre of your Imou account: **Europe** (the default), **Singapore (Asia)** or **North America**. The integration was verified with a Europe account. The other two regions use the same calls on other Imou hosts but are unverified. If setup says it cannot reach the Imou cloud, check the selected region first.
+
+### Can I clean specific rooms?
+
+Not yet. Room and zone cleaning, the map and schedules are not supported yet. The vacuum entity can start a whole-house clean, pause, resume, return to the dock and locate the robot. Until room support exists, you can schedule runs with a Home Assistant automation that calls `vacuum.start`.
+
+### Will it work with Google Home or Alexa?
+
+Not directly: this integration only provides the Home Assistant vacuum entity. Like any Home Assistant vacuum entity, it can be exposed to Google Home through Home Assistant's Google Assistant integration and to Alexa through Home Assistant's Alexa integration (both are available through Home Assistant Cloud or a manual setup). That exposure is set up in Home Assistant, and it has not been verified with this integration.
+
+### Does it work with other Imou robot vacuums?
+
+Maybe. The integration reads each robot's things model (the list of properties and services in the Imou cloud) and creates entities from the identifiers it finds. A device counts as a robot when its things model has the service `clean_control`. Robots that use the same identifiers as the RV-L11-A may work, but only the RV-L11-A is verified. If you have another model, please open a [Help support my Imou robot](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml) issue and attach the diagnostics file.
+
+### Can I run it next to Home Assistant's built-in Imou integration?
+
+Not with the same App ID. The core `imou` integration polls every 2 minutes and will exhaust the monthly quota of that App ID. See [Polling and API quota](#polling-and-api-quota).
+
+## How it works
+
+The integration controls Imou robot vacuums with generic "things model" calls through the Imou Open Platform cloud API.
+
+- It discovers every robot on your Imou account. A device counts as a robot when its things model has the service `clean_control`.
+- Properties and services are resolved at runtime by their identifier in the device's things model. Models that use the same identifiers may work; none other than the RV-L11-A are verified.
+- Entities are only created when the identifier exists in the model.
+- The integration domain is `imou_robot`. In the Home Assistant log it shows up as `custom_components.imou_robot`.
 
 ## Entities
 
@@ -54,7 +126,7 @@ Entities are created per robot, and only when the robot's model supports them.
 
 ### Vacuum
 
-- Controls: start (resumes when paused), pause, stop, return to dock, locate, and fan speed (quiet / standard / max, which is the suction level).
+- Controls: start (begins a whole-house clean, or resumes when paused), pause, stop, return to dock, locate, and fan speed (quiet / standard / max, which is the suction level).
 - Activity is derived from the robot status:
 
 | Robot status | Vacuum activity |
@@ -73,7 +145,7 @@ Entities are created per robot, and only when the robot's model supports them.
 - Battery (%)
 - Status (enum)
 - Error (enum)
-- Cleaned area (m2)
+- Cleaned area (m²)
 - Cleaning time (min)
 - Consumable usage in hours: side brush, main brush, filter and sensors (diagnostic)
 - Wi-Fi signal (enum, diagnostic)
@@ -120,9 +192,9 @@ Entities become unavailable when the robot is not online.
 
 ## Help us map other models
 
-The integration supports **Download diagnostics** (Settings > Devices & services > Imou Robot Vacuum > three-dot menu). The file contains the product-level things model and the current values. The App ID and App Secret are redacted, and the device serial and name are not included.
+The integration supports **Download diagnostics** (Settings > Devices & services > Imou Robot Vacuum > three-dot menu). The file contains the product-level things model and the current values. The App ID and App Secret are redacted, and the device serial and name are not included. Still, open the file and check it before you share it.
 
-If your model is not (fully) working, open an issue in this repository, attach the diagnostics file and mention the model name.
+If your model is not (fully) working, open a [Help support my Imou robot](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml) issue, attach the diagnostics file and mention the model name. For anything else that goes wrong, use the [bug report](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=bug_report.yml) form.
 
 ## Contributing
 
@@ -136,6 +208,7 @@ Contributions of identifier and enum mappings are welcome.
 - The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.)
 - Consumable values are assumed to be hours used. A new robot reports 0.
 - There is no map, room, zone or schedule control yet.
+- Only the Europe region has been verified. Singapore and North America use the same calls on other Imou hosts.
 - Commands are fire-and-forget: the cloud output code is not interpreted.
 - A value you set from Home Assistant is shown for at most 30 s while the robot still reports the old value; after that the reported value wins, so a command the robot ignores is visible. Only for settings the cloud never reports (auto-empty and resume after charging on the L11-A) the last value you set stays.
 - Error information that the robot flags as not valid is ignored (the error sensor shows "none").
@@ -159,10 +232,12 @@ uv run --python 3.14 --with "homeassistant==2026.10.2" python -I tests/smoke_ha.
 
 Test fixtures contain an anonymised copy of the product-level L11-A things model. Never commit serial numbers, tokens or App IDs.
 
+See the [changelog](https://github.com/okke-mengerink/ha-imou-robot/blob/main/CHANGELOG.md) for what changed per release.
+
 ## Disclaimer
 
 This project is not affiliated with, endorsed by or sponsored by Imou or Dahua. Names are trademarks of their owners. Use at your own risk.
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/okke-mengerink/ha-imou-robot/blob/main/LICENSE) file.

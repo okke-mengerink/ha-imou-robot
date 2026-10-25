@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — docs
+
+- Docs: README rewritten for discoverability: new summary, badges, "Why this integration?", supported devices table, features list and FAQ. The behaviour verified on a real RV-L11-A is listed, including a first real run of 31 m² in 34 min.
+- Docs: GitHub issue forms for bug reports and "Help support my Imou robot" requests (model name and diagnostics).
+- Docs: the README no longer hard-codes the version; the release badge shows it.
+- No code changes. The integration version stays 0.1.2.
+
 ## 0.1.2
 
 - Switches whose setting the robot did not report in its first online poll are created disabled by default. The L11-A never reports auto-empty (11800) or resume after charging (11700), before or after a write, and the Imou app has no such settings. Carpet boost (11900) is reported, works both ways and stays enabled. Enable a disabled switch in the entity settings if your model supports it. Entities created by an earlier version keep their state; disable or delete them by hand.

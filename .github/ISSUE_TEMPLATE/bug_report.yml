@@ -1,0 +1,77 @@
+name: Bug report
+description: Something does not work as expected with the Imou Robot Vacuum integration.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. The more of the fields below you fill in, the faster it can be looked at.
+
+        **Check what you share.** The integration redacts your App ID and App Secret in the diagnostics download and leaves out the robot's serial number and name. Still, open the diagnostics file and the log yourself and check them before you attach or paste them. Never share your App Secret, access tokens or the robot's safety code.
+
+        Rooms, map and schedules are not supported yet (see the README). If your robot model is not (fully) supported, use the "Help support my Imou robot" form instead.
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: "Settings > About."
+      placeholder: "2026.10.2"
+    validations:
+      required: true
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      description: "Shown in HACS. For a manual install, it is the version in custom_components/imou_robot/manifest.json."
+      placeholder: "0.1.2"
+    validations:
+      required: true
+  - type: input
+    id: robot_model
+    attributes:
+      label: Robot model
+      description: "The model name on the robot or in the Imou app."
+      placeholder: "Imou RV-L11-A"
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened, and what did you expect?
+      description: "Describe the problem. Mention the entity involved and its state, if any."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Relevant lines from Settings > System > Logs. For more detail, go to Settings > Devices & services > Imou Robot Vacuum, open the three-dot menu and choose Enable debug logging. Reproduce the problem, then disable debug logging again to download the log.
+        Remove anything you do not want to share, such as serial numbers, tokens or secrets.
+      render: text
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics file
+      description: |
+        Go to Settings > Devices & services > Imou Robot Vacuum, open the three-dot menu and choose Download diagnostics. Drag the file into this box. If GitHub does not accept the .json file, zip it or rename it to .txt first.
+        If the integration did not set up and nothing can be downloaded, say so here.
+  - type: checkboxes
+    id: privacy_check
+    attributes:
+      label: Privacy check
+      options:
+        - label: I checked the logs and the diagnostics file and removed anything I do not want to share.
+          required: true
