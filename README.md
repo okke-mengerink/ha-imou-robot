@@ -10,6 +10,8 @@
 
 This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot vacuum (robot cleaner) to Home Assistant as a standard vacuum entity, with sensors for battery, status, cleaned area and cleaning time. You install it through HACS, set it up in the Home Assistant UI, and it controls the robot through the official Imou Open Platform cloud API (cloud only, with a free developer account). It is tested on the Imou RV-L11-A (L11 series, with the auto-empty dock). Other Imou robots that use the same things-model identifiers may work, but none are verified. Home Assistant's built-in Imou integration and the Imou Life and Imou-OpenPlatform integrations in HACS do not support robot vacuums, which is why this one exists.
 
+> **Using this integration?** Give it a ⭐ on GitHub: stars help other Imou owners find it. Do you have another Imou robot? [Share its diagnostics](#help-us-map-other-models) so it can be supported too.
+
 ## Why this integration?
 
 - **The existing Imou integrations do not cover robot vacuums.** Home Assistant's built-in `imou` integration and the `imou_life` (Imou Life) and `Imou-OpenPlatform` integrations from HACS do not support them.
@@ -212,6 +214,12 @@ The log gets one warning at the first failed poll and one info line when polling
 The integration supports **Download diagnostics** (Settings > Devices & services > Imou Vacuum (Open Platform) > three-dot menu). The file contains the product-level things model and the current values. The App ID and App Secret are redacted, and the device serial and name are not included. Still, open the file and check it before you share it.
 
 If your model is not (fully) working, open a [Help support my Imou robot](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml) issue, attach the diagnostics file and mention the model name. For anything else that goes wrong, use the [bug report](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=bug_report.yml) form.
+
+## Support the project
+
+- **Star the repository.** Stars help other Imou owners find this integration on GitHub.
+- **Share diagnostics of another model.** Every robot that gets mapped helps everyone who owns one. See [Help us map other models](#help-us-map-other-models).
+- **Tell others.** If someone asks how to get an Imou robot vacuum into Home Assistant, on the forum, Reddit or elsewhere, point them here.
 
 ## Contributing
 

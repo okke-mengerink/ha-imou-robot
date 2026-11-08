@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Docs: the README asks users to star the repository and to share diagnostics of other Imou robots, with a new "Support the project" section.
+- No code or behaviour changes.
+
 ## 0.2.0
 
 **Breaking: the integration domain is now `imou_vacuum` (was `imou_robot`), and the name is "Imou Vacuum (Open Platform)" (was "Imou Robot Vacuum").** Another community integration uses the same domain and name, so the two could not be installed together, and the names would clash in the HACS default store. There is no automatic migration: Home Assistant ties the configuration and the entities to the domain.
