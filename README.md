@@ -12,6 +12,10 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 
 > **Using this integration?** Give it a ⭐ on GitHub: stars help other Imou owners find it. Do you have another Imou robot? [Share its diagnostics](#help-us-map-other-models) so it can be supported too.
 
+![Home Assistant device page of an Imou RV-L11-A with the Imou Vacuum (Open Platform) integration: device info, controls, sensors and diagnostic entities](https://raw.githubusercontent.com/okke-mengerink/ha-imou-robot/main/docs/images/device-page.png)
+
+*The device page of an Imou RV-L11-A in Home Assistant. This installation uses Dutch, so the entity names are Dutch.*
+
 ## Why this integration?
 
 - **The existing Imou integrations do not cover robot vacuums.** Home Assistant's built-in `imou` integration and the `imou_life` (Imou Life) and `Imou-OpenPlatform` integrations from HACS do not support them.
