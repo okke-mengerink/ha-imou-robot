@@ -562,7 +562,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.2.0"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.2.1"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
