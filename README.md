@@ -12,6 +12,8 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 
 > **Using this integration?** Give it a ⭐ on GitHub: stars help other Imou owners find it. Do you have another Imou robot? [Share its diagnostics](#help-us-map-other-models) so it can be supported too.
 
+**Step-by-step guide:** [English](https://okke-mengerink.github.io/ha-imou-robot/) · [Nederlands](https://okke-mengerink.github.io/ha-imou-robot/nl/)
+
 ![Home Assistant device page of an Imou RV-L11-A with the Imou Vacuum (Open Platform) integration: device info, controls, sensors including the schedules sensor, and diagnostic entities](https://raw.githubusercontent.com/okke-mengerink/ha-imou-robot/main/docs/images/device-page.png)
 
 *The device page of an Imou RV-L11-A in Home Assistant (version 0.3.1). "Stofzuiger boven" is the name the owner gave the robot.*

@@ -1,0 +1,13 @@
+title: Imou Vacuum
+description: Free, open-source HACS integration that adds Imou robot vacuums to Home Assistant, with room cleaning.
+lang: en
+theme: minima
+url: https://okke-mengerink.github.io
+baseurl: /ha-imou-robot
+author: Okke Mengerink
+github_username: okke-mengerink
+header_pages: []
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+  - jekyll-sitemap
