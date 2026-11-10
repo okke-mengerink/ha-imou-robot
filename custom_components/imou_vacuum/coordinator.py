@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
@@ -25,25 +25,47 @@ from .api import (
 )
 from .const import (
     ACTIVE_WORK_STATUSES,
+    CLEAN_MODE_ROOMS,
+    CLEAN_PLAN_GENERAL,
+    CLEAN_START,
     COMMAND_BOOST_SECONDS,
     COMMAND_REFRESH_DELAY,
+    CONF_ROOM_NAMES,
     DEFAULT_LEVEL,
     DOMAIN,
     ERROR_CODE,
     ERROR_VALID,
+    INPUT_MODE,
+    INPUT_PARTITION_AREA,
+    INPUT_PLAN,
+    INPUT_STATUS,
     INPUT_WATER,
     INPUT_WIND,
+    OUTPUT_TIMER,
     PROP_ERROR_INFO,
     PROP_WATER,
     PROP_WIND_POWER,
     PROP_WORK_STATUS,
     SCAN_INTERVAL_ACTIVE,
     SCAN_INTERVAL_IDLE,
+    SCHEDULE_MIN_REFRESH_SECONDS,
+    SCHEDULE_REFRESH_SECONDS,
+    SCHEDULE_RETRY_SECONDS,
+    SERVICE_CLEAN_CONTROL,
+    SERVICE_CLEAN_LIST,
     SERVICE_WIND_WATER,
 )
 from .commanded import CommandedValue
 from .health import PollHealth
 from .model import ReportTracker, ThingsModel, to_bool, to_int
+from .probe import redact, summarize
+from .rooms import (
+    ScheduleList,
+    known_rooms,
+    parse_schedules,
+    partition_area,
+    segment_names,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,9 +103,15 @@ class ImouRuntimeData:
 
     client: ImouClient
     coordinators: dict[str, ImouCoordinator]  # keyed by device id
+    options: dict[str, Any]  # snapshot of entry.options taken at setup
 
 
 type ImouConfigEntry = ConfigEntry[ImouRuntimeData]
+
+
+def default_room_name(room_id: int) -> str:
+    """Return the name of a room that has no label and no name of the user."""
+    return f"Room {room_id}"
 
 
 def _unsupported(feature: str) -> HomeAssistantError:
@@ -136,6 +164,14 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         self.commanded: defaultdict[str, CommandedValue[Any]] = defaultdict(
             CommandedValue
         )
+        # the last service call (redacted inputs, summarized output or error code),
+        # for diagnostics
+        self.last_command: dict[str, Any] | None = None
+        # the robot's cleaning schedules (the only place with room ids), or None
+        # while unknown; refreshed about once an hour
+        self.schedules: ScheduleList | None = None
+        self._schedules_due = 0.0  # time.monotonic() of the next fetch
+        self._schedules_fetched_at: float | None = None  # monotonic, last success
         self._boost_until = 0.0
         self._command_refresh_cancel: CALLBACK_TYPE | None = None
 
@@ -182,6 +218,8 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 failed,
             )
         self._update_polling_interval(state)
+        if status == "online" and time.monotonic() >= self._schedules_due:
+            await self._async_fetch_schedules()
         return state
 
     def _poll_failed(self, reason: str, err: ImouError | None = None) -> ImouRobotState:
@@ -251,11 +289,131 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             if (ref := definition.input_ref(name)) is not None
         }
         output = await self._async_command(
-            self.client.async_control(
-                self.device.product_id, self.device.device_id, definition.ref, content
-            )
+            self._async_record_control(service, inputs or {}, definition.ref, content)
         )
+        self.last_command = {
+            "service": service,
+            "inputs": redact(dict(inputs or {})),
+            "output": summarize(_output_data(output)),
+        }
         _LOGGER.debug("Imou %s output: %s", service, _output_data(output))
+
+    async def _async_record_control(
+        self, service: str, inputs: Mapping[str, Any], ref: str, content: dict[str, Any]
+    ) -> Any:
+        """Call the service; an API error is recorded in ``last_command`` and re-raised."""
+        try:
+            return await self.client.async_control(
+                self.device.product_id, self.device.device_id, ref, content
+            )
+        except ImouError as err:
+            self.last_command = {
+                "service": service,
+                "inputs": redact(dict(inputs)),
+                "error": err.code,
+            }
+            raise
+
+    # -- read-only probe (diagnostics) ----------------------------------------
+    async def async_read_identifiers(self, identifiers: Iterable[str]) -> dict[str, Any]:
+        """Read properties once, by identifier, without touching polling or health.
+
+        Unknown identifiers are skipped. ``ImouError`` propagates.
+        """
+        refs: list[str] = []
+        for identifier in identifiers:
+            if (prop := self.model.prop(identifier)) is not None:
+                refs.append(prop.ref)
+        if not refs:
+            return {}
+        result = await self.client.async_get_properties(
+            self.device.product_id, self.device.device_id, refs
+        )
+        return self.model.parse_values(result.values)
+
+    async def async_query_service(self, service: str) -> Any:
+        """Call an input-less service and return the raw response data.
+
+        Does not schedule a refresh or boost polling. ``ImouError`` propagates.
+        """
+        if (definition := self.model.service(service)) is None:
+            raise _unsupported(service)
+        return await self.client.async_control(
+            self.device.product_id, self.device.device_id, definition.ref, {}
+        )
+
+    # -- rooms and schedules -------------------------------------------------
+    async def _async_fetch_schedules(self) -> bool:
+        """Read the schedules; on any failure keep the previous ones.
+
+        Never raises ``ImouError``, so it cannot make a poll fail. Returns whether
+        new schedules were read.
+        """
+        if (service := self.model.service(SERVICE_CLEAN_LIST)) is None:
+            return False
+        try:
+            response = await self.async_query_service(SERVICE_CLEAN_LIST)
+        except ImouError as err:
+            _LOGGER.debug("Could not read the schedules of %s: %s", self.device.name, err)
+            self._schedules_due = time.monotonic() + SCHEDULE_RETRY_SECONDS
+            return False
+        parsed = parse_schedules(response, service.output_ref(OUTPUT_TIMER))
+        if parsed is None:
+            _LOGGER.debug("The schedules of %s have an unknown format", self.device.name)
+            self._schedules_due = time.monotonic() + SCHEDULE_RETRY_SECONDS
+            return False
+        self.schedules = parsed
+        self._schedules_fetched_at = time.monotonic()
+        self._schedules_due = time.monotonic() + SCHEDULE_REFRESH_SECONDS
+        return True
+
+    async def async_refresh_schedules(self) -> bool:
+        """Read the schedules now and update the entities; False if that failed.
+
+        Schedules read less than ``SCHEDULE_MIN_REFRESH_SECONDS`` ago are reused.
+        """
+        fetched_at = self._schedules_fetched_at
+        if (
+            self.schedules is not None
+            and fetched_at is not None
+            and time.monotonic() - fetched_at < SCHEDULE_MIN_REFRESH_SECONDS
+        ):
+            return True
+        if not await self._async_fetch_schedules():
+            return False
+        self.async_update_listeners()
+        return True
+
+    def room_overrides(self) -> dict[int, str]:
+        """Return the room names the user chose for this robot, by room id."""
+        options = self.config_entry.options.get(CONF_ROOM_NAMES, {})
+        stored = options.get(self.device.device_id, {}) if isinstance(options, Mapping) else {}
+        overrides: dict[int, str] = {}
+        for key, name in (stored.items() if isinstance(stored, Mapping) else ()):
+            if (room_id := to_int(key)) is not None and isinstance(name, str) and name:
+                overrides[room_id] = name
+        return overrides
+
+    def room_names(self) -> dict[int, str]:
+        """Return the name of every room of the schedules, by room id.
+
+        The user's name, else the room type label from the Imou app, else
+        ``Room <id>``; rooms with the same name get their id appended.
+        """
+        known = known_rooms(self.schedules)
+        return segment_names(known, known, self.room_overrides(), default_room_name)
+
+    async def async_clean_rooms(self, room_ids: list[int]) -> None:
+        """Clean these rooms (ids as found in the schedules)."""
+        await self.async_control(
+            SERVICE_CLEAN_CONTROL,
+            {
+                INPUT_STATUS: CLEAN_START,
+                INPUT_MODE: CLEAN_MODE_ROOMS,
+                INPUT_PLAN: CLEAN_PLAN_GENERAL,
+                INPUT_PARTITION_AREA: partition_area(room_ids),
+            },
+        )
 
     async def async_set_level(self, identifier: str, level: int) -> None:
         """Set suction (WindPower) or water (Water) to a level.

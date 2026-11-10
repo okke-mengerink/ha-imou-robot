@@ -17,6 +17,7 @@ from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfArea, UnitOfTi
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ERROR_CODE,
@@ -33,16 +34,32 @@ from .const import (
     PROP_POWER,
     PROP_WIFI,
     PROP_WORK_STATUS,
+    SERVICE_CLEAN_LIST,
     WIFI_KEYS,
     WORK_STATUS_KEYS,
 )
-from .coordinator import ImouConfigEntry, ImouCoordinator, ImouRobotState
+from .coordinator import (
+    ImouConfigEntry,
+    ImouCoordinator,
+    ImouRobotState,
+    default_room_name,
+)
 from .entity import ImouEntity
 from .model import PropertyDef, to_int
 
 _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
+
+
+def _local_start(timestamp: int | None) -> str | None:
+    """Return a schedule's start as local ISO 8601; never raises."""
+    if timestamp is None:
+        return None
+    try:
+        return dt_util.as_local(dt_util.utc_from_timestamp(timestamp)).isoformat()
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def _battery(value: Any) -> int | None:
@@ -180,6 +197,8 @@ async def async_setup_entry(
                 entities.append(
                     ImouEnumSensor(coordinator, enum_description, definition)
                 )
+        if model.has_service(SERVICE_CLEAN_LIST):
+            entities.append(ImouSchedulesSensor(coordinator))
     async_add_entities(entities)
 
 
@@ -260,3 +279,47 @@ class ImouEnumSensor(ImouEntity, SensorEntity):
         if label := self._model_labels.get(raw):
             attributes["model_label"] = label
         return attributes
+
+
+class ImouSchedulesSensor(ImouEntity, SensorEntity):
+    """The robot's cleaning schedules: the number of enabled ones, and all of them."""
+
+    _attr_translation_key = "schedules"
+
+    def __init__(self, coordinator: ImouCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "schedules")
+
+    @property
+    @override
+    def native_value(self) -> int | None:
+        """Return the number of enabled schedules (None while they are unknown)."""
+        schedules = self.coordinator.schedules
+        if schedules is None:
+            return None
+        return sum(1 for schedule in schedules.schedules if schedule.enabled)
+
+    @property
+    @override
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return every schedule; ``repeat`` and ``active`` are the raw values."""
+        schedules = self.coordinator.schedules
+        if schedules is None:
+            return None
+        names = self.coordinator.room_names()
+        return {
+            "schedules": [
+                {
+                    "enabled": schedule.enabled,
+                    "active": schedule.active,
+                    "start": _local_start(schedule.start),
+                    "repeat": schedule.period,
+                    "rooms": (
+                        [names.get(room_id, default_room_name(room_id)) for room_id in schedule.room_ids]
+                        if schedule.room_ids
+                        else "whole_house"
+                    ),
+                }
+                for schedule in schedules.schedules
+            ]
+        }

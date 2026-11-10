@@ -63,6 +63,8 @@ INPUT_MODE: Final = "mode"
 INPUT_PLAN: Final = "plan"
 INPUT_WIND: Final = "wind"
 INPUT_WATER: Final = "water"
+INPUT_PARTITION_AREA: Final = "partition_area"  # clean_control: JSON text list of room ids
+OUTPUT_TIMER: Final = "timer"  # clean_list: the schedules
 
 PROP_WORK_STATUS: Final = "work_status"
 PROP_POWER: Final = "power"
@@ -129,6 +131,23 @@ NEVER_POLL_IDENTIFIERS: Final = frozenset(
     }
 )
 
+# Read-only probe (diagnostics only): properties whose real format is not known
+# yet (room cleaning, map, schedules). They are never polled and never written.
+PROP_CLEAN_PARAMS: Final = "clean_params"
+PROP_AREA_INFO: Final = "areainfoarray"
+PROP_MAP_CONFIG: Final = "mapconfig"
+PROP_MAP_SWITCH: Final = "map_switch"
+MAP_NAME: Final = "map_name"
+MAP_URL: Final = "map_url"
+AREA_URL: Final = "area_url"
+SERVICE_CLEAN_LIST: Final = "clean_list"
+PROBE_IDENTIFIERS: Final[tuple[str, ...]] = (
+    PROP_CLEAN_PARAMS,
+    PROP_AREA_INFO,
+    PROP_MAP_CONFIG,
+    PROP_MAP_SWITCH,
+)
+
 # clean_control "status" input values
 CLEAN_PAUSE: Final = 0
 CLEAN_START: Final = 1
@@ -136,7 +155,16 @@ CLEAN_CONTINUE: Final = 2
 CLEAN_STOP: Final = 3
 # clean_control "mode" / "plan" used when starting: whole house, general plan
 CLEAN_MODE_WHOLE_HOUSE: Final = 0
+CLEAN_MODE_ROOMS: Final = 1
 CLEAN_PLAN_GENERAL: Final = 0
+
+# Rooms and schedules. The robot reports no rooms or map; room ids and the room
+# type labels only appear in the schedules (clean_list). They are refreshed this
+# often (seconds); a failed fetch is retried sooner.
+CONF_ROOM_NAMES: Final = "room_names"  # config entry option: {device id: {room id: name}}
+SCHEDULE_REFRESH_SECONDS: Final = 3600
+SCHEDULE_RETRY_SECONDS: Final = 900
+SCHEDULE_MIN_REFRESH_SECONDS: Final = 60  # on-demand reads are cached this long
 
 # ---------------------------------------------------------------------------
 # Documented fallback: the refs of the tested Imou RV-L11-A. They are used ONLY
@@ -171,17 +199,22 @@ FALLBACK_SERVICE_REFS: Final[dict[str, str]] = {
     SERVICE_LOCATION: "20400",
     SERVICE_DUST: "2300",
     SERVICE_WIND_WATER: "3100",
+    SERVICE_CLEAN_LIST: "2500",
 }
 FALLBACK_INPUT_REFS: Final[dict[str, dict[str, str]]] = {
     SERVICE_CLEAN_CONTROL: {
         INPUT_STATUS: "2701",
         INPUT_MODE: "2702",
         INPUT_PLAN: "2703",
+        INPUT_PARTITION_AREA: "2704",
     },
     SERVICE_WIND_WATER: {
         INPUT_WATER: "3102",
         INPUT_WIND: "3103",
     },
+}
+FALLBACK_OUTPUT_REFS: Final[dict[str, dict[str, str]]] = {
+    SERVICE_CLEAN_LIST: {OUTPUT_TIMER: "2501"},
 }
 
 # ---------------------------------------------------------------------------

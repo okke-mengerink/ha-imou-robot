@@ -22,7 +22,7 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 - **Official API.** It uses the Imou Open Platform cloud API with generic "things model" calls. It is cloud only: there is no local control.
 - **A normal vacuum entity.** The robot shows up as a standard Home Assistant `vacuum` entity with sensors, so it works in dashboards, automations and scripts like any other robot vacuum.
 - **Model-driven.** Entities are created from the robot's things model at runtime, so models that use the same identifiers can work without code changes.
-- **Quota-friendly.** Polling adapts to what the robot is doing. Typical use is about 12,000 API calls per month, against 30,000 included in Imou's free tier.
+- **Quota-friendly.** Polling adapts to what the robot is doing. Typical use is about 13,000 API calls per month, against 30,000 included in Imou's free tier.
 
 ## Supported devices
 
@@ -38,6 +38,7 @@ Verified on a real RV-L11-A:
 - Carpet boost.
 - Battery and status, including "emptying bin" after a run.
 - Cleaned area (m²) and cleaning time (min). A first real run of 31 m² in 34 min was tracked correctly.
+- Room cleaning of one room and of two rooms in one command (`clean_control` in room mode), and reading the schedules (`clean_list`).
 
 ## Features
 
@@ -46,9 +47,12 @@ Verified on a real RV-L11-A:
 - **Controls:** suction and water level selects, carpet boost and other switches, and an empty-bin button. See [Entities](#entities).
 - **Set up in the UI:** App ID, App Secret and region, with re-authentication when the App Secret changes. English and Dutch translations. A diagnostics download for mapping new models.
 - **Automatic discovery:** every robot on your Imou account is found, and only the entities its model supports are created.
+- **Room cleaning (Home Assistant 2026.3 or newer):** clean one or more rooms with `vacuum.clean_area` or by voice, after mapping the robot's rooms to your Home Assistant areas. See [Room cleaning](#room-cleaning).
+- **Schedules sensor:** the number of enabled schedules from the Imou app, with the details as an attribute.
+- **Advanced commands:** `vacuum.send_command` calls any service of the robot's things model, checked against that model.
 - **Adaptive polling:** every 300 s when idle or docked, every 30 s while active, plus a quick refresh after each command.
 
-Not supported yet: rooms and zones, map, schedules. The integration is cloud only; there is no local control.
+Not supported: the map, zone cleaning and editing schedules. The robot does not report its map or room list through the Imou Open Platform API. The integration is cloud only; there is no local control.
 
 ## Requirements
 
@@ -83,6 +87,49 @@ Then set up the integration as described under [Setup](#setup).
 
 If the App Secret changes, Home Assistant offers a re-authentication.
 
+## Room cleaning
+
+Room cleaning needs Home Assistant 2026.3 or newer, which added room cleaning for vacuums. On older versions everything else works as before.
+
+The Imou Open Platform API does not report the robot's map or room list, not even while it cleans. The room ids do appear in the robot's schedules, so the integration reads the rooms from there:
+
+1. **Put your rooms in a schedule.** In the Imou Life app, create a schedule and select the rooms one by one (not "whole house": the app stores that as an empty list). You may switch the schedule off; the integration only reads it. A room that you have mapped to an area stays available, even if you delete the schedule later.
+2. **Name the rooms.** Go to **Settings > Devices & services > Imou Vacuum (Open Platform) > Configure**. The list is prefilled with the rooms that were found. Write one room per line as `id = name`, for example `3 = Office`.
+3. **Map the rooms to areas.** Open the settings of the vacuum entity and configure the segment-to-area mapping: choose the Home Assistant area for each room.
+4. **Clean.** Use the action `vacuum.clean_area`, or ask Assist to clean an area:
+
+```yaml
+action: vacuum.clean_area
+target:
+  entity_id: vacuum.your_robot
+data:
+  cleaning_area_id:
+    - office
+```
+
+When a new room id appears in your schedules, Home Assistant shows a repair notice so that you can map it.
+
+**About the room names.** The app does not store room names in the schedules but room *types* (such as "Bedroom" or "Office"), and it leaves out rooms without a type. A type is therefore only used as the name when every selected room in that schedule has one; other rooms are called "Room <id>". Two rooms can have the same type; those names get the id added, for example "Bedroom (3)". Your own names from step 2 always win.
+
+**Which id is which room?** Start a single room with `vacuum.send_command` (see below) and watch where the robot goes.
+
+### Advanced: vacuum.send_command
+
+`vacuum.send_command` calls a service of the robot's things model. `command` is the service identifier and `params` maps its input identifiers to values, which are sent unchanged. Unknown services and inputs are rejected. The services and inputs of your robot are listed in the diagnostics download. This starts a clean of rooms 3 and 4:
+
+```yaml
+action: vacuum.send_command
+target:
+  entity_id: vacuum.your_robot
+data:
+  command: clean_control
+  params:
+    status: 1
+    mode: 1
+    plan: 0
+    partition_area: "[3,4]"
+```
+
 ## Renamed in 0.2.0 (was imou_robot)
 
 Up to version 0.1.3 this integration used the domain `imou_robot` and the name "Imou Robot Vacuum". Another community integration uses the same domain, so the two could not be installed side by side, and the names would also clash in the HACS default store. Since 0.2.0 the domain is `imou_vacuum` and the name is **Imou Vacuum (Open Platform)**. The GitHub repository keeps its name.
@@ -108,7 +155,7 @@ No. This integration is cloud only: every command and status update goes through
 
 ### Is it free?
 
-Yes. The integration is free and open source (MIT license). You need a free Imou Open Platform developer account, which allows 30,000 API calls per month per App ID. Typical use is about 12,000 calls per month, see [Polling and API quota](#polling-and-api-quota). Imou sets the quota and its terms, so check the Open Platform console if you want to be sure about your own account.
+Yes. The integration is free and open source (MIT license). You need a free Imou Open Platform developer account, which allows 30,000 API calls per month per App ID. Typical use is about 13,000 calls per month, see [Polling and API quota](#polling-and-api-quota). Imou sets the quota and its terms, so check the Open Platform console if you want to be sure about your own account.
 
 ### Which region do I choose?
 
@@ -116,7 +163,7 @@ Choose the region that matches the data centre of your Imou account: **Europe** 
 
 ### Can I clean specific rooms?
 
-Not yet. Room and zone cleaning, the map and schedules are not supported yet. The vacuum entity can start a whole-house clean, pause, resume, return to the dock and locate the robot. Until room support exists, you can schedule runs with a Home Assistant automation that calls `vacuum.start`.
+Yes, with Home Assistant 2026.3 or newer. See [Room cleaning](#room-cleaning). Zone cleaning and the map are not available, because the robot does not report its map through the Imou Open Platform API.
 
 ### Will it work with Google Home or Alexa?
 
@@ -146,6 +193,7 @@ Entities are created per robot, and only when the robot's model supports them.
 ### Vacuum
 
 - Controls: start (begins a whole-house clean, or resumes when paused), pause, stop, return to dock, locate, and fan speed (quiet / standard / max, which is the suction level).
+- Room cleaning through `vacuum.clean_area` (Home Assistant 2026.3 or newer, see [Room cleaning](#room-cleaning)) and `vacuum.send_command`.
 - Activity is derived from the robot status:
 
 | Robot status | Vacuum activity |
@@ -168,6 +216,7 @@ Entities are created per robot, and only when the robot's model supports them.
 - Cleaning time (min)
 - Consumable usage in hours: side brush, main brush, filter and sensors (diagnostic). The robot reports minutes used; the sensors show hours (minutes / 60, one decimal).
 - Wi-Fi signal (enum, diagnostic)
+- Schedules: the number of enabled schedules in the Imou app. The attribute `schedules` lists each schedule with `enabled`, `active` (raw), `start` (local time), `repeat` (raw, as the robot reports it) and `rooms` (names, or `whole_house`). Read once an hour.
 
 ### Other entities
 
@@ -203,7 +252,9 @@ The integration makes one API call per robot per poll. The poll interval depends
 
 Pressing start polls the robot once first, so that it can tell "start" from "resume".
 
-Typical use is about 12,000 API calls per month. Imou's free tier allows 30,000 calls per month per App ID.
+The schedules (for the rooms and the Schedules sensor) are read once an hour, and again when you open the room mapping: about 720 extra calls per month. After a failed read the next try comes after 15 minutes.
+
+Typical use is about 13,000 API calls per month. Imou's free tier allows 30,000 calls per month per App ID.
 
 **Do not** also run Home Assistant's core `imou` integration with the same App ID. It polls every 2 minutes and will exhaust the quota.
 
@@ -215,7 +266,7 @@ The log gets one warning at the first failed poll and one info line when polling
 
 ## Help us map other models
 
-The integration supports **Download diagnostics** (Settings > Devices & services > Imou Vacuum (Open Platform) > three-dot menu). The file contains the product-level things model and the current values. The App ID and App Secret are redacted, and the device serial and name are not included. Still, open the file and check it before you share it.
+The integration supports **Download diagnostics** (Settings > Devices & services > Imou Vacuum (Open Platform) > three-dot menu). The file contains the product-level things model, the current values, a read-only probe of the room, map and schedule data, and the last command that was sent. The App ID and App Secret are redacted, the device serial and name are not included, and the probe hides names, tokens and the path and query of URLs. Still, open the file and check it before you share it.
 
 If your model is not (fully) working, open a [Help support my Imou robot](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml) issue, attach the diagnostics file and mention the model name. For anything else that goes wrong, use the [bug report](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=bug_report.yml) form.
 
@@ -236,7 +287,8 @@ Contributions of identifier and enum mappings are welcome.
 - A switch whose setting the robot did not report in its first poll is created but disabled by default (the poll must be of an online robot; otherwise nothing is disabled). Enable it in the entity settings if your model supports it. Every switch has the attribute `reported_by_device`. Entities created by an earlier version keep their state: disable or delete those two switches by hand.
 - The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.)
 - Consumable usage: the L11-A reports minutes used, although its things model says hours (after a 34-minute run all four counters read 34). The sensors therefore show hours (minutes / 60, displayed with one decimal). The conversion is the constant `LIFE_RAW_PER_HOUR` in `const.py`; a model that really reports hours would need 1 there.
-- There is no map, room, zone or schedule control yet.
+- There is no map and no zone cleaning. On an L11-A the room, map and cleaning-parameter properties stay empty in the cloud, even while the robot cleans a room, so the rooms are read from the schedules.
+- Schedules are read-only. The meaning of the schedule field `active` and the format of repeating days are unverified; both are shown raw.
 - Only the Europe region has been verified. Singapore and North America use the same calls on other Imou hosts.
 - Commands are fire-and-forget: the cloud output code is not interpreted.
 - A value you set from Home Assistant is shown for at most 30 s while the robot still reports the old value; after that the reported value wins, so a command the robot ignores is visible. Only for settings the cloud never reports (auto-empty and resume after charging on the L11-A) the last value you set stays.

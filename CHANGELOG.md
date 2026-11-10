@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- New: room cleaning, with Home Assistant 2026.3 or newer. The robot's rooms appear as segments that you map to Home Assistant areas; `vacuum.clean_area` (or Assist) then cleans them. Verified on an RV-L11-A: `clean_control` in room mode with `partition_area` as a JSON list of room ids, for one room and for two rooms in one command.
+- The Imou Open Platform API does not report the map or the room list. On an L11-A the properties stay empty, even while the robot cleans a room. The rooms are therefore read from the robot's schedules (`clean_list`). Name the rooms in the integration options (Configure), one `id = name` per line. Names from the app are room types and are only used when the pairing is certain.
+- New: a Schedules sensor with the number of enabled schedules and the details as an attribute. The schedules are read once an hour (about 720 extra API calls per month).
+- New: `vacuum.send_command` calls any service of the robot's things model. Unknown services and inputs are rejected; values are sent unchanged.
+- Diagnostics: a read-only probe of the room, map and schedule data (names, tokens, network details and the path and query of URLs are hidden; only public https URLs are checked, without following redirects) and the last command with its result.
+- Opening the room mapping or the options reads the schedules at most once a minute. Saving the options reloads the integration only when the options really changed.
+- Home Assistant 2026.1 and 2026.2 keep working as before; room cleaning is only enabled where Home Assistant supports it.
+
 ## 0.2.1
 
 - Docs: the README asks users to star the repository and to share diagnostics of other Imou robots, with a new "Support the project" section.

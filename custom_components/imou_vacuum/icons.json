@@ -49,6 +49,9 @@
       },
       "wifi_signal": {
         "default": "mdi:wifi"
+      },
+      "schedules": {
+        "default": "mdi:calendar-clock"
       }
     },
     "switch": {

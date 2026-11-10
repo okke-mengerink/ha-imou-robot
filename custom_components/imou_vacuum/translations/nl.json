@@ -43,6 +43,33 @@
       }
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kies een robot",
+        "description": "Kies de robot waarvan je de kamers een naam wilt geven.",
+        "data": {
+          "robot": "Robot"
+        }
+      },
+      "rooms": {
+        "title": "Kamernamen van {robot}",
+        "description": "De robot geeft zijn kamers niet door. De kamers hieronder komen uit de schoonmaakschema's in de Imou-app. Schrijf één kamer per regel als `id = naam`. Deze namen worden gebruikt bij het schoonmaken van kamers en in de sensor met schema's.",
+        "data": {
+          "room_names": "Kamernamen"
+        },
+        "data_description": {
+          "room_names": "Eén kamer per regel, bijvoorbeeld `3 = Blauwe kamer`. Het id is het kamernummer uit de schema's."
+        }
+      }
+    },
+    "error": {
+      "invalid_room_names": "Elke regel moet er zo uitzien: `3 = Blauwe kamer`, dus een kamernummer, een is-gelijkteken en een naam."
+    },
+    "abort": {
+      "no_rooms": "Er zijn nog geen kamers bekend. De robot laat zijn kamers alleen zien in de schoonmaakschema's. Maak in de Imou-app een schema aan waarin je de kamers selecteert (je mag het daarna uitzetten) en probeer het dan opnieuw."
+    }
+  },
   "entity": {
     "binary_sensor": {
       "mop_fitted": {
@@ -139,6 +166,9 @@
           "fair": "Matig",
           "good": "Goed"
         }
+      },
+      "schedules": {
+        "name": "Schema's"
       }
     },
     "switch": {
@@ -190,6 +220,15 @@
     },
     "invalid_option": {
       "message": "{option} is geen geldige keuze voor deze robot."
+    },
+    "unknown_command": {
+      "message": "Onbekend commando {command}. Gebruik een service uit het things model van de robot, bijvoorbeeld clean_control."
+    },
+    "invalid_command_params": {
+      "message": "Ongeldige parameters voor {command}: {params}. Gebruik een dictionary met de invoer-identifiers van de service."
+    },
+    "invalid_room": {
+      "message": "{room} is geen geldig kamer-id. Gebruik het kamernummer uit de schema's, bijvoorbeeld 3."
     }
   }
 }

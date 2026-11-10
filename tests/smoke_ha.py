@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 import copy
+import hashlib
 import importlib
 import json
 import logging
@@ -41,6 +42,7 @@ PKG = "custom_components.imou_vacuum"
 PKG_DIR = ROOT / "custom_components" / "imou_vacuum"
 MODEL_JSON = json.loads((ROOT / "tests/fixtures/l11a_model.json").read_text("utf-8"))
 VALUES_JSON = json.loads((ROOT / "tests/fixtures/l11a_values.json").read_text("utf-8"))
+ICONS_JSON = json.loads((PKG_DIR / "icons.json").read_text("utf-8"))
 
 RESULTS: list[tuple[bool, str]] = []
 
@@ -56,12 +58,19 @@ def mod(name: str) -> Any:
     return importlib.import_module(f"{PKG}.{name}")
 
 
+def ha_clean_area() -> Any:
+    """VacuumEntityFeature.CLEAN_AREA, or None on Home Assistant before 2026.3."""
+    from homeassistant.components.vacuum import VacuumEntityFeature  # noqa: PLC0415
+
+    return getattr(VacuumEntityFeature, "CLEAN_AREA", None)
+
+
 # ---------------------------------------------------------------------------
 # 1. imports
 # ---------------------------------------------------------------------------
 MODULES = [
     "api", "binary_sensor", "button", "commanded", "config_flow", "const", "coordinator",
-    "diagnostics", "entity", "health", "model", "select", "sensor", "switch", "vacuum",
+    "diagnostics", "entity", "health", "model", "probe", "rooms", "select", "sensor", "switch", "vacuum",
 ]  # fmt: skip
 
 
@@ -159,21 +168,34 @@ def test_entities() -> None:
     coordinator = FakeCoordinator(MODEL_JSON, VALUES_JSON["properties"])
     ents = make_entities(coordinator)
     total = sum(len(v) for v in ents.values())
-    check("entity counts per platform (1/10/1/3/2/1)", [len(ents[p]) for p in ents] == [1, 10, 1, 3, 2, 1], str({p: len(v) for p, v in ents.items()}))
-    check("18 entities with unique ids", total == 18 and len({e.unique_id for v in ents.values() for e in v}) == 18)
+    check("entity counts per platform (1/11/1/3/2/1)", [len(ents[p]) for p in ents] == [1, 11, 1, 3, 2, 1], str({p: len(v) for p, v in ents.items()}))
+    check("19 entities with unique ids", total == 19 and len({e.unique_id for v in ents.values() for e in v}) == 19)
 
     # --- vacuum -----------------------------------------------------------
     vac = ents["vacuum"][0]
     expected_features = (
         VacuumEntityFeature.START | VacuumEntityFeature.PAUSE | VacuumEntityFeature.STOP
         | VacuumEntityFeature.RETURN_HOME | VacuumEntityFeature.LOCATE | VacuumEntityFeature.STATE
-        | VacuumEntityFeature.FAN_SPEED
+        | VacuumEntityFeature.FAN_SPEED | VacuumEntityFeature.SEND_COMMAND
     )  # fmt: skip
-    check("vacuum features START|PAUSE|STOP|RETURN_HOME|LOCATE|STATE|FAN_SPEED", vac.supported_features == expected_features, str(vac.supported_features))
+    clean_area = ha_clean_area()
+    if clean_area is not None:
+        expected_features |= clean_area
+    import homeassistant.const as ha_const  # noqa: PLC0415
+
+    ha_version = tuple(int(x) for x in ha_const.__version__.split(".")[:2])
+    check("vacuum features START|PAUSE|STOP|RETURN_HOME|LOCATE|STATE|FAN_SPEED|SEND_COMMAND (+ CLEAN_AREA where Home Assistant has it)", vac.supported_features == expected_features, str(vac.supported_features))
+    check("Home Assistant has CLEAN_AREA exactly from 2026.3", (clean_area is not None) == (ha_version >= (2026, 3)), str(ha_version))
     unwanted = 0
-    for name in ("SEND_COMMAND", "CLEAN_SPOT", "CLEAN_AREA", "MAP", "TURN_ON", "TURN_OFF", "STATUS"):
-        unwanted |= int(getattr(VacuumEntityFeature, name, 0))  # CLEAN_AREA only exists in newer HA
-    check("vacuum has no SEND_COMMAND/CLEAN_*/MAP features", not (int(vac.supported_features) & unwanted))
+    for name in ("CLEAN_SPOT", "MAP", "TURN_ON", "TURN_OFF", "STATUS"):
+        unwanted |= int(getattr(VacuumEntityFeature, name, 0))
+    check("vacuum has no CLEAN_SPOT/MAP features (the robot reports no map)", not (int(vac.supported_features) & unwanted))
+    no_rooms_model = copy.deepcopy(MODEL_JSON)
+    for service in no_rooms_model["services"]:
+        if service["identifier"] == "clean_control":
+            service["inputData"] = [i for i in service["inputData"] if i["identifier"] != "partition_area"]
+    no_rooms_vac = make_entities(FakeCoordinator(no_rooms_model, VALUES_JSON["properties"]))["vacuum"][0]
+    check("a model whose clean_control lacks partition_area gets no CLEAN_AREA", int(no_rooms_vac.supported_features) == int(expected_features) & ~int(clean_area or 0), str(no_rooms_vac.supported_features))
     check("vacuum has the translation key 'robot' (fan speed names)", vac.translation_key == "robot")
     check("vacuum activity DOCKED for work_status 3", vac.activity == VacuumActivity.DOCKED, str(vac.activity))
     check("vacuum state string is 'docked'", vac.state == "docked", str(vac.state))
@@ -195,6 +217,31 @@ def test_entities() -> None:
     coordinator.set_values(work_status=99)
     check("unknown work_status -> activity None (state unknown)", vac.activity is None and vac.state in (None, "unknown"))
     coordinator.set_values(work_status=3)
+
+    # --- vacuum send_command (generic, model-validated) ---------------------
+    async def send(command: str, params: Any = None) -> list[tuple[Any, ...]]:
+        coordinator.calls.clear()
+        await vac.async_send_command(command, params)
+        return list(coordinator.calls)
+
+    full = {"status": 1, "mode": 1, "plan": 0, "partition_area": "[2]"}
+    check("send_command passes identifiers and a text value unchanged", asyncio.run(send("clean_control", dict(full))) == [("control", "clean_control", full)])
+    as_list = {**full, "partition_area": [2]}
+    check("send_command passes a list value unchanged (no JSON encoding)", asyncio.run(send("clean_control", dict(as_list))) == [("control", "clean_control", as_list)])
+    check("send_command matches command and keys case-insensitively", asyncio.run(send("Clean_Control", {"Mode": 1})) == [("control", "Clean_Control", {"Mode": 1})])
+    check("send_command without params is allowed", asyncio.run(send("location")) == [("control", "location", {})])
+
+    async def bad_send(command: str, params: Any) -> tuple[str | None, dict[str, str] | None, list[Any]]:
+        coordinator.calls.clear()
+        try:
+            await vac.async_send_command(command, params)
+        except ServiceValidationError as err:
+            return err.translation_key, err.translation_placeholders, list(coordinator.calls)
+        return None, None, list(coordinator.calls)
+
+    check("send_command unknown command -> unknown_command, nothing sent", asyncio.run(bad_send("nope", None)) == ("unknown_command", {"command": "nope"}, []))
+    check("send_command unknown input key -> invalid_command_params, nothing sent", asyncio.run(bad_send("clean_control", {"mode": 1, "bogus": 2, "x": 3})) == ("invalid_command_params", {"command": "clean_control", "params": "bogus, x"}, []))
+    check("send_command list as params -> invalid_command_params, nothing sent", asyncio.run(bad_send("clean_control", [1, 2])) == ("invalid_command_params", {"command": "clean_control", "params": "list"}, []))
 
     # --- vacuum commands at identifier level ------------------------------
     async def commands() -> list[tuple[Any, ...]]:
@@ -537,6 +584,8 @@ def test_files() -> None:
             check(f"[{lang}] {platform}.{key} has a translated state for every known value", set(states) == set(known.values()) and all(states.values()), str(set(known.values()) ^ set(states)))
         fan_states = data["entity"]["vacuum"]["robot"]["state_attributes"]["fan_speed"]["state"]
         check(f"[{lang}] vacuum fan speed presets are translated", set(fan_states) == set(const.LEVEL_KEYS["windpower"].values()) and all(fan_states.values()), str(fan_states))
+        check(f"[{lang}] options flow texts: both steps, field, error and abort", {"init", "rooms"} <= set(data["options"]["step"]) and data["options"]["step"]["rooms"]["data"]["room_names"] and data["options"]["step"]["init"]["data"]["robot"] and data["options"]["error"]["invalid_room_names"] and data["options"]["abort"]["no_rooms"] and "{robot}" in data["options"]["step"]["rooms"]["title"])
+        check(f"[{lang}] schedules sensor name and invalid_room exception", data["entity"]["sensor"]["schedules"]["name"] and "{room}" in data["exceptions"]["invalid_room"]["message"])
         check(f"[{lang}] region selector options", set(data["selector"]["region"]["options"]) == set(const.REGION_HOSTS))
         check(f"[{lang}] config errors/abort/steps present", {"cannot_connect", "invalid_auth", "unknown"} <= set(data["config"]["error"]) and "already_configured" in data["config"]["abort"] and {"user", "reauth_confirm"} <= set(data["config"]["step"]))
         used = set()
@@ -545,7 +594,8 @@ def test_files() -> None:
         check(f"[{lang}] every exception translation_key exists", used and used <= set(data["exceptions"]), str(used - set(data["exceptions"])))
         for key, item in data["exceptions"].items():
             placeholders = set(re.findall(r"\{(\w+)\}", item["message"]))
-            check(f"[{lang}] exception '{key}' placeholders are known", placeholders <= {"error", "feature", "fan_speed", "option"}, str(placeholders))
+            check(f"[{lang}] exception '{key}' placeholders are known", placeholders <= {"error", "feature", "fan_speed", "option", "command", "params", "room"}, str(placeholders))
+    check("sensor name Schedules / Schema's", en["entity"]["sensor"]["schedules"]["name"] == "Schedules" and nl["entity"]["sensor"]["schedules"]["name"] == "Schema's")
     check("no Dutch leaked into en.json / English into nl names (spot check)", en["entity"]["sensor"]["battery"]["name"] == "Battery" and nl["entity"]["sensor"]["battery"]["name"] == "Batterij")
     check("Dutch suction labels stil / standaard / maximaal", nl["entity"]["select"]["suction_level"]["state"] == {"quiet": "Stil", "standard": "Standaard", "max": "Maximaal"} and nl["entity"]["vacuum"]["robot"]["state_attributes"]["fan_speed"]["state"] == {"quiet": "Stil", "standard": "Standaard", "max": "Maximaal"})
     check("Dutch water labels laag / gemiddeld / hoog", nl["entity"]["select"]["mop_water_level"]["state"] == {"low": "Laag", "medium": "Gemiddeld", "high": "Hoog"})
@@ -562,7 +612,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.2.1"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.3.0"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -627,6 +677,26 @@ def test_config_flow_schema() -> None:
 # ---------------------------------------------------------------------------
 # 5. full setup in a bare Home Assistant core with a fake API client
 # ---------------------------------------------------------------------------
+PROBE_MAP_URL = "https://oss.example.com/bucket/maps/abc/map001.bin?Signature=PROBESECRETSIG&Expires=99"
+PROBE_AREA_URL = "https://oss.example.com/bucket/areas/area001.json?token=PROBESECRETTOK"
+# clean_list response data in the format of the real robot (verified live)
+SCHEDULES_VALUE = {
+    "timeZone": 1,
+    "timeZoneSec": 3600,
+    "value": [
+        {"period": [], "unlock": True, "active": True, "cleanAreas": [2], "startTime": 1794224460, "endTime": 0, "segmentTagIds": ["Kantoor"]},
+        {"period": [1, 3], "unlock": False, "active": True, "cleanAreas": [], "startTime": 1794300000, "endTime": 0, "segmentTagIds": []},
+        {"period": [], "unlock": True, "active": True, "cleanAreas": [3, 4], "startTime": 1794400000, "endTime": 0, "segmentTagIds": ["Slaapkamer", "Slaapkamer"]},
+    ],
+}
+PROBE_PROPS = {
+    "1022": json.dumps({"mode": 1, "rooms": [{"id": 3, "roomName": "Kitchen", "order": 1}]}),
+    "1023": json.dumps([{"areaId": 3, "areaName": "Kitchen", "points": [[1.5, 2.5]]}]),
+    "1025": "plain text that is not json " + PROBE_MAP_URL,
+    "40100": {"40102": "Kitchen Floor", "40103": PROBE_MAP_URL, "40104": PROBE_AREA_URL},
+}
+
+
 class FakeClient:
     """Stands in for ImouClient (no network)."""
 
@@ -644,15 +714,19 @@ class FakeClient:
         self.app_id, self.host = app_id, host
         self.status = FakeClient.initial_status
         self.props: dict[str, Any] = copy.deepcopy(VALUES_JSON["properties"])
+        self.props.update(copy.deepcopy(PROBE_PROPS))  # never polled; only read by the diagnostics probe
         if FakeClient.report_optional:
             self.props.update({"11700": 0, "11800": 0})
         self.calls: list[tuple[Any, ...]] = []
+        self.probe_service_calls: list[tuple[Any, ...]] = []
         self.poll_count = 0
         self.fail_with: Exception | None = FakeClient.initial_fail_with  # makes polls and commands fail
         self.report_while_not_online = False  # a cloud that still returns the last values while asleep
         self.fail_commands_with: Exception | None = None  # makes only commands fail
         self.fail_set_with: Exception | None = None  # makes only property writes fail
         self.fail_control_with: Exception | None = None  # makes only service calls fail
+        self.fail_schedules_with: Exception | None = None  # makes only clean_list fail
+        self.timer_value: Any = copy.deepcopy(SCHEDULES_VALUE)
         self.ignore_sets = False  # simulate a cloud that accepts but does not apply writes
         self.ignore_level_control = False  # WindWater accepted (code 0) but not applied
         self.apply_level_property_writes = False  # the real L11-A ignores 1027/1028 writes
@@ -699,6 +773,11 @@ class FakeClient:
                 self.props[ref] = value
 
     async def async_control(self, product_id: str, device_id: str, ref: str, content: dict[str, Any] | None = None) -> dict[str, Any]:
+        if ref == "2500":  # clean_list (read-only probe): kept out of self.calls
+            self.probe_service_calls.append((ref, dict(content or {})))
+            if (failure := self.fail_schedules_with or self.fail_with) is not None:
+                raise failure
+            return {"content": {"outputData": {"2501": copy.deepcopy(self.timer_value)}, "service": ref}}
         self.calls.append(("control", device_id, ref, dict(content or {})))
         if (failure := self.fail_control_with or self.fail_commands_with or self.fail_with) is not None:
             raise failure
@@ -822,7 +901,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     device = devices[0] if len(devices) == 1 else None
     check("one device with name/model/manufacturer/sw_version", device is not None and (device.name, device.model, device.manufacturer, device.sw_version) == ("RV-L11-A-TEST", "L11-A", "Imou", "0.4.50") and ("imou_vacuum", "TESTDEVICE0001") in device.identifiers, str(device))
     entities = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
-    check("18 entities registered", len(entities) == 18, str(len(entities)))
+    check("19 entities registered", len(entities) == 19, str(len(entities)))
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in entities}
     print("entity ids:", ", ".join(sorted(ids.values())))
     check("existing registry entries stay enabled (upgrade): switches are not disabled", all(e.disabled_by is None for e in entities if e.domain == "switch"), str({e.unique_id: e.disabled_by for e in entities if e.domain == "switch"}))
@@ -834,14 +913,14 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("vacuum entity id is vacuum.rv_l11_a_test", ids["vacuum"] == "vacuum.rv_l11_a_test", ids["vacuum"])
     check("vacuum state is docked", state("vacuum").state == "docked", str(state("vacuum")))
     vac_attrs = state("vacuum").attributes
-    check("vacuum attributes: work_status 3, error 0, supported_features", vac_attrs["work_status"] == 3 and vac_attrs["error"] == 0 and vac_attrs["supported_features"] == 12860, str(dict(vac_attrs)))
+    check("vacuum attributes: work_status 3, error 0, supported_features", vac_attrs["work_status"] == 3 and vac_attrs["error"] == 0 and vac_attrs["supported_features"] == 13116 | int(ha_clean_area() or 0), str(dict(vac_attrs)))
     check("vacuum fan speed attributes", vac_attrs["fan_speed"] == "standard" and list(vac_attrs["fan_speed_list"]) == ["quiet", "standard", "max"], str(dict(vac_attrs)))
     expected_states = {
         "battery": "1", "status": "charging", "error": "none", "wifi_signal": "fair",
         "cleaned_area": "0", "cleaning_time": "0", "side_brush": "0.0", "main_brush": "0.0",
         "filter": "0.0", "sensors": "0.0", "mop_fitted": "off", "auto_empty": "unknown",
         "carpet_boost": "on", "resume_after_charging": "unknown",
-        "suction_level": "standard", "mop_water_level": "medium",
+        "suction_level": "standard", "mop_water_level": "medium", "schedules": "2",
     }  # fmt: skip
     got = {k: state(k).state for k in expected_states}
     check("initial states from the observed values", got == expected_states, str({k: (v, expected_states[k]) for k, v in got.items() if v != expected_states[k]}))
@@ -1187,6 +1266,23 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     client.fail_commands_with = None
     await asyncio.sleep(0)
 
+    # ---- last_command: recorded after a success and after an API error --------------------
+    send_params = {"status": 1, "mode": 1, "plan": 0, "partition_area": "[2]"}
+    client.calls.clear()
+    await hass.services.async_call("vacuum", "send_command", {"entity_id": ids["vacuum"], "command": "clean_control", "params": dict(send_params)}, blocking=True)
+    check("vacuum.send_command reaches the API with refs and the value unchanged", client.calls == [("control", "TESTDEVICE0001", "2700", {"2701": 1, "2702": 1, "2703": 0, "2704": "[2]"})], str(client.calls))
+    check("last_command recorded after success (inputs run through redact, summarized output)", coordinator.last_command == {"service": "clean_control", "inputs": {**send_params, "partition_area": {"type": "json", "value": [2]}}, "output": {"2706": 0}}, str(coordinator.last_command))
+    client.fail_control_with = api.ImouApiError("OP1002", "rejected")
+    try:
+        await hass.services.async_call("vacuum", "send_command", {"entity_id": ids["vacuum"], "command": "clean_control", "params": {"mode": 1, "partition_area": "[2]"}}, blocking=True)
+    except HomeAssistantError as err:
+        check("send_command API error -> HomeAssistantError", "OP1002: rejected" in str(err), str(err))
+    else:
+        check("send_command API error -> HomeAssistantError", False)
+    check("last_command recorded after an ImouError (code, redacted inputs)", coordinator.last_command == {"service": "clean_control", "inputs": {"mode": 1, "partition_area": {"type": "json", "value": [2]}}, "error": "OP1002"}, str(coordinator.last_command))
+    client.fail_control_with = None
+    await asyncio.sleep(0)
+
     # ---- reauth ---------------------------------------------------------------------------
     client.fail_with = api.ImouAuthError("TK1002", "token invalid")
     await coordinator.async_refresh()
@@ -1205,16 +1301,384 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
     client = FakeClient.instance
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)}
-    check("entities are back after reauth reload", len(ids) == 18 and state("vacuum").state == "docked")
+    check("entities are back after reauth reload", len(ids) == 19 and state("vacuum").state == "docked")
 
     # ---- diagnostics ------------------------------------------------------------------------
     diagnostics = importlib.import_module(f"{PKG}.diagnostics")
+
+    class FakeSession:
+        """Stands in for the shared aiohttp session: no network."""
+
+        requests: list[dict[str, Any]] = []
+        fail: Exception | None = None
+
+        def get(self, url: str, headers: dict[str, str] | None = None, **kwargs: Any) -> Any:
+            FakeSession.requests.append({"url": url, "headers": dict(headers or {}), **kwargs})
+            if FakeSession.fail is not None:
+                raise FakeSession.fail
+
+            class Response:
+                status = 206
+                headers = {"Content-Type": "application/octet-stream", "Content-Length": "64"}
+
+                class content:  # noqa: N801
+                    @staticmethod
+                    async def read(size: int) -> bytes:
+                        return b"\x89PNG" + b"\x00" * 200  # more than asked: the probe must cap it
+
+                async def __aenter__(self) -> Any:
+                    return self
+
+                async def __aexit__(self, *exc: Any) -> None:
+                    return None
+
+            return Response()
+
+    real_session_getter = diagnostics.async_get_clientsession
+    diagnostics.async_get_clientsession = lambda hass: FakeSession()
+    client.probe_service_calls.clear()  # (the schedules were read during setup)
+    probe_polls_before, polled_refs_before = client.poll_count, getattr(client, "last_refs", None)
+    calls_before, health_before = len(client.calls), coordinator.health.failures
+    boost_before = coordinator._boost_until  # noqa: SLF001
     dump = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
     blob = json.dumps(dump, ensure_ascii=False, default=str)
+    check("diagnostics contain last_command (None before any service call)", dump["robots"][0]["last_command"] is None, str(dump["robots"][0]["last_command"]))
     check("diagnostics redact App ID/Secret", dump["entry"]["app_id"] == "**REDACTED**" and dump["entry"]["app_secret"] == "**REDACTED**")
     check("diagnostics contain no secrets, serial or name", not any(s in blob for s in ("test-app", "new-secret", "test-secret", "TESTDEVICE0001", "RV-L11-A-TEST")), "leak")
     check("diagnostics tell which settings the robot reports", dump["robots"][0]["reports"]["seen_online"] is True and "rug_press" in dump["robots"][0]["reports"]["reported_identifiers"] and "auto_dust" not in dump["robots"][0]["reports"]["reported_identifiers"], str(dump["robots"][0]["reports"]))
     check("diagnostics include the things model and values", dump["robots"][0]["things_model"]["properties"] and dump["robots"][0]["values"]["work_status"] == 3 and dump["robots"][0]["resolved_model"]["services"]["clean_control"]["ref"] == "2700")
+
+    # ---- diagnostics probe: read-only, summarized, redacted ---------------------------------
+    probe = dump["robots"][0]["probe"]
+    props_out = probe["properties"]
+    probe_blob = json.dumps(probe, ensure_ascii=False)
+    check("probe covers the four unknown properties", set(props_out) == set(const.PROBE_IDENTIFIERS), str(props_out.keys()))
+    check("probe keeps JSON structure", props_out["clean_params"]["type"] == "json" and props_out["clean_params"]["value"]["rooms"][0]["id"] == 3 and props_out["areainfoarray"]["value"][0]["points"] == [[1.5, 2.5]], str(props_out))
+    check("probe summarizes plain text", props_out["mapconfig"]["type"] == "text" and props_out["mapconfig"]["length"] > 0, str(props_out["mapconfig"]))
+    check("probe hides room and map names", "Kitchen" not in probe_blob and "Morning" not in probe_blob and props_out["map_switch"]["map_name"] == "**REDACTED**", probe_blob)
+    check("probe has no query strings, secrets or tokens", not any(s in probe_blob for s in ("PROBESECRET", "Signature", "Expires", "?", "test-app", "test-secret", "new-secret", "TESTDEVICE0001")), probe_blob)
+    check("probe summarizes the clean_list service", probe["services"]["clean_list"]["content"]["outputData"]["2501"]["value"][0]["cleanAreas"] == [2] and probe["services"]["clean_list"]["content"]["outputData"]["2501"]["timeZoneSec"] == 3600, str(probe["services"]))
+    checks = probe["url_checks"]
+    check("probe fetched the mocked URLs (map and area first, no network)", len(checks) == 2 and checks[0]["url"]["url"] == "https://oss.example.com/…/b22d88fd.bin" and checks[0]["status"] == 206 and checks[0]["first_bytes_hex"] == "89504e47" + "00" * 12 and checks[0]["content_type"] == "application/octet-stream" and checks[1]["url"]["has_query"] is True, str(checks))
+    check("probe fetch is a ranged GET with a timeout, and never follows redirects", all(r["headers"] == {"Range": "bytes=0-63"} and r.get("allow_redirects") is False for r in FakeSession.requests) and len(FakeSession.requests) == 2, str(FakeSession.requests))
+    # only https URLs on public hosts are fetched: the others are skipped without a request
+    FakeSession.requests.clear()
+    skipped_urls = {
+        "http://oss.example.com/a/b.bin?sig=1": "not_https", "ftp://oss.example.com/b.bin": "not_https",
+        "https://localhost/a.bin": "private_host", "https://LOCALHOST./a.bin": "private_host", "https://127.0.0.1/a.bin": "private_host",
+        "https://10.1.2.3/a.bin": "private_host", "https://192.168.1.5:8443/a.bin": "private_host", "https://172.16.0.9/a.bin": "private_host",
+        "https://169.254.169.254/latest/meta-data": "private_host", "https://[::1]/a.bin": "private_host", "https://[fe80::1]/a.bin": "private_host",
+        "https://[fd00::1]/a.bin": "private_host", "https://[::ffff:127.0.0.1]/a.bin": "private_host", "https://0.0.0.0/a.bin": "private_host",
+    }
+    skip_results = {url: await diagnostics._async_check_url(hass, url) for url in skipped_urls}  # noqa: SLF001
+    check("probe skips non-https and private/loopback/link-local hosts, with a reason and no request", FakeSession.requests == [] and all(r.get("skipped") == skipped_urls[u] and set(r) == {"url", "skipped"} for u, r in skip_results.items()), str(skip_results))
+    check("... a skipped URL is still redacted", skip_results["http://oss.example.com/a/b.bin?sig=1"]["url"] == {"url": "http://oss.example.com/…/" + hashlib.sha256(b"b.bin").hexdigest()[:8] + ".bin", "has_query": True, "path_depth": 2} and "sig=1" not in json.dumps(list(skip_results.values())))
+    public = await diagnostics._async_check_url(hass, "https://8.8.8.8/a.bin")  # noqa: SLF001
+    check("... an https URL on a public IP or a name is fetched (no DNS lookup, no redirects)", len(FakeSession.requests) == 1 and public["status"] == 206 and FakeSession.requests[0]["allow_redirects"] is False, str(FakeSession.requests))
+    FakeSession.requests.clear()
+    check("probe made one property read and one service call, and no commands", client.poll_count == probe_polls_before + 1 and client.last_refs == ["1022", "1023", "1025", "40100"] and len(client.probe_service_calls) == 1 and client.probe_service_calls[0] == ("2500", {}) and len(client.calls) == calls_before, f"{client.poll_count} {client.last_refs} {client.probe_service_calls}")
+    check("probe does not touch poll health, boost or refresh", coordinator.health.failures == health_before and coordinator._command_refresh_cancel is None and coordinator._boost_until == boost_before)  # noqa: SLF001
+    client.poll_count, client.last_refs = probe_polls_before, polled_refs_before
+
+    coordinator.last_command = {"service": "clean_control", "inputs": {"mode": 1}, "output": {"2706": 0}}
+    dump_cmd = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+    check("diagnostics contain the last_command", dump_cmd["robots"][0]["last_command"] == {"service": "clean_control", "inputs": {"mode": 1}, "output": {"2706": 0}}, str(dump_cmd["robots"][0]["last_command"]))
+    client.poll_count, client.last_refs = probe_polls_before, polled_refs_before
+    client.probe_service_calls.clear()
+
+    # a failing URL fetch becomes an error entry for that URL only
+    FakeSession.fail = TimeoutError()
+    dump_url_fail = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+    url_fail = dump_url_fail["robots"][0]["probe"]
+    check("a failing URL fetch is reported per URL", [c.get("error") for c in url_fail["url_checks"]] == ["TimeoutError", "TimeoutError"] and url_fail["properties"]["clean_params"]["type"] == "json", str(url_fail["url_checks"]))
+    FakeSession.fail = None
+
+    # an Imou error in the probe never fails the diagnostics download
+    client.fail_with = api.ImouApiError("OP1001", "probe boom")
+    dump_fail = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+    probe_fail = dump_fail["robots"][0]["probe"]
+    check("an ImouError in the probe becomes a per-part error", probe_fail["properties"] == {"error": "OP1001"} and probe_fail["services"]["clean_list"] == {"error": "OP1001"} and probe_fail["url_checks"] == [], str(probe_fail))
+    check("diagnostics still complete when the probe fails", dump_fail["robots"][0]["things_model"]["properties"] and dump_fail["robots"][0]["values"]["work_status"] == 3 and coordinator.health.failures == health_before)
+    client.fail_with = None
+    client.poll_count, client.last_refs = probe_polls_before, polled_refs_before
+    client.probe_service_calls.clear()
+    diagnostics.async_get_clientsession = real_session_getter
+
+    # ---- schedules sensor, schedule fetching ---------------------------------------------------------
+    import time  # noqa: PLC0415
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+    from datetime import datetime  # noqa: PLC0415
+
+    sched = state("schedules")
+    sched_entry = ent_reg.async_get(ids["schedules"])
+    check("schedules sensor: 2 of the 3 schedules are enabled", sched.state == "2", str(sched.state))
+    check("schedules sensor: translated name, translation key, not a diagnostic entity", sched.name == "RV-L11-A-TEST Schedules" and sched_entry.translation_key == "schedules" and sched_entry.entity_category is None, f"{sched.name} {sched_entry.entity_category}")
+    schedule_attrs = sched.attributes["schedules"]
+    check("schedules sensor: one attribute entry per schedule", len(schedule_attrs) == 3 and all(set(a) == {"enabled", "active", "start", "repeat", "rooms"} for a in schedule_attrs), str(schedule_attrs))
+    check("schedules sensor: enabled, raw active, raw repeat", [(a["enabled"], a["active"], a["repeat"]) for a in schedule_attrs] == [(True, True, []), (False, True, [1, 3]), (True, True, [])], str(schedule_attrs))
+    check("schedules sensor: start is ISO 8601 with a time zone (the timestamp of the robot)", [datetime.fromisoformat(a["start"]).tzinfo is not None and int(datetime.fromisoformat(a["start"]).timestamp()) for a in schedule_attrs] == [1794224460, 1794300000, 1794400000], str(schedule_attrs))
+    check("schedules sensor: rooms by name, 'whole_house' without rooms, equal names get the id", [a["rooms"] for a in schedule_attrs] == [["Kantoor"], "whole_house", ["Slaapkamer (3)", "Slaapkamer (4)"]], str(schedule_attrs))
+    check("the schedules sensor has the calendar icon", ICONS_JSON["entity"]["sensor"]["schedules"]["default"] == "mdi:calendar-clock")
+    check("room names: labels where aligned, equal names get the id", coordinator.room_names() == {2: "Kantoor", 3: "Slaapkamer (3)", 4: "Slaapkamer (4)"}, str(coordinator.room_names()))
+
+    client.probe_service_calls.clear()
+    for _ in range(3):
+        await coordinator.async_refresh()
+    check("the schedules are not read again within the hour (polls do not fetch them)", client.probe_service_calls == [], str(client.probe_service_calls))
+    check("the next read is due in about an hour", 3500 < coordinator._schedules_due - time.monotonic() <= 3600, str(coordinator._schedules_due - time.monotonic()))  # noqa: SLF001
+    coordinator._schedules_due = time.monotonic() - 1  # an hour later  # noqa: SLF001
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()
+    check("an hour later one poll reads the schedules again (clean_list 2500, no inputs)", client.probe_service_calls == [("2500", {})], str(client.probe_service_calls))
+    check("reading the schedules is no command: no pending refresh", coordinator._command_refresh_cancel is None)  # noqa: SLF001
+
+    # a failing schedule fetch never fails or slows the property poll
+    client.probe_service_calls.clear()
+    client.fail_schedules_with = api.ImouConnectionError("TIMEOUT", "iotDeviceControl")
+    coordinator._schedules_due = 0.0  # noqa: SLF001
+    polls_before = client.poll_count
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("a failing schedule fetch: the poll still succeeds, health is clean, entities stay available", coordinator.last_update_success and coordinator.health.failures == 0 and client.poll_count == polls_before + 1 and state("vacuum").state == "docked" and state("schedules").state == "2", f"{coordinator.last_update_success} {coordinator.health.failures}")
+    check("... the previous schedules are kept", coordinator.schedules is not None and len(coordinator.schedules.schedules) == 3)
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()
+    check("... and the failure is not retried on every poll (about every 15 minutes)", len(client.probe_service_calls) == 1 and 800 < coordinator._schedules_due - time.monotonic() <= 900, f"{len(client.probe_service_calls)} {coordinator._schedules_due - time.monotonic()}")  # noqa: SLF001
+    coordinator._schedules_fetched_at = None  # the 60 second cache would skip the fetch  # noqa: SLF001
+    check("... an on-demand refresh reports the failure and keeps the schedules", await coordinator.async_refresh_schedules() is False and coordinator.schedules is not None and len(coordinator.schedules.schedules) == 3)
+    client.fail_schedules_with = None
+    client.fail_with = api.ImouConnectionError("TIMEOUT", "getIotDeviceProperties")
+    coordinator._schedules_due = 0.0  # noqa: SLF001
+    client.probe_service_calls.clear()
+    await coordinator.async_refresh()  # a failed property poll: the schedules are not even tried
+    client.fail_with = None
+    check("a failed property poll does not try the schedules", client.probe_service_calls == [] and coordinator.health.failures == 1)
+    await coordinator.async_refresh()
+    check("... the next good poll reads them and the poll health recovers", len(client.probe_service_calls) == 1 and coordinator.health.failures == 0)
+    client.probe_service_calls.clear()
+    client.timer_value = {"timeZone": 1, "timeZoneSec": 3600, "value": "garbage"}
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    check("an unusable schedules response keeps the previous schedules", await coordinator.async_refresh_schedules() is False and len(coordinator.schedules.schedules) == 3)
+    client.timer_value = copy.deepcopy(SCHEDULES_VALUE)
+
+    # the schedules sensor never fails on a start time that cannot be converted (rooms.py already drops implausible ones)
+    rooms_module = importlib.import_module(f"{PKG}.rooms")
+    real_schedules = coordinator.schedules
+    odd_starts = [1794224460000, -62135596801, 10**20, 253402300800, None, 1794224460]
+    coordinator.schedules = rooms_module.ScheduleList(tz_offset=0, schedules=[rooms_module.Schedule(enabled=True, active=True, start=value, end=None) for value in odd_starts])
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    odd_attrs = state("schedules").attributes["schedules"]
+    check("schedules sensor: a start that cannot be converted is None, the others stay", state("schedules").state == "6" and [a["start"] is None for a in odd_attrs] == [True] * 5 + [False], str([a["start"] for a in odd_attrs]))
+    check("schedules sensor: a valid start is still ISO 8601", int(datetime.fromisoformat(odd_attrs[5]["start"]).timestamp()) == 1794224460, str(odd_attrs[5]))
+    coordinator.schedules = real_schedules
+    coordinator.async_update_listeners()
+
+    # on-demand refreshes: cached for 60 seconds
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    client.probe_service_calls.clear()
+    results = [await coordinator.async_refresh_schedules(), await coordinator.async_refresh_schedules()]
+    check("async_refresh_schedules: the second call within a minute is served from the cache", results == [True, True] and client.probe_service_calls == [("2500", {})], f"{results} {client.probe_service_calls}")
+    coordinator._schedules_fetched_at = time.monotonic() - const.SCHEDULE_MIN_REFRESH_SECONDS - 1  # noqa: SLF001
+    await coordinator.async_refresh_schedules()
+    check("... after a minute it reads again", len(client.probe_service_calls) == 2, str(client.probe_service_calls))
+    check("the cache is a constant of 60 seconds", const.SCHEDULE_MIN_REFRESH_SECONDS == 60)
+
+    # ---- room cleaning (Home Assistant 2026.3 and newer) ----------------------------------------------------
+    from homeassistant.components import vacuum as vacuum_component  # noqa: PLC0415
+
+    if ha_clean_area() is None:
+        check("without CLEAN_AREA (Home Assistant 2026.1): the feature and the segment API are absent, the rest is unchanged", not hasattr(vacuum_component.StateVacuumEntity, "async_get_segments") and not (state("vacuum").attributes["supported_features"] & 16384) and state("vacuum").attributes["supported_features"] == 13116)
+    else:
+        vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(ids["vacuum"])
+        vac_reg = ent_reg.async_get(ids["vacuum"])
+        issue_registry = ir.async_get(hass)
+        issue_id = f"segments_changed_{vac_reg.id}"
+        created: list[Any] = []
+        original_create = vac_entity.async_create_segments_issue
+        vac_entity.async_create_segments_issue = lambda: (created.append(1), original_create())[1]
+
+        def seg(segments: list[Any]) -> list[tuple[str, str]]:
+            return [(s.id, s.name) for s in segments]
+
+        async def fresh_segments() -> Any:
+            coordinator._schedules_fetched_at = None  # the 60 second cache would hide the change  # noqa: SLF001
+            return await vac_entity.async_get_segments()
+
+        client.probe_service_calls.clear()
+        segments = await fresh_segments()
+        check("segments: the rooms of the schedules, sorted by id, ids are strings", seg(segments) == [("2", "Kantoor"), ("3", "Slaapkamer (3)"), ("4", "Slaapkamer (4)")], str(seg(segments)))
+        check("segments: the schedules are refreshed on demand", client.probe_service_calls == [("2500", {})], str(client.probe_service_calls))
+        check("segments: no issue while the user has not mapped any areas", created == [] and issue_registry.async_get_issue("vacuum", issue_id) is None)
+
+        mapped = [{"id": "2", "name": "Kantoor"}, {"id": "3", "name": "Slaapkamer (3)"}, {"id": "4", "name": "Slaapkamer (4)"}]
+        ent_reg.async_update_entity_options(ids["vacuum"], "vacuum", {"last_seen_segments": mapped})
+        await hass.async_block_till_done()
+        await fresh_segments()
+        check("segments: no issue when every room was mapped", created == [] and issue_registry.async_get_issue("vacuum", issue_id) is None)
+
+        client.timer_value["value"].append({"unlock": True, "cleanAreas": [5], "segmentTagIds": ["Wc"], "startTime": 1794500000})
+        segments = await fresh_segments()
+        check("segments: a new room appears", seg(segments) == [("2", "Kantoor"), ("3", "Slaapkamer (3)"), ("4", "Slaapkamer (4)"), ("5", "Wc")], str(seg(segments)))
+        check("segments: a room the user has not mapped creates the repair issue", created == [1] and issue_registry.async_get_issue("vacuum", issue_id) is not None, str(created))
+        await fresh_segments()
+        coordinator._schedules_fetched_at = None  # noqa: SLF001
+        await coordinator.async_refresh_schedules()
+        await hass.async_block_till_done()
+        check("segments: the issue is created once per set of ids", created == [1], str(created))
+
+        client.timer_value = {"timeZone": 1, "timeZoneSec": 3600, "value": [SCHEDULES_VALUE["value"][0]]}  # the other schedules were deleted
+        segments = await fresh_segments()
+        check("segments: rooms of deleted schedules stay (from last_seen_segments) with their last name", seg(segments) == [("2", "Kantoor"), ("3", "Slaapkamer (3)"), ("4", "Slaapkamer (4)")], str(seg(segments)))
+        client.timer_value = {"timeZone": 1, "timeZoneSec": 3600, "value": [SCHEDULES_VALUE["value"][0], {"unlock": True, "cleanAreas": [3], "segmentTagIds": ["Kast"], "startTime": 1}]}
+        segments = await fresh_segments()
+        check("segments: a newer name replaces the last-seen name", seg(segments) == [("2", "Kantoor"), ("3", "Kast"), ("4", "Slaapkamer (4)")], str(seg(segments)))
+        client.fail_schedules_with = api.ImouApiError("OP1001", "boom")
+        segments = await fresh_segments()
+        check("segments: when the refresh fails the cached schedules are used", seg(segments) == [("2", "Kantoor"), ("3", "Kast"), ("4", "Slaapkamer (4)")], str(seg(segments)))
+        client.fail_schedules_with = None
+
+        # two segment reads within a minute: one clean_list call (the second is served from the cache)
+        client.probe_service_calls.clear()
+        await fresh_segments()
+        await vac_entity.async_get_segments()
+        check("segments: two reads within a minute call clean_list once", client.probe_service_calls == [("2500", {})], str(client.probe_service_calls))
+        client.calls.clear()
+        await vac_entity.async_clean_segments(["3", "4"])
+        want = ("control", "TESTDEVICE0001", "2700", {"2701": 1, "2702": 1, "2703": 0, "2704": "[3,4]"})
+        check("clean_segments(['3','4']) sends exactly status 1, mode 1, plan 0, partition_area '[3,4]'", client.calls == [want], str(client.calls))
+        check("clean_segments is recorded as last_command", coordinator.last_command["service"] == "clean_control" and coordinator.last_command["inputs"] == {"status": 1, "mode": 1, "plan": 0, "partition_area": {"type": "json", "value": [3, 4]}}, str(coordinator.last_command))
+        client.calls.clear()
+        await vac_entity.async_clean_segments(["2"])
+        check("clean_segments(['2']) -> '[2]'", client.calls == [("control", "TESTDEVICE0001", "2700", {"2701": 1, "2702": 1, "2703": 0, "2704": "[2]"})], str(client.calls))
+        client.calls.clear()
+        await vac_entity.async_clean_segments([])
+        check("clean_segments([]) is a no-op", client.calls == [])
+        try:
+            await vac_entity.async_clean_segments(["3", "kitchen"])
+        except ServiceValidationError as err:
+            check("an invalid room id raises invalid_room with the id, and nothing is sent", err.translation_key == "invalid_room" and err.translation_placeholders == {"room": "kitchen"} and client.calls == [], f"{err.translation_key} {err.translation_placeholders} {client.calls}")
+        else:
+            check("an invalid room id raises invalid_room", False, "no error")
+        client.fail_control_with = api.ImouApiError("OP2000", "service refused")
+        try:
+            await vac_entity.async_clean_segments(["3"])
+        except HomeAssistantError as err:
+            check("a refused room clean is reported with the cloud's code", "OP2000" in str(err))
+        else:
+            check("a refused room clean is reported", False, "no error")
+        client.fail_control_with = None
+        vac_entity.async_create_segments_issue = original_create
+        ent_reg.async_update_entity_options(ids["vacuum"], "vacuum", None)
+        ir.async_delete_issue(hass, "vacuum", issue_id)
+        client.timer_value = copy.deepcopy(SCHEDULES_VALUE)
+        await coordinator.async_refresh_schedules()
+        await hass.async_block_till_done()
+
+    # ---- options flow: room names ------------------------------------------------------------------
+    def suggested(result: Any) -> Any:
+        key = next(k for k in result["data_schema"].schema if str(k) == "room_names")
+        return key.description["suggested_value"]
+
+    coordinator._schedules_fetched_at = None  # the 60 second cache would hide the change  # noqa: SLF001
+    client.timer_value = {"timeZone": 1, "timeZoneSec": 3600, "value": [{"unlock": True, "cleanAreas": [], "startTime": 5}]}
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    check("options flow: a robot without known rooms aborts with no_rooms", result["type"] == "abort" and result["reason"] == "no_rooms", str(result))
+    client.timer_value = copy.deepcopy(SCHEDULES_VALUE)
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    probe_calls_before = len(client.probe_service_calls)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    flow_id = result["flow_id"]
+    check("options flow: one robot goes straight to the rooms form", result["type"] == "form" and result["step_id"] == "rooms" and result["description_placeholders"] == {"robot": "RV-L11-A-TEST"}, str(result))
+    check("options flow: reads the schedules once", len(client.probe_service_calls) == probe_calls_before + 1, str(client.probe_service_calls))
+    check("options flow: the field is a multiline text", [str(k) for k in result["data_schema"].schema] == ["room_names"] and next(iter(result["data_schema"].schema.values())).config["multiline"] is True)
+    check("options flow: prefilled with the labels (and defaults), one 'id = name' per line, no id suffix", suggested(result) == "2 = Kantoor\n3 = Slaapkamer\n4 = Slaapkamer", repr(suggested(result)))
+    result = await hass.config_entries.options.async_configure(flow_id, {"room_names": "2 = Werkkamer\nthis is wrong"})
+    check("options flow: invalid text -> invalid_room_names, the text is kept", result["type"] == "form" and result["errors"] == {"base": "invalid_room_names"} and suggested(result) == "2 = Werkkamer\nthis is wrong", str(result))
+    check("options flow: nothing was saved yet", dict(entry.options) == {})
+    result = await hass.config_entries.options.async_configure(flow_id, {"room_names": "2 = Werkkamer\n\n3 = Blauwe kamer\n4 = Slaapkamer\n"})
+    check("options flow: saving creates the entry options per robot", result["type"] == "create_entry" and result["data"] == {"room_names": {"TESTDEVICE0001": {"2": "Werkkamer", "3": "Blauwe kamer"}}} and dict(entry.options) == result["data"], str(result))
+    check("options flow: a name equal to the automatic label (4 = Slaapkamer) is not stored", "4" not in entry.options["room_names"]["TESTDEVICE0001"])
+    await hass.async_block_till_done()
+    check("options flow: the entry reloads and is loaded again", entry.state is config_entries.ConfigEntryState.LOADED, str(entry.state))
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("saved names are used (they win over the labels)", coordinator.room_names() == {2: "Werkkamer", 3: "Blauwe kamer", 4: "Slaapkamer"}, str(coordinator.room_names()))
+    check("the schedules sensor shows the new names", [a["rooms"] for a in state("schedules").attributes["schedules"]] == [["Werkkamer"], "whole_house", ["Blauwe kamer", "Slaapkamer"]], str(state("schedules").attributes["schedules"]))
+    if ha_clean_area() is not None:
+        vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(ids["vacuum"])
+        segments = await vac_entity.async_get_segments()
+        check("the segments use the saved names", seg(segments) == [("2", "Werkkamer"), ("3", "Blauwe kamer"), ("4", "Slaapkamer")], str(seg(segments)))
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    check("options flow: the saved names are prefilled the next time", suggested(result) == "2 = Werkkamer\n3 = Blauwe kamer\n4 = Slaapkamer", repr(suggested(result)))
+    hass.config_entries.options.async_abort(result["flow_id"])
+
+    # two robots: the first step picks the robot, saving merges with the other robot's names
+    second = copy.copy(coordinator)
+    second.device = api.ImouDevice(device_id="SECONDROBOT0002", product_id="PRODUCT_ID", name="Second robot", model="L11-A", status="online", version="0.4.50", brand="lechange")
+    entry.runtime_data.coordinators["SECONDROBOT0002"] = second
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    options_list = next(iter(result["data_schema"].schema.values())).config["options"]
+    check("options flow: with two robots the first step is a robot select (by name)", result["type"] == "form" and result["step_id"] == "init" and [o["label"] for o in options_list] == ["RV-L11-A-TEST", "Second robot"], str(result))
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"robot": "SECONDROBOT0002"})
+    check("options flow: the rooms form is for the chosen robot", result["type"] == "form" and result["step_id"] == "rooms" and result["description_placeholders"] == {"robot": "Second robot"}, str(result))
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"room_names": "2 = Keuken"})
+    check("options flow: the other robot's names are kept", result["type"] == "create_entry" and result["data"] == {"room_names": {"TESTDEVICE0001": {"2": "Werkkamer", "3": "Blauwe kamer"}, "SECONDROBOT0002": {"2": "Keuken"}}}, str(result))
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("entry is loaded again with its one real robot", entry.state is config_entries.ConfigEntryState.LOADED and list(entry.runtime_data.coordinators) == ["TESTDEVICE0001"], str(entry.state))
+    check("the first robot keeps its own names", coordinator.room_names()[2] == "Werkkamer")
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"room_names": ""})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("an empty text clears the names of that robot (labels and defaults again)", result["type"] == "create_entry" and coordinator.room_names() == {2: "Kantoor", 3: "Slaapkamer (3)", 4: "Slaapkamer (4)"}, str(coordinator.room_names()))
+
+    # only real user overrides are stored: not the default name, not the current automatic name
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"room_names": "2 = Room 2\n3 = Slaapkamer\n4 = Eigen kamer"})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("options flow: default ('Room 2') and automatic ('Slaapkamer') names are not stored, a real override is", result["type"] == "create_entry" and result["data"]["room_names"]["TESTDEVICE0001"] == {"4": "Eigen kamer"}, str(result))
+    check("... the displayed names are still right", coordinator.room_names() == {2: "Kantoor", 3: "Slaapkamer", 4: "Eigen kamer"}, str(coordinator.room_names()))
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    check("... and they are prefilled again", suggested(result) == "2 = Kantoor\n3 = Slaapkamer\n4 = Eigen kamer", repr(suggested(result)))
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"room_names": "2 = Werkkamer"})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("options flow: removing a line removes that override", result["data"]["room_names"]["TESTDEVICE0001"] == {"2": "Werkkamer"} and coordinator.room_names()[4] == "Slaapkamer (4)", str(result))
+
+    # the update listener reloads on an options change only, not on a data-only update (reauth reloads by itself)
+    reloads: list[str] = []
+    real_reload = hass.config_entries.async_reload
+
+    async def counting_reload(entry_id: str, *args: Any, **kwargs: Any) -> Any:
+        reloads.append(entry_id)
+        return await real_reload(entry_id, *args, **kwargs)
+
+    hass.config_entries.async_reload = counting_reload
+    try:
+        init_module = importlib.import_module(PKG)
+        await init_module._async_options_updated(hass, entry)  # noqa: SLF001
+        check("update listener: unchanged options -> no reload", reloads == [], str(reloads))
+        hass.config_entries.async_update_entry(entry, data={**entry.data, "note": "data only"})
+        await hass.async_block_till_done()
+        check("update listener: a data-only update does not reload", reloads == [] and entry.state is config_entries.ConfigEntryState.LOADED, str(reloads))
+        hass.config_entries.async_update_entry(entry, options={**entry.options, "room_names": {"TESTDEVICE0001": {"2": "Zed"}}})
+        await hass.async_block_till_done()
+        check("update listener: an options change reloads once", reloads == [entry.entry_id] and entry.state is config_entries.ConfigEntryState.LOADED, str(reloads))
+        hass.config_entries.async_update_entry(entry, data={**entry.data, "note": "again"})
+        await hass.async_block_till_done()
+        check("update listener: after the reload the new options are the baseline (data-only still no reload)", reloads == [entry.entry_id], str(reloads))
+    finally:
+        hass.config_entries.async_reload = real_reload
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("... and the changed option is in use", coordinator.room_names()[2] == "Zed", str(coordinator.room_names()))
 
     # ---- setup failure modes ----------------------------------------------------------------
     async def add_entry(app_id: str) -> Any:
@@ -1260,7 +1724,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         regs = {e.unique_id.removeprefix(f"{robot_id}_"): e for e in er.async_entries_for_config_entry(ent_reg, fresh.entry_id)}
         disabled = {k for k in switch_keys if regs[k].disabled_by is not None}
         check(f"fresh install, {label}: disabled by default = {sorted(expected_disabled)}", disabled == expected_disabled and fresh.state is config_entries.ConfigEntryState.LOADED, f"{disabled} {fresh.state}")
-        check(f"fresh install, {label}: all 18 entities are created (disabled ones in the registry only)", len(regs) == 18, str(len(regs)))
+        check(f"fresh install, {label}: all 19 entities are created (disabled ones in the registry only)", len(regs) == 19, str(len(regs)))
         if expected_disabled:
             check(f"fresh install, {label}: disabled_by is the integration, disabled switches have no state", all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION and hass.states.get(regs[k].entity_id) is None for k in expected_disabled))
             check(f"fresh install, {label}: the reported switch is on and says so", hass.states.get(regs["carpet_boost"].entity_id).state == "on" and hass.states.get(regs["carpet_boost"].entity_id).attributes["reported_by_device"] is True)

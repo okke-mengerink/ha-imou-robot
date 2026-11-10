@@ -9,9 +9,14 @@ from homeassistant.components.vacuum import (
     VacuumActivity,
     VacuumEntityFeature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+try:  # Home Assistant 2026.3 and newer
+    from homeassistant.components.vacuum import Segment
+except ImportError:  # 2026.1: no native room cleaning
+    Segment = None  # type: ignore[assignment,misc]
 
 from .const import (
     CLEAN_CONTINUE,
@@ -22,6 +27,7 @@ from .const import (
     CLEAN_STOP,
     DOMAIN,
     INPUT_MODE,
+    INPUT_PARTITION_AREA,
     INPUT_PLAN,
     INPUT_STATUS,
     LEVEL_KEYS,
@@ -30,11 +36,14 @@ from .const import (
     SERVICE_CLEAN_CONTROL,
     SERVICE_LOCATION,
 )
-from .coordinator import ImouConfigEntry, ImouCoordinator
+from .coordinator import ImouConfigEntry, ImouCoordinator, default_room_name
 from .entity import ImouEntity
 from .model import level_key, to_int
 
 PARALLEL_UPDATES = 1
+
+# Room cleaning exists in Home Assistant 2026.3 and newer only.
+CLEAN_AREA = getattr(VacuumEntityFeature, "CLEAN_AREA", None)
 
 # work_status -> activity. Unknown values give an unknown state.
 WORK_STATUS_ACTIVITY: dict[int, VacuumActivity] = {
@@ -97,6 +106,17 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
             features |= VacuumEntityFeature.LOCATE
         if model.prop(PROP_WIND_POWER) is not None:
             features |= VacuumEntityFeature.FAN_SPEED
+        if model.services:
+            features |= VacuumEntityFeature.SEND_COMMAND
+        if (
+            CLEAN_AREA is not None
+            and control is not None
+            and control.input_ref(INPUT_MODE) is not None
+            and control.input_ref(INPUT_PARTITION_AREA) is not None
+        ):
+            features |= CLEAN_AREA
+        # the room ids for which a "segments changed" issue was last created
+        self._issue_room_ids: frozenset[str] | None = None
         self._attr_supported_features = features
 
     @property
@@ -130,6 +150,75 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         if data is None:
             return None
         return {"work_status": data.work_status, "error": data.error_code}
+
+    @callback
+    @override
+    def _handle_coordinator_update(self) -> None:
+        """Check for new rooms, then update the state."""
+        self._async_check_segments_issue(self.coordinator.room_names())
+        super()._handle_coordinator_update()
+
+    def _last_seen_segments(self) -> list[Any] | None:
+        """Return the segments the user last mapped to areas (None if never)."""
+        try:
+            return getattr(self, "last_seen_segments", None)
+        except RuntimeError:  # not in the entity registry (yet)
+            return None
+
+    def _async_check_segments_issue(self, names: dict[int, str]) -> None:
+        """Create the repair issue (once per set of ids) when a room is new."""
+        if CLEAN_AREA is None or CLEAN_AREA not in self.supported_features:
+            return
+        last_seen = self._last_seen_segments()
+        if last_seen is None:
+            return
+        current = frozenset(str(room_id) for room_id in names)
+        if not current - {segment.id for segment in last_seen}:
+            return
+        if current != self._issue_room_ids:
+            self._issue_room_ids = current
+            self.async_create_segments_issue()
+
+    @override
+    async def async_get_segments(self) -> list[Any]:
+        """Return the rooms of the schedules, plus the rooms the user mapped before.
+
+        The rooms are read from the robot's schedules (the robot reports no rooms
+        otherwise). Rooms that were mapped earlier stay, so that deleting a
+        schedule does not make a room disappear.
+        """
+        await self.coordinator.async_refresh_schedules()  # on failure: the cached ones
+        names = self.coordinator.room_names()
+        self._async_check_segments_issue(names)
+        segments = {str(room_id): name for room_id, name in names.items()}
+        for seen in self._last_seen_segments() or []:
+            # a name that is only the default does not replace the one seen before
+            if seen.id not in segments or segments[seen.id] == default_room_name(
+                to_int(seen.id) or 0
+            ):
+                segments[seen.id] = seen.name
+        return [
+            Segment(id=segment_id, name=segments[segment_id])
+            for segment_id in sorted(
+                segments, key=lambda sid: (to_int(sid) is None, to_int(sid) or 0, sid)
+            )
+        ]
+
+    @override
+    async def async_clean_segments(self, segment_ids: list[str], **kwargs: Any) -> None:
+        """Clean these rooms."""
+        room_ids: list[int] = []
+        for segment_id in segment_ids:
+            try:
+                room_ids.append(int(str(segment_id).strip()))
+            except ValueError:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="invalid_room",
+                    translation_placeholders={"room": str(segment_id)},
+                ) from None
+        if room_ids:
+            await self.coordinator.async_clean_rooms(room_ids)
 
     @override
     async def async_start(self) -> None:
@@ -186,3 +275,38 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         self.coordinator.commanded[PROP_WIND_POWER].set(level)
         # every entity showing this setting (e.g. select and fan speed) updates now
         self.coordinator.async_update_listeners()
+
+    @override
+    async def async_send_command(
+        self,
+        command: str,
+        params: dict[str, Any] | list[Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Call a service of the things model with raw input values.
+
+        ``command`` is a service identifier and ``params`` maps its input
+        identifiers to values, which are passed on unchanged (no JSON encoding).
+        """
+        if (service := self.coordinator.model.service(command)) is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unknown_command",
+                translation_placeholders={"command": command},
+            )
+        if params is not None and not isinstance(params, dict):
+            bad = "list"
+        else:
+            bad = ", ".join(
+                str(name)
+                for name in (params or {})
+                if service.input_ref(str(name)) is None
+            )
+        if bad:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_command_params",
+                translation_placeholders={"command": command, "params": bad},
+            )
+        await self.coordinator.async_control(command, params)
+

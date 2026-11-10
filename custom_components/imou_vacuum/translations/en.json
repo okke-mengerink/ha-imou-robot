@@ -43,6 +43,33 @@
       }
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Choose a robot",
+        "description": "Choose the robot whose rooms you want to name.",
+        "data": {
+          "robot": "Robot"
+        }
+      },
+      "rooms": {
+        "title": "Room names of {robot}",
+        "description": "The robot does not report its rooms. The rooms below come from the cleaning schedules in the Imou app. Write one room per line as `id = name`. These names are used for room cleaning and in the schedules sensor.",
+        "data": {
+          "room_names": "Room names"
+        },
+        "data_description": {
+          "room_names": "One room per line, for example `3 = Blue room`. The id is the room number from the schedules."
+        }
+      }
+    },
+    "error": {
+      "invalid_room_names": "Every line must look like `3 = Blue room`: a room number, an equals sign and a name."
+    },
+    "abort": {
+      "no_rooms": "No rooms are known yet. The robot only reveals its rooms in the cleaning schedules. Create a schedule in the Imou app that selects the rooms (you may switch it off afterwards), then try again."
+    }
+  },
   "entity": {
     "binary_sensor": {
       "mop_fitted": {
@@ -139,6 +166,9 @@
           "fair": "Fair",
           "good": "Good"
         }
+      },
+      "schedules": {
+        "name": "Schedules"
       }
     },
     "switch": {
@@ -190,6 +220,15 @@
     },
     "invalid_option": {
       "message": "{option} is not a valid choice for this robot."
+    },
+    "unknown_command": {
+      "message": "Unknown command {command}. Use a service of the robot's things model, for example clean_control."
+    },
+    "invalid_command_params": {
+      "message": "Invalid parameters for {command}: {params}. Use a dictionary of the service's input identifiers."
+    },
+    "invalid_room": {
+      "message": "{room} is not a valid room id. Use the room number from the schedules, for example 3."
     }
   }
 }

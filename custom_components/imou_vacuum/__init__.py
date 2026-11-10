@@ -7,6 +7,7 @@ things model.
 
 from __future__ import annotations
 
+import copy
 import logging
 
 from homeassistant.const import Platform
@@ -127,9 +128,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool
         await coordinator.async_config_entry_first_refresh()
         coordinators[device.device_id] = coordinator
 
-    entry.runtime_data = ImouRuntimeData(client=client, coordinators=coordinators)
+    entry.runtime_data = ImouRuntimeData(
+        client=client, coordinators=coordinators, options=copy.deepcopy(dict(entry.options))
+    )
+    # new room names (options) are picked up by reloading
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ImouConfigEntry) -> None:
+    """Reload the entry when its options (the room names) change.
+
+    The listener also runs for data-only updates (reauth), which reload on their own.
+    """
+    if dict(entry.options) == entry.runtime_data.options:
+        return
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool:

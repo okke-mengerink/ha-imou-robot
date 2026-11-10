@@ -15,6 +15,7 @@ from typing import Any
 
 from .const import (
     FALLBACK_INPUT_REFS,
+    FALLBACK_OUTPUT_REFS,
     FALLBACK_PROPERTY_REFS,
     FALLBACK_SERVICE_REFS,
     NEVER_POLL_IDENTIFIERS,
@@ -117,10 +118,15 @@ class ServiceDef:
     identifier: str  # lower-case
     ref: str
     inputs: Mapping[str, str] = field(default_factory=dict)  # identifier -> ref
+    outputs: Mapping[str, str] = field(default_factory=dict)  # identifier -> ref
 
     def input_ref(self, identifier: str) -> str | None:
         """Return the ref of an input parameter, or ``None`` if it does not exist."""
         return self.inputs.get(identifier.lower())
+
+    def output_ref(self, identifier: str) -> str | None:
+        """Return the ref of an output, or ``None`` if it does not exist."""
+        return self.outputs.get(identifier.lower())
 
 
 def _parse_property(raw: Any) -> PropertyDef | None:
@@ -182,16 +188,26 @@ def _parse_service(raw: Any) -> ServiceDef | None:
     if not ref:
         return None
 
-    inputs: dict[str, str] = {}
-    fallbacks = FALLBACK_INPUT_REFS.get(identifier, {})
-    for item in ci_get(raw, "inputData") or []:
+    inputs = _parse_parameters(
+        ci_get(raw, "inputData"), FALLBACK_INPUT_REFS.get(identifier, {})
+    )
+    outputs = _parse_parameters(
+        ci_get(raw, "outputData"), FALLBACK_OUTPUT_REFS.get(identifier, {})
+    )
+    return ServiceDef(identifier=identifier, ref=ref, inputs=inputs, outputs=outputs)
+
+
+def _parse_parameters(items: Any, fallbacks: Mapping[str, str]) -> dict[str, str]:
+    """Return ``{identifier: ref}`` of the inputs or outputs of a service."""
+    parameters: dict[str, str] = {}
+    for item in items or []:
         name = ci_get(item, "identifier")
         if not isinstance(name, str) or not name.strip():
             continue
         name = name.strip().lower()
-        if input_ref := _clean_ref(ci_get(item, "ref")) or fallbacks.get(name, ""):
-            inputs.setdefault(name, input_ref)
-    return ServiceDef(identifier=identifier, ref=ref, inputs=inputs)
+        if ref := _clean_ref(ci_get(item, "ref")) or fallbacks.get(name, ""):
+            parameters.setdefault(name, ref)
+    return parameters
 
 
 class ReportTracker:
@@ -272,6 +288,11 @@ class ThingsModel:
     def service(self, identifier: str) -> ServiceDef | None:
         """Return a service by identifier (case-insensitive)."""
         return self._services.get(identifier.lower())
+
+    @property
+    def services(self) -> Mapping[str, ServiceDef]:
+        """Return all services by (lower-case) identifier."""
+        return self._services
 
     def has_service(self, identifier: str) -> bool:
         """Return whether the model has a service with this identifier."""
