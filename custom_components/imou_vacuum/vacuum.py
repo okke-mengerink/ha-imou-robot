@@ -30,8 +30,8 @@ from .const import (
     INPUT_PARTITION_AREA,
     INPUT_PLAN,
     INPUT_STATUS,
-    LEVEL_KEYS,
     PROP_BACK_CHARGING,
+    PROP_BACK_STATION,
     PROP_WIND_POWER,
     SERVICE_CLEAN_CONTROL,
     SERVICE_LOCATION,
@@ -61,12 +61,18 @@ WORK_STATUS_ACTIVITY: dict[int, VacuumActivity] = {
     9: VacuumActivity.CLEANING,
     10: VacuumActivity.CLEANING,
     12: VacuumActivity.CLEANING,
+    14: VacuumActivity.RETURNING,
+    15: VacuumActivity.DOCKED,
+    16: VacuumActivity.DOCKED,
+    17: VacuumActivity.CLEANING,
+    18: VacuumActivity.PAUSED,
+    19: VacuumActivity.PAUSED,
 }
-PAUSED_WORK_STATUSES = frozenset({1, 13})
+PAUSED_WORK_STATUSES = frozenset({1, 13, 18, 19})
 
-# Fan speed presets are the suction levels (WindPower 1/2/3); translated through
+# Fan speed presets are the suction levels of the things model (see
+# ThingsModel.wind_levels); translated through
 # entity.vacuum.robot.state_attributes.fan_speed.state.
-FAN_SPEEDS = LEVEL_KEYS[PROP_WIND_POWER]
 
 
 async def async_setup_entry(
@@ -100,7 +106,10 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
                 | VacuumEntityFeature.PAUSE
                 | VacuumEntityFeature.STOP
             )
-        if model.prop(PROP_BACK_CHARGING) is not None:
+        if (
+            model.prop(PROP_BACK_CHARGING) is not None
+            or model.prop(PROP_BACK_STATION) is not None
+        ):
             features |= VacuumEntityFeature.RETURN_HOME
         if model.service(SERVICE_LOCATION) is not None:
             features |= VacuumEntityFeature.LOCATE
@@ -118,6 +127,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         # the room ids for which a "segments changed" issue was last created
         self._issue_room_ids: frozenset[str] | None = None
         self._attr_supported_features = features
+        self._fan_speeds = model.wind_levels()
 
     @property
     @override
@@ -132,7 +142,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
     @override
     def fan_speed_list(self) -> list[str]:
         """Return the fan speed presets (the suction levels)."""
-        return list(FAN_SPEEDS.values())
+        return list(self._fan_speeds.values())
 
     @property
     @override
@@ -140,7 +150,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         """Return the current fan speed; levels we do not know are unknown_<n>."""
         reported = to_int(self.robot_values.get(PROP_WIND_POWER))
         commanded = self.coordinator.commanded[PROP_WIND_POWER]
-        return level_key(FAN_SPEEDS, commanded.resolve(reported))
+        return level_key(self._fan_speeds, commanded.resolve(reported))
 
     @property
     @override
@@ -254,7 +264,13 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
     @override
     async def async_return_to_base(self, **kwargs: Any) -> None:
         """Send the robot back to its dock."""
-        await self.coordinator.async_set_properties({PROP_BACK_CHARGING: 1})
+        model = self.coordinator.model
+        identifier = (
+            PROP_BACK_CHARGING
+            if model.prop(PROP_BACK_CHARGING) is not None
+            else PROP_BACK_STATION
+        )
+        await self.coordinator.async_set_properties({identifier: 1})
 
     @override
     async def async_locate(self, **kwargs: Any) -> None:
@@ -264,7 +280,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
     @override
     async def async_set_fan_speed(self, fan_speed: str, **kwargs: Any) -> None:
         """Set the suction level (through the WindWater service, see the coordinator)."""
-        levels = {key: level for level, key in FAN_SPEEDS.items()}
+        levels = {key: level for level, key in self._fan_speeds.items()}
         if (level := levels.get(fan_speed)) is None:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,

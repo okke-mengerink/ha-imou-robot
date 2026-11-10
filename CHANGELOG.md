@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1
+
+- Fix: the battery showed 0 % on an Imou RV1 Pro Max (issue #1). While charging it reports a negative value (-38 for 38 %); the integration now shows the absolute value.
+- Return to dock also works through the `back_station` property (RV1 Pro Max), next to `back_charging`.
+- Suction levels come from the model's enum when `WindPower` is one: off, quiet, standard, strong and max on the RV1 Pro Max. The L11-A keeps quiet, standard and max.
+- New work statuses 14 to 19: returning to wash the mop, washing the mop, drying, mapping, mapping paused and return to wash paused.
+- Room cleaning sends `partition_area` as an array of room ids where the model asks for an array (RV1 Pro Max); the L11-A still gets JSON text.
+- The diagnostics probe also reads the RV1 Pro Max room and map properties (`partition_area`, `map_name`, `sequence`, `area_clean_plan`), in the same single property call.
+- English only: the Dutch translation is removed. Home Assistant falls back to English.
+
 ## 0.3.0
 
 - New: room cleaning, with Home Assistant 2026.3 or newer. The robot's rooms appear as segments that you map to Home Assistant areas; `vacuum.clean_area` (or Assist) then cleans them. Verified on an RV-L11-A: `clean_control` in room mode with `partition_area` as a JSON list of room ids, for one room and for two rooms in one command.

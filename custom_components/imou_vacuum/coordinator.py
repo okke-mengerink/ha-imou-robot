@@ -405,13 +405,23 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
 
     async def async_clean_rooms(self, room_ids: list[int]) -> None:
         """Clean these rooms (ids as found in the schedules)."""
+        control = self.model.service(SERVICE_CLEAN_CONTROL)
+        # the RV1 Pro Max takes an array of ints, the L11-A a JSON text
+        as_array = (
+            control is not None
+            and control.input_types.get(INPUT_PARTITION_AREA) == "array"
+        )
         await self.async_control(
             SERVICE_CLEAN_CONTROL,
             {
                 INPUT_STATUS: CLEAN_START,
                 INPUT_MODE: CLEAN_MODE_ROOMS,
-                INPUT_PLAN: CLEAN_PLAN_GENERAL,
-                INPUT_PARTITION_AREA: partition_area(room_ids),
+                INPUT_PLAN: CLEAN_PLAN_GENERAL,  # dropped when the model has no plan input
+                INPUT_PARTITION_AREA: (
+                    [int(room_id) for room_id in room_ids]
+                    if as_array
+                    else partition_area(room_ids)
+                ),
             },
         )
 

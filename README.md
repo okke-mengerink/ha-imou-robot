@@ -14,7 +14,7 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 
 ![Home Assistant device page of an Imou RV-L11-A with the Imou Vacuum (Open Platform) integration: device info, controls, sensors and diagnostic entities](https://raw.githubusercontent.com/okke-mengerink/ha-imou-robot/main/docs/images/device-page.png)
 
-*The device page of an Imou RV-L11-A in Home Assistant. This installation uses Dutch, so the entity names are Dutch.*
+*The device page of an Imou RV-L11-A in Home Assistant. The screenshot is from an installation that runs in Dutch, so its entity names are Dutch; the integration itself ships English names only.*
 
 ## Why this integration?
 
@@ -29,6 +29,7 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 | Robot | Status | Notes |
 |---|---|---|
 | Imou RV-L11-A (L11 series, with auto-empty dock) | Tested | Imou cloud `deviceModel` `L11-A`, Home Assistant 2026.10 |
+| Imou RV1 Pro Max | Reported by a user (issue #1), partly verified | Battery, return to dock and the 5 suction levels (off, quiet, standard, strong, max) were added in 0.3.1 from the user's diagnostics. Room cleaning and schedules are unverified. |
 | Any other Imou robot vacuum | unverified — please share diagnostics | Might work if its things model uses the same identifiers. See [Help us map other models](#help-us-map-other-models). |
 
 Verified on a real RV-L11-A:
@@ -45,7 +46,7 @@ Verified on a real RV-L11-A:
 - **Vacuum entity:** start (a whole-house clean, or resume when paused), pause, stop, return to dock, locate, and fan speed (the suction level: quiet, standard or max).
 - **Sensors:** battery, status, error, cleaned area (m²), cleaning time (min), consumable usage in hours (side brush, main brush, filter, sensors), Wi-Fi signal and a mop-fitted binary sensor.
 - **Controls:** suction and water level selects, carpet boost and other switches, and an empty-bin button. See [Entities](#entities).
-- **Set up in the UI:** App ID, App Secret and region, with re-authentication when the App Secret changes. English and Dutch translations. A diagnostics download for mapping new models.
+- **Set up in the UI:** App ID, App Secret and region, with re-authentication when the App Secret changes. English translation. A diagnostics download for mapping new models.
 - **Automatic discovery:** every robot on your Imou account is found, and only the entities its model supports are created.
 - **Room cleaning (Home Assistant 2026.3 or newer):** clean one or more rooms with `vacuum.clean_area` or by voice, after mapping the robot's rooms to your Home Assistant areas. See [Room cleaning](#room-cleaning).
 - **Schedules sensor:** the number of enabled schedules from the Imou app, with the details as an attribute.
@@ -248,7 +249,7 @@ The level maps live in `const.py` (`LEVEL_KEYS`), per identifier. A raw value th
 
 ### Names and unknown values
 
-Status and error names are translated into English and Dutch. A value the integration does not know is shown as `unknown_<n>`, and the raw model label (in Chinese) is added as the attribute `model_label`.
+Status and error names are shown in English. A value the integration does not know is shown as `unknown_<n>`, and the raw model label (in Chinese) is added as the attribute `model_label`.
 
 ## Polling and API quota
 
@@ -295,7 +296,7 @@ Contributions of identifier and enum mappings are welcome.
 - Suction, water level and fan speed are set through the `WindWater` service, verified on an L11-A. Plain property writes for these are ignored by the L11-A. Models without a `WindWater` service get property writes instead (unverified). Other models may use another scale; those values show as `unknown_<n>` and can be added to `LEVEL_KEYS`.
 - Property writes work on an L11-A for carpet boost (the cloud confirms the new value) and for return to dock. The L11-A never reports auto-empty or resume after charging, before or after a write, and the Imou app has no such settings, so its firmware probably does not implement them although the shared things model lists them. Whether such a write has any effect cannot be verified.
 - A switch whose setting the robot did not report in its first poll is created but disabled by default (the poll must be of an online robot; otherwise nothing is disabled). Enable it in the entity settings if your model supports it. Every switch has the attribute `reported_by_device`. Entities created by an earlier version keep their state: disable or delete those two switches by hand.
-- The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.)
+- The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.) The RV1 Pro Max reports a negative battery value while charging (-38 for 38 %); the integration shows the absolute value.
 - Consumable usage: the L11-A reports minutes used, although its things model says hours (after a 34-minute run all four counters read 34). The sensors therefore show hours (minutes / 60, displayed with one decimal). The conversion is the constant `LIFE_RAW_PER_HOUR` in `const.py`; a model that really reports hours would need 1 there.
 - There is no map and no zone cleaning. On an L11-A the room, map and cleaning-parameter properties stay empty in the cloud, even while the robot cleans a room, so the rooms are read from the schedules.
 - Schedules are read-only. The meaning of the schedule field `active` and the format of repeating days are unverified; both are shown raw.

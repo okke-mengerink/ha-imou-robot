@@ -18,8 +18,11 @@ from .const import (
     FALLBACK_OUTPUT_REFS,
     FALLBACK_PROPERTY_REFS,
     FALLBACK_SERVICE_REFS,
+    LEVEL_KEYS,
     NEVER_POLL_IDENTIFIERS,
     POLL_IDENTIFIERS,
+    PROP_WIND_POWER,
+    WIND_ENUM_LABEL_KEYS,
 )
 
 
@@ -119,6 +122,7 @@ class ServiceDef:
     ref: str
     inputs: Mapping[str, str] = field(default_factory=dict)  # identifier -> ref
     outputs: Mapping[str, str] = field(default_factory=dict)  # identifier -> ref
+    input_types: Mapping[str, str] = field(default_factory=dict)  # identifier -> lower-case type
 
     def input_ref(self, identifier: str) -> str | None:
         """Return the ref of an input parameter, or ``None`` if it does not exist."""
@@ -194,7 +198,19 @@ def _parse_service(raw: Any) -> ServiceDef | None:
     outputs = _parse_parameters(
         ci_get(raw, "outputData"), FALLBACK_OUTPUT_REFS.get(identifier, {})
     )
-    return ServiceDef(identifier=identifier, ref=ref, inputs=inputs, outputs=outputs)
+    input_types: dict[str, str] = {}
+    for item in ci_get(raw, "inputData") or []:
+        name = ci_get(item, "identifier")
+        if isinstance(name, str) and name.strip().lower() in inputs:
+            type_name = str(ci_get(ci_get(item, "dataType"), "type") or "").lower()
+            input_types.setdefault(name.strip().lower(), type_name)
+    return ServiceDef(
+        identifier=identifier,
+        ref=ref,
+        inputs=inputs,
+        outputs=outputs,
+        input_types=input_types,
+    )
 
 
 def _parse_parameters(items: Any, fallbacks: Mapping[str, str]) -> dict[str, str]:
@@ -293,6 +309,20 @@ class ThingsModel:
     def services(self) -> Mapping[str, ServiceDef]:
         """Return all services by (lower-case) identifier."""
         return self._services
+
+    def wind_levels(self) -> dict[int, str]:
+        """Return the suction levels (raw value -> translation key) of this model.
+
+        A WindPower enum with labels (RV1 Pro Max) gives its levels in value order;
+        otherwise the fixed L11-A levels apply.
+        """
+        prop = self.prop(PROP_WIND_POWER)
+        if prop is not None and prop.data_type == "enum" and prop.enum_labels:
+            return {
+                value: WIND_ENUM_LABEL_KEYS.get(label.strip(), f"unknown_{value}")
+                for value, label in sorted(prop.enum_labels.items())
+            }
+        return dict(LEVEL_KEYS[PROP_WIND_POWER])
 
     def has_service(self, identifier: str) -> bool:
         """Return whether the model has a service with this identifier."""

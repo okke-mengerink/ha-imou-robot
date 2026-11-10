@@ -47,7 +47,7 @@ RETRY_INTERVAL: Final = 60
 COMMAND_GRACE_SECONDS: Final = 30
 
 # work_status values during which the robot is considered active.
-ACTIVE_WORK_STATUSES: Final = frozenset({2, 4, 5, 7, 8, 9, 10, 11, 12, 13})
+ACTIVE_WORK_STATUSES: Final = frozenset({2, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 17})
 
 # ---------------------------------------------------------------------------
 # Things-model identifiers (matched case-insensitively, stored lower-case).
@@ -69,6 +69,7 @@ OUTPUT_TIMER: Final = "timer"  # clean_list: the schedules
 PROP_WORK_STATUS: Final = "work_status"
 PROP_POWER: Final = "power"
 PROP_BACK_CHARGING: Final = "back_charging"
+PROP_BACK_STATION: Final = "back_station"  # RV1 Pro Max: return to base station
 PROP_CLEAN_AREA: Final = "clean_area"
 PROP_CLEAN_TIME: Final = "clean_time"
 PROP_WIND_POWER: Final = "windpower"
@@ -128,6 +129,12 @@ NEVER_POLL_IDENTIFIERS: Final = frozenset(
         "trailpath",
         "map_switch",
         "specify_clean",
+        "partition_area",
+        "map_name",
+        "sequence",
+        "area_clean_plan",
+        "curpath_data",
+        "virtual_area",
     }
 )
 
@@ -137,6 +144,9 @@ PROP_CLEAN_PARAMS: Final = "clean_params"
 PROP_AREA_INFO: Final = "areainfoarray"
 PROP_MAP_CONFIG: Final = "mapconfig"
 PROP_MAP_SWITCH: Final = "map_switch"
+PROP_PARTITION_AREA: Final = "partition_area"  # RV1 Pro Max (array)
+PROP_SEQUENCE: Final = "sequence"  # RV1 Pro Max (array)
+PROP_AREA_CLEAN_PLAN: Final = "area_clean_plan"  # RV1 Pro Max (array)
 MAP_NAME: Final = "map_name"
 MAP_URL: Final = "map_url"
 AREA_URL: Final = "area_url"
@@ -146,6 +156,10 @@ PROBE_IDENTIFIERS: Final[tuple[str, ...]] = (
     PROP_AREA_INFO,
     PROP_MAP_CONFIG,
     PROP_MAP_SWITCH,
+    PROP_PARTITION_AREA,
+    MAP_NAME,
+    PROP_SEQUENCE,
+    PROP_AREA_CLEAN_PLAN,
 )
 
 # clean_control "status" input values
@@ -175,6 +189,7 @@ FALLBACK_PROPERTY_REFS: Final[dict[str, str]] = {
     PROP_WORK_STATUS: "12300",
     PROP_POWER: "11600",
     PROP_BACK_CHARGING: "1019",
+    PROP_BACK_STATION: "119300",
     PROP_CLEAN_AREA: "1020",
     PROP_CLEAN_TIME: "1021",
     PROP_WIND_POWER: "1027",
@@ -236,6 +251,12 @@ WORK_STATUS_KEYS: Final[dict[int, str]] = {
     11: "emptying_bin",
     12: "whole_house_clean",
     13: "return_paused",
+    14: "returning_to_wash",
+    15: "washing_mop",
+    16: "drying",
+    17: "mapping",
+    18: "mapping_paused",
+    19: "return_to_wash_paused",
 }
 ERROR_KEYS: Final[dict[int, str]] = {
     0: "none",
@@ -273,6 +294,16 @@ WIFI_KEYS: Final[dict[int, str]] = {
 LEVEL_KEYS: Final[dict[str, dict[int, str]]] = {
     PROP_WIND_POWER: {1: "quiet", 2: "standard", 3: "max"},
     PROP_WATER: {1: "low", 2: "medium", 3: "high"},
+}
+# Suction levels of a model whose WindPower is an enum (RV1 Pro Max: 0 off, 1 small,
+# 2 medium, 3 large, 4 max): the model's labels (Chinese) -> translation keys.
+# Unknown labels become "unknown_<n>".
+WIND_ENUM_LABEL_KEYS: Final[dict[str, str]] = {
+    "关闭": "off",
+    "小": "quiet",
+    "中": "standard",
+    "大": "strong",
+    "最大": "max",
 }
 # Level sent for the other setting when neither the cloud nor a command knows it.
 DEFAULT_LEVEL: Final = 2

@@ -146,10 +146,13 @@ def test_robot_detection() -> None:
 def test_enum_labels_come_from_the_model() -> None:
     model = l11a()
     assert sorted(model.prop("work_status").enum_labels) == list(range(14))
+    # the RV1 Pro Max adds 14..19; every one of its values is translated too
+    assert sorted(rv1().prop("work_status").enum_labels) == list(range(20))
+    assert set(rv1().prop("work_status").enum_labels) == set(const.WORK_STATUS_KEYS)
     assert sorted(model.member("errorinfo", "errcode").enum_labels) == list(range(12))
     assert sorted(model.prop("wifi_rssi_sdj").enum_labels) == [0, 1, 2, 3, 4]
     # every known value has a translation key, nothing is left unmapped
-    assert set(model.prop("work_status").enum_labels) == set(const.WORK_STATUS_KEYS)
+    assert set(model.prop("work_status").enum_labels) <= set(const.WORK_STATUS_KEYS)
     assert set(model.member("errorinfo", "errcode").enum_labels) == set(const.ERROR_KEYS)
     assert set(model.prop("wifi_rssi_sdj").enum_labels) == set(const.WIFI_KEYS)
 
@@ -291,6 +294,60 @@ def test_coercions() -> None:
     assert to_int(None) is None and to_int("x") is None and to_int(float("nan")) is None
     assert to_bool(1) is True and to_bool(0) is False and to_bool("true") is True
     assert to_bool("0") is False and to_bool(None) is None and to_bool("maybe") is None
+
+
+def rv1() -> Any:
+    return model_mod.ThingsModel.from_api(fixture("rv1promax_model.json"))
+
+
+def test_input_types() -> None:
+    control = l11a().service("clean_control")
+    assert control.input_types["partition_area"] == "text"
+    assert control.input_types["status"] == "enum" and set(control.input_types) <= set(control.inputs)
+    control = rv1().service("clean_control")
+    assert control.input_types["partition_area"] == "array"
+    assert control.input_types["blocks_area"] == "array" and control.input_types["status"] == "enum"
+    assert "plan" not in control.inputs and "plan" not in control.input_types
+
+
+def test_rv1_promax_model() -> None:
+    model = rv1()
+    assert model.prop("back_charging") is None
+    assert model.prop("back_station").ref == "119300" and model.prop("back_station").data_type == "bool"
+    assert model.prop("windpower").data_type == "enum" and model.prop("windpower").ref == "118900"
+    assert model.prop("water") is None and model.service("windwater") is None
+    assert model.service("clean_list").output_ref("list") == "201621"
+    assert model.prop("work_status").enum_labels[19] == "回洗暂停中"
+    refs = model.poll_refs()
+    assert "118900" in refs and "1019" not in refs and "11600" in refs
+    values = model.parse_values(fixture("rv1promax_values.json")["properties"])
+    assert values["power"] == -38 and values["work_status"] == 3 and values["windpower"] == 2
+
+
+def test_back_station_fallback_ref() -> None:
+    data = fixture("rv1promax_model.json")
+    for item in data["properties"]:
+        if item["identifier"] == "back_station":
+            item.pop("ref")
+    assert model_mod.ThingsModel.from_api(data).prop("back_station").ref == "119300"
+
+
+def test_wind_levels() -> None:
+    assert rv1().wind_levels() == {0: "off", 1: "quiet", 2: "standard", 3: "strong", 4: "max"}
+    assert l11a().wind_levels() == {1: "quiet", 2: "standard", 3: "max"}
+    data = fixture("rv1promax_model.json")
+    for item in data["properties"]:
+        if item["identifier"] == "WindPower":
+            item["dataType"]["specs"]["list"].append({"value": "5", "desc": "新"})
+    assert model_mod.ThingsModel.from_api(data).wind_levels()[5] == "unknown_5"
+
+
+def test_new_work_statuses() -> None:
+    keys = const.WORK_STATUS_KEYS
+    assert [keys[n] for n in range(14, 20)] == [
+        "returning_to_wash", "washing_mop", "drying", "mapping", "mapping_paused", "return_to_wash_paused",
+    ]
+    assert {14, 17} <= const.ACTIVE_WORK_STATUSES and not {15, 16, 18, 19} & const.ACTIVE_WORK_STATUSES
 
 
 if __name__ == "__main__":

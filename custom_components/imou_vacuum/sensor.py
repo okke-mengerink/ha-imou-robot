@@ -63,9 +63,13 @@ def _local_start(timestamp: int | None) -> str | None:
 
 
 def _battery(value: Any) -> int | None:
-    """Clamp the battery level to 0-100 (the model allows -100..100)."""
+    """Return the battery level as 0-100 (the model allows -100..100).
+
+    The RV1 Pro Max reports a negative value while charging (-38 for 38 %), so the
+    absolute value is used.
+    """
     number = to_int(value)
-    return None if number is None else max(0, min(100, number))
+    return None if number is None else min(100, abs(number))
 
 
 @dataclass(frozen=True, kw_only=True)

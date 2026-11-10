@@ -14,8 +14,10 @@
       "suction_level": {
         "default": "mdi:fan",
         "state": {
+          "off": "mdi:fan-off",
           "quiet": "mdi:weather-night",
           "standard": "mdi:fan-speed-2",
+          "strong": "mdi:fan-speed-3",
           "max": "mdi:fan"
         }
       },

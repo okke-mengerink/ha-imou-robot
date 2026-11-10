@@ -85,8 +85,10 @@
       "suction_level": {
         "name": "Suction",
         "state": {
+          "off": "Off",
           "quiet": "Quiet",
           "standard": "Standard",
+          "strong": "Strong",
           "max": "Max"
         }
       },
@@ -119,7 +121,13 @@
           "go_to": "Go to point",
           "emptying_bin": "Emptying bin",
           "whole_house_clean": "Whole-house clean",
-          "return_paused": "Return paused"
+          "return_paused": "Return paused",
+          "returning_to_wash": "Returning to wash the mop",
+          "washing_mop": "Washing the mop",
+          "drying": "Drying",
+          "mapping": "Mapping",
+          "mapping_paused": "Mapping paused",
+          "return_to_wash_paused": "Return to wash paused"
         }
       },
       "error": {
@@ -187,8 +195,10 @@
         "state_attributes": {
           "fan_speed": {
             "state": {
+              "off": "Off",
               "quiet": "Quiet",
               "standard": "Standard",
+              "strong": "Strong",
               "max": "Max"
             }
           }
@@ -216,7 +226,7 @@
       "message": "This robot does not support {feature}."
     },
     "invalid_fan_speed": {
-      "message": "{fan_speed} is not a valid fan speed for this robot. Use quiet, standard or max."
+      "message": "{fan_speed} is not a valid fan speed for this robot. Use one of the levels the robot offers, for example standard."
     },
     "invalid_option": {
       "message": "{option} is not a valid choice for this robot."

@@ -42,6 +42,8 @@ PKG = "custom_components.imou_vacuum"
 PKG_DIR = ROOT / "custom_components" / "imou_vacuum"
 MODEL_JSON = json.loads((ROOT / "tests/fixtures/l11a_model.json").read_text("utf-8"))
 VALUES_JSON = json.loads((ROOT / "tests/fixtures/l11a_values.json").read_text("utf-8"))
+RV1_MODEL_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_model.json").read_text("utf-8"))
+RV1_VALUES_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_values.json").read_text("utf-8"))
 ICONS_JSON = json.loads((PKG_DIR / "icons.json").read_text("utf-8"))
 
 RESULTS: list[tuple[bool, str]] = []
@@ -197,6 +199,8 @@ def test_entities() -> None:
     no_rooms_vac = make_entities(FakeCoordinator(no_rooms_model, VALUES_JSON["properties"]))["vacuum"][0]
     check("a model whose clean_control lacks partition_area gets no CLEAN_AREA", int(no_rooms_vac.supported_features) == int(expected_features) & ~int(clean_area or 0), str(no_rooms_vac.supported_features))
     check("vacuum has the translation key 'robot' (fan speed names)", vac.translation_key == "robot")
+    battery = mod("sensor")._battery  # noqa: SLF001
+    check("battery: absolute value clamped to 0..100 (-38 -> 38, 41 -> 41, 150 and -150 -> 100, garbage -> None)", [battery(v) for v in (-38, 41, 150, -150, 0, None, "x")] == [38, 41, 100, 100, 0, None, None], str([battery(v) for v in (-38, 41, 150, -150, 0, None, "x")]))
     check("vacuum activity DOCKED for work_status 3", vac.activity == VacuumActivity.DOCKED, str(vac.activity))
     check("vacuum state string is 'docked'", vac.state == "docked", str(vac.state))
     check("vacuum attributes work_status/error", vac.extra_state_attributes == {"work_status": 3, "error": 0}, str(vac.extra_state_attributes))
@@ -206,14 +210,16 @@ def test_entities() -> None:
         0: VacuumActivity.IDLE, 1: VacuumActivity.PAUSED, 13: VacuumActivity.PAUSED,
         2: VacuumActivity.RETURNING, 3: VacuumActivity.DOCKED, 11: VacuumActivity.DOCKED,
         6: VacuumActivity.ERROR,
-        **{n: VacuumActivity.CLEANING for n in (4, 5, 7, 8, 9, 10, 12)},
+        14: VacuumActivity.RETURNING, 15: VacuumActivity.DOCKED, 16: VacuumActivity.DOCKED,
+        18: VacuumActivity.PAUSED, 19: VacuumActivity.PAUSED,
+        **{n: VacuumActivity.CLEANING for n in (4, 5, 7, 8, 9, 10, 12, 17)},
     }  # fmt: skip
     wrong = {}
     for status, activity in expected_activity.items():
         coordinator.set_values(work_status=status)
         if vac.activity != activity:
             wrong[status] = vac.activity
-    check("work_status -> VacuumActivity table (0..13)", not wrong, str(wrong))
+    check("work_status -> VacuumActivity table (0..19)", not wrong, str(wrong))
     coordinator.set_values(work_status=99)
     check("unknown work_status -> activity None (state unknown)", vac.activity is None and vac.state in (None, "unknown"))
     coordinator.set_values(work_status=3)
@@ -280,17 +286,17 @@ def test_entities() -> None:
     battery = sensors["battery"]
     check("battery device class/unit/state class", battery.device_class == SensorDeviceClass.BATTERY and battery.native_unit_of_measurement == "%" and str(battery.state_class) in ("measurement", "SensorStateClass.MEASUREMENT"))
     clamps = {}
-    for raw, want in ((1, 1), (150, 100), (-20, 0), (0, 0), (100, 100), ("55", 55), (None, None)):
+    for raw, want in ((1, 1), (150, 100), (-20, 20), (-150, 100), (0, 0), (100, 100), ("55", 55), (None, None)):
         coordinator.set_values(power=raw)
         if battery.native_value != want:
             clamps[raw] = battery.native_value
-    check("battery clamps to 0..100 (1,150,-20,0,100,'55',None)", not clamps, str(clamps))
+    check("battery is the absolute value clamped to 0..100 (1,150,-20,-150,0,100,'55',None)", not clamps, str(clamps))
     coordinator.set_values(power=1)
     check("battery observed value is 1", battery.native_value == 1)
 
     status = sensors["status"]
     check("status sensor is an ENUM", status.device_class == SensorDeviceClass.ENUM)
-    check("status options = all 14 translation keys in value order", status.options == [const.WORK_STATUS_KEYS[n] for n in range(14)], str(status.options))
+    check("status options = all 20 translation keys in value order", status.options == [const.WORK_STATUS_KEYS[n] for n in range(20)], str(status.options))
     bad = {}
     for n in range(14):
         coordinator.set_values(work_status=n)
@@ -346,12 +352,12 @@ def test_entities() -> None:
     raw_model = copy.deepcopy(MODEL_JSON)
     for prop in raw_model["properties"]:
         if prop["identifier"] == "work_status":
-            prop["dataType"]["specs"]["list"].append({"value": "14", "desc": "测试"})
+            prop["dataType"]["specs"]["list"].append({"value": "20", "desc": "测试"})
     coordinator2 = FakeCoordinator(raw_model, VALUES_JSON["properties"])
     status2 = by_key(make_entities(coordinator2)["sensor"])["status"]
-    coordinator2.set_values(work_status=14)
-    check("unknown model enum value -> option unknown_14", status2.options[-1] == "unknown_14" and status2.native_value == "unknown_14")
-    check("unknown value exposes model_label attribute", status2.extra_state_attributes == {"raw_value": 14, "model_label": "测试"}, str(status2.extra_state_attributes))
+    coordinator2.set_values(work_status=20)
+    check("unknown model enum value -> option unknown_20", status2.options[-1] == "unknown_20" and status2.native_value == "unknown_20")
+    check("unknown value exposes model_label attribute", status2.extra_state_attributes == {"raw_value": 20, "model_label": "测试"}, str(status2.extra_state_attributes))
     coordinator2.set_values(work_status=3)
     check("known value has no extra attributes", status2.extra_state_attributes is None)
 
@@ -562,9 +568,8 @@ def test_files() -> None:
     const = mod("const")
     strings = json.loads((PKG_DIR / "strings.json").read_text("utf-8"))
     en = json.loads((PKG_DIR / "translations/en.json").read_text("utf-8"))
-    nl = json.loads((PKG_DIR / "translations/nl.json").read_text("utf-8"))
     check("strings.json equals translations/en.json", strings == en)
-    check("nl.json has exactly the same keys as en.json", keyset(en) == keyset(nl), str(keyset(en) ^ keyset(nl)))
+    check("English only: no other translation file", sorted(p.name for p in (PKG_DIR / "translations").iterdir()) == ["en.json"])
 
     descriptions: dict[str, list[Any]] = {
         "sensor": list(mod("sensor").SENSORS) + list(mod("sensor").ENUM_SENSORS),
@@ -573,17 +578,17 @@ def test_files() -> None:
         "button": list(mod("button").BUTTONS),
         "binary_sensor": list(mod("binary_sensor").BINARY_SENSORS),
     }
-    for lang, data in (("en", en), ("nl", nl)):
+    for lang, data in (("en", en),):
         missing = [f"{p}.{d.translation_key}" for p, ds in descriptions.items() for d in ds if not data["entity"].get(p, {}).get(d.translation_key, {}).get("name")]
         check(f"[{lang}] every entity translation_key has a name", not missing, str(missing))
         for platform, key, known in (
             ("sensor", "status", const.WORK_STATUS_KEYS), ("sensor", "error", const.ERROR_KEYS), ("sensor", "wifi_signal", const.WIFI_KEYS),
-            ("select", "suction_level", const.LEVEL_KEYS["windpower"]), ("select", "mop_water_level", const.LEVEL_KEYS["water"]),
+            ("select", "suction_level", {**const.LEVEL_KEYS["windpower"], **{i: k for i, k in enumerate(const.WIND_ENUM_LABEL_KEYS.values(), 100)}}), ("select", "mop_water_level", const.LEVEL_KEYS["water"]),
         ):  # fmt: skip
             states = data["entity"][platform][key]["state"]
             check(f"[{lang}] {platform}.{key} has a translated state for every known value", set(states) == set(known.values()) and all(states.values()), str(set(known.values()) ^ set(states)))
         fan_states = data["entity"]["vacuum"]["robot"]["state_attributes"]["fan_speed"]["state"]
-        check(f"[{lang}] vacuum fan speed presets are translated", set(fan_states) == set(const.LEVEL_KEYS["windpower"].values()) and all(fan_states.values()), str(fan_states))
+        check(f"[{lang}] vacuum fan speed presets are translated", set(fan_states) == set(const.LEVEL_KEYS["windpower"].values()) | set(const.WIND_ENUM_LABEL_KEYS.values()) and all(fan_states.values()), str(fan_states))
         check(f"[{lang}] options flow texts: both steps, field, error and abort", {"init", "rooms"} <= set(data["options"]["step"]) and data["options"]["step"]["rooms"]["data"]["room_names"] and data["options"]["step"]["init"]["data"]["robot"] and data["options"]["error"]["invalid_room_names"] and data["options"]["abort"]["no_rooms"] and "{robot}" in data["options"]["step"]["rooms"]["title"])
         check(f"[{lang}] schedules sensor name and invalid_room exception", data["entity"]["sensor"]["schedules"]["name"] and "{room}" in data["exceptions"]["invalid_room"]["message"])
         check(f"[{lang}] region selector options", set(data["selector"]["region"]["options"]) == set(const.REGION_HOSTS))
@@ -595,12 +600,9 @@ def test_files() -> None:
         for key, item in data["exceptions"].items():
             placeholders = set(re.findall(r"\{(\w+)\}", item["message"]))
             check(f"[{lang}] exception '{key}' placeholders are known", placeholders <= {"error", "feature", "fan_speed", "option", "command", "params", "room"}, str(placeholders))
-    check("sensor name Schedules / Schema's", en["entity"]["sensor"]["schedules"]["name"] == "Schedules" and nl["entity"]["sensor"]["schedules"]["name"] == "Schema's")
-    check("no Dutch leaked into en.json / English into nl names (spot check)", en["entity"]["sensor"]["battery"]["name"] == "Battery" and nl["entity"]["sensor"]["battery"]["name"] == "Batterij")
-    check("Dutch suction labels stil / standaard / maximaal", nl["entity"]["select"]["suction_level"]["state"] == {"quiet": "Stil", "standard": "Standaard", "max": "Maximaal"} and nl["entity"]["vacuum"]["robot"]["state_attributes"]["fan_speed"]["state"] == {"quiet": "Stil", "standard": "Standaard", "max": "Maximaal"})
-    check("Dutch water labels laag / gemiddeld / hoog", nl["entity"]["select"]["mop_water_level"]["state"] == {"low": "Laag", "medium": "Gemiddeld", "high": "Hoog"})
-    check("English suction/water labels", en["entity"]["select"]["suction_level"]["state"] == {"quiet": "Quiet", "standard": "Standard", "max": "Max"} and en["entity"]["select"]["mop_water_level"]["state"] == {"low": "Low", "medium": "Medium", "high": "High"})
-    check("no number entities are left in the translations", "number" not in en["entity"] and "number" not in nl["entity"])
+    check("sensor name Schedules", en["entity"]["sensor"]["schedules"]["name"] == "Schedules")
+    check("English suction/water labels", en["entity"]["select"]["suction_level"]["state"] == {"off": "Off", "quiet": "Quiet", "standard": "Standard", "strong": "Strong", "max": "Max"} and en["entity"]["select"]["mop_water_level"]["state"] == {"low": "Low", "medium": "Medium", "high": "High"})
+    check("no number entities are left in the translations", "number" not in en["entity"])
 
     icons = json.loads((PKG_DIR / "icons.json").read_text("utf-8"))
     icon_keys = {(p, k) for p, d in icons["entity"].items() for k in d}
@@ -612,7 +614,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.3.0"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.3.1"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -624,7 +626,7 @@ def test_files() -> None:
 
     # the domain was renamed in 0.2.0: manifest, folder and DOMAIN agree, and nothing of the old name is left
     check("domain: manifest, folder name and DOMAIN are all 'imou_vacuum'", manifest["domain"] == PKG_DIR.name == const.DOMAIN == "imou_vacuum", f"{manifest['domain']} {PKG_DIR.name} {const.DOMAIN}")
-    check("display name 'Imou Vacuum (Open Platform)' in manifest, hacs.json and both translations", {manifest["name"], hacs["name"], en["title"], nl["title"]} == {"Imou Vacuum (Open Platform)"}, str({manifest["name"], hacs["name"], en["title"], nl["title"]}))
+    check("display name 'Imou Vacuum (Open Platform)' in manifest, hacs.json and the translation", {manifest["name"], hacs["name"], en["title"]} == {"Imou Vacuum (Open Platform)"}, str({manifest["name"], hacs["name"], en["title"]}))
     old_domain, old_name = "imou" + "_robot", "Imou Robot" + " Vacuum"  # (built from parts so that this file does not match itself)
     leftovers = []
     for path in sorted(ROOT.rglob("*")):
@@ -926,7 +928,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("initial states from the observed values", got == expected_states, str({k: (v, expected_states[k]) for k, v in got.items() if v != expected_states[k]}))
     check("switch attribute reported_by_device is shown", (state("carpet_boost").attributes["reported_by_device"], state("auto_empty").attributes["reported_by_device"], state("resume_after_charging").attributes["reported_by_device"]) == (True, False, False))
     check("entity names are translated (en)", state("battery").name == "RV-L11-A-TEST Battery" and state("empty_bin").name == "RV-L11-A-TEST Empty bin" and state("carpet_boost").name == "RV-L11-A-TEST Carpet boost" and state("suction_level").name == "RV-L11-A-TEST Suction" and state("mop_water_level").name == "RV-L11-A-TEST Water level", f"{state('battery').name} | {state('suction_level').name}")
-    check("status sensor lists options", state("status").attributes["options"][3] == "charging" and len(state("status").attributes["options"]) == 14)
+    check("status sensor lists options", state("status").attributes["options"][3] == "charging" and len(state("status").attributes["options"]) == 20)
     check("diagnostic entities are categorised", ent_reg.async_get(ids["wifi_signal"]).entity_category == "diagnostic" and ent_reg.async_get(ids["side_brush"]).entity_category == "diagnostic" and ent_reg.async_get(ids["battery"]).entity_category is None)
 
     check("idle polling interval is 300 s", coordinator.update_interval.total_seconds() == 300, str(coordinator.update_interval))
@@ -1352,7 +1354,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     probe = dump["robots"][0]["probe"]
     props_out = probe["properties"]
     probe_blob = json.dumps(probe, ensure_ascii=False)
-    check("probe covers the four unknown properties", set(props_out) == set(const.PROBE_IDENTIFIERS), str(props_out.keys()))
+    check("probe covers the four unknown properties of the L11-A (the room/map ones of the RV1 Pro Max are not in its model)", set(props_out) == {"clean_params", "areainfoarray", "mapconfig", "map_switch"}, str(props_out.keys()))
     check("probe keeps JSON structure", props_out["clean_params"]["type"] == "json" and props_out["clean_params"]["value"]["rooms"][0]["id"] == 3 and props_out["areainfoarray"]["value"][0]["points"] == [[1.5, 2.5]], str(props_out))
     check("probe summarizes plain text", props_out["mapconfig"]["type"] == "text" and props_out["mapconfig"]["length"] > 0, str(props_out["mapconfig"]))
     check("probe hides room and map names", "Kitchen" not in probe_blob and "Morning" not in probe_blob and props_out["map_switch"]["map_name"] == "**REDACTED**", probe_blob)
@@ -1756,8 +1758,134 @@ def test_full_setup() -> None:
         worker.join()
 
 
+# ---------------------------------------------------------------------------
+# 6. a second robot: the Imou RV1 Pro Max (issue #1), full setup with its fixtures
+# ---------------------------------------------------------------------------
+class RV1Client(FakeClient):
+    """Fake client for the RV1 Pro Max (no network)."""
+
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
+        super().__init__(session, app_id, app_secret, host)
+        self.props = copy.deepcopy(RV1_VALUES_JSON["properties"])
+        # room/map properties: never polled, only read by the diagnostics probe
+        self.props.update({"126200": [3, 4], "122300": ["Map one"], "120600": [], "121600": []})
+
+    async def async_list_devices(self) -> list[Any]:
+        api = mod("api")
+        return [api.ImouDevice(device_id="TESTDEVICE0002", product_id="PRODUCT_ID_RV1", name="RV1-PRO-MAX-TEST", model="RV1 Pro Max", status="online", version="1.0.0", brand="lechange")]
+
+    async def async_get_product_model(self, product_id: str) -> dict[str, Any]:
+        return copy.deepcopy(RV1_MODEL_JSON)
+
+    async def async_set_properties(self, product_id: str, device_id: str, properties: dict[str, Any]) -> None:
+        self.calls.append(("set", device_id, dict(properties)))
+        self.props.update(properties)
+
+    async def async_control(self, product_id: str, device_id: str, ref: str, content: dict[str, Any] | None = None) -> dict[str, Any]:
+        if ref == "201600":  # clean_list (read-only): kept out of self.calls
+            self.probe_service_calls.append((ref, dict(content or {})))
+            return {"content": {"outputData": {"201621": []}, "service": ref}}
+        self.calls.append(("control", device_id, ref, dict(content or {})))
+        return {"content": {"outputData": {"200921": 0}, "service": ref}}
+
+
+async def rv1_setup_checks(config_dir: str) -> None:
+    from homeassistant import bootstrap, config_entries, loader  # noqa: PLC0415
+    from homeassistant.core import HomeAssistant  # noqa: PLC0415
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    const = mod("const")
+    package = importlib.import_module(PKG)
+    package.ImouClient = RV1Client
+    package.async_get_clientsession = lambda hass: None
+    hass = HomeAssistant(config_dir)
+    loader.async_setup(hass)
+    hass.config.skip_pip = True
+    hass.config.language = "en"
+    hass.config_entries = config_entries.ConfigEntries(hass, {})
+    await loader.async_get_custom_components(hass)
+    await bootstrap.async_load_base_functionality(hass)
+    await hass.async_start()
+    try:
+        entry = config_entries.ConfigEntry(
+            data={"app_id": "rv1-app", "app_secret": "s", "region": "eu"}, discovery_keys={},
+            domain="imou_vacuum", entry_id="rv1-app", minor_version=1, options={}, source="user",
+            subentries_data=None, title="t", unique_id="rv1-app", version=1,
+        )  # fmt: skip
+        await hass.config_entries.async_add(entry)
+        await hass.async_block_till_done()
+        check("RV1 Pro Max: entry is loaded", entry.state is config_entries.ConfigEntryState.LOADED, str(entry.state))
+        client = FakeClient.instance
+        coordinator = entry.runtime_data.coordinators["TESTDEVICE0002"]
+        ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)}
+
+        def state(key: str) -> Any:
+            return hass.states.get(ids[key])
+
+        async def call(domain: str, service: str, entity: str, **data: Any) -> None:
+            client.calls.clear()
+            await hass.services.async_call(domain, service, {"entity_id": ids[entity], **data}, blocking=True)
+
+        from homeassistant.components import vacuum as vacuum_component  # noqa: PLC0415
+        from homeassistant.components.vacuum import VacuumEntityFeature  # noqa: PLC0415
+
+        check("RV1 Pro Max: polled refs include windpower 118900 and not back_charging/water", "118900" in client.last_refs and "1019" not in client.last_refs and "1028" not in client.last_refs, str(client.last_refs))
+        check("RV1 Pro Max: battery -38 shows 38 %", state("battery").state == "38", str(state("battery")))
+        features = int(state("vacuum").attributes["supported_features"])
+        check("RV1 Pro Max: RETURN_HOME is supported (back_station)", bool(features & int(VacuumEntityFeature.RETURN_HOME)), str(features))
+        await call("vacuum", "return_to_base", "vacuum")
+        check("RV1 Pro Max: return_to_base writes back_station {119300: 1}", client.calls == [("set", "TESTDEVICE0002", {"119300": 1})], str(client.calls))
+        check("RV1 Pro Max: fan_speed_list is off/quiet/standard/strong/max, current 2 -> standard", list(state("vacuum").attributes["fan_speed_list"]) == ["off", "quiet", "standard", "strong", "max"] and state("vacuum").attributes["fan_speed"] == "standard", str(dict(state("vacuum").attributes)))
+        check("RV1 Pro Max: suction select has the same options", state("suction_level").attributes["options"] == ["off", "quiet", "standard", "strong", "max"] and state("suction_level").state == "standard", str(dict(state("suction_level").attributes)))
+        check("RV1 Pro Max: no water level select", "mop_water_level" not in ids)
+        await call("vacuum", "set_fan_speed", "vacuum", fan_speed="max")
+        check("RV1 Pro Max: fan speed max writes WindPower 4 as a property write (no WindWater)", client.calls == [("set", "TESTDEVICE0002", {"118900": 4})], str(client.calls))
+        await call("select", "select_option", "suction_level", option="strong")
+        check("RV1 Pro Max: suction select strong writes WindPower 3", client.calls == [("set", "TESTDEVICE0002", {"118900": 3})], str(client.calls))
+        client.props["12300"] = 15
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: work_status 15 -> docked and washing_mop", state("vacuum").state == "docked" and state("status").state == "washing_mop", f"{state('vacuum').state} {state('status').state}")
+        client.props["12300"] = 18
+        await coordinator.async_refresh()
+        await call("vacuum", "start", "vacuum")
+        check("RV1 Pro Max: start while mapping is paused -> continue {200901: 2}", state("status").state == "mapping_paused" and client.calls == [("control", "TESTDEVICE0002", "200900", {"200901": 2})], str(client.calls))
+        client.props["12300"] = 3
+        await coordinator.async_refresh()
+
+        if ha_clean_area() is not None:
+            vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(ids["vacuum"])
+            client.calls.clear()
+            await vac_entity.async_clean_segments(["3", "4"])
+            check("RV1 Pro Max: clean_segments sends partition_area [3, 4] as a list and no plan input", client.calls == [("control", "TESTDEVICE0002", "200900", {"200901": 1, "200902": 1, "200903": [3, 4]})], str(client.calls))
+        else:
+            client.calls.clear()
+            await coordinator.async_clean_rooms([3, 4])
+            check("RV1 Pro Max: clean_rooms sends partition_area [3, 4] as a list and no plan input", client.calls == [("control", "TESTDEVICE0002", "200900", {"200901": 1, "200902": 1, "200903": [3, 4]})], str(client.calls))
+
+        # diagnostics probe: only declared identifiers, one property call
+        diagnostics = importlib.import_module(f"{PKG}.diagnostics")
+        polls_before = client.poll_count
+        dump = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+        probe_props = dump["robots"][0]["probe"]["properties"]
+        check("RV1 Pro Max: probe reads exactly the declared room/map properties", set(probe_props) == {"partition_area", "map_name", "sequence", "area_clean_plan"}, str(set(probe_props)))
+        check("RV1 Pro Max: probe is one property call with the 4 refs, no large ones", client.poll_count == polls_before + 1 and sorted(client.last_refs) == ["120600", "121600", "122300", "126200"], f"{client.poll_count - polls_before} {client.last_refs}")
+        check("RV1 Pro Max: probe never reads curpath_data, virtual_area or swp_*", not {"121300", "121400", "146100", "146000", "145800", "145700"} & set(client.last_refs))
+    finally:
+        await hass.async_stop()
+
+
+def test_rv1_setup() -> None:
+    config_dir = tempfile.mkdtemp(prefix="imou-rv1-")
+    try:
+        asyncio.run(rv1_setup_checks(config_dir))
+    finally:
+        worker = threading.Thread(target=shutil.rmtree, args=(config_dir,), kwargs={"ignore_errors": True})
+        worker.start()
+        worker.join()
+
+
 def main() -> int:
-    for func in (test_imports, test_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup):
+    for func in (test_imports, test_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup):
         print(f"\n=== {func.__name__} ===")
         try:
             func()

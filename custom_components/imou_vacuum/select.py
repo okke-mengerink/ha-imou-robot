@@ -20,7 +20,8 @@ PARALLEL_UPDATES = 1
 
 @dataclass(frozen=True, kw_only=True)
 class ImouSelectDescription(SelectEntityDescription):
-    """Select backed by one level property; the levels are in const.LEVEL_KEYS."""
+    """Select backed by one level property; the levels are in const.LEVEL_KEYS
+    (suction: ThingsModel.wind_levels, which can come from the model)."""
 
     identifier: str
 
@@ -55,7 +56,7 @@ async def async_setup_entry(
 
 
 class ImouLevelSelect(ImouEntity, SelectEntity):
-    """A 1/2/3 level setting, set through the WindWater service.
+    """A level setting (L11-A: 1/2/3), set through the WindWater service.
 
     The L11-A uses 3 levels although its things model declares 0-100, and it
     ignores plain property writes for them. A raw value that is not a known level
@@ -70,7 +71,11 @@ class ImouLevelSelect(ImouEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
-        self._levels = LEVEL_KEYS[description.identifier]
+        self._levels = (
+            coordinator.model.wind_levels()
+            if description.identifier == PROP_WIND_POWER
+            else LEVEL_KEYS[description.identifier]
+        )
 
     def _raw(self) -> int | None:
         identifier = self.entity_description.identifier
