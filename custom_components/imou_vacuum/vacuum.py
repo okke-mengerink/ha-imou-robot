@@ -30,6 +30,7 @@ from .const import (
     INPUT_PARTITION_AREA,
     INPUT_PLAN,
     INPUT_STATUS,
+    PAUSED_STATUS_KEYS,
     PROP_BACK_CHARGING,
     PROP_BACK_STATION,
     PROP_WIND_POWER,
@@ -45,30 +46,30 @@ PARALLEL_UPDATES = 1
 # Room cleaning exists in Home Assistant 2026.3 and newer only.
 CLEAN_AREA = getattr(VacuumEntityFeature, "CLEAN_AREA", None)
 
-# work_status -> activity. Unknown values give an unknown state.
-WORK_STATUS_ACTIVITY: dict[int, VacuumActivity] = {
-    0: VacuumActivity.IDLE,
-    1: VacuumActivity.PAUSED,
-    13: VacuumActivity.PAUSED,
-    2: VacuumActivity.RETURNING,
-    3: VacuumActivity.DOCKED,
-    11: VacuumActivity.DOCKED,
-    6: VacuumActivity.ERROR,
-    4: VacuumActivity.CLEANING,
-    5: VacuumActivity.CLEANING,
-    7: VacuumActivity.CLEANING,
-    8: VacuumActivity.CLEANING,
-    9: VacuumActivity.CLEANING,
-    10: VacuumActivity.CLEANING,
-    12: VacuumActivity.CLEANING,
-    14: VacuumActivity.RETURNING,
-    15: VacuumActivity.DOCKED,
-    16: VacuumActivity.DOCKED,
-    17: VacuumActivity.CLEANING,
-    18: VacuumActivity.PAUSED,
-    19: VacuumActivity.PAUSED,
+# work_status key -> activity (the keys come from the model's labels, see
+# ThingsModel.work_status_keys). Unknown keys give an unknown state.
+KEY_ACTIVITY: dict[str, VacuumActivity] = {
+    "standby": VacuumActivity.IDLE,
+    "paused": VacuumActivity.PAUSED,
+    "return_paused": VacuumActivity.PAUSED,
+    "returning": VacuumActivity.RETURNING,
+    "charging": VacuumActivity.DOCKED,
+    "emptying_bin": VacuumActivity.DOCKED,
+    "error": VacuumActivity.ERROR,
+    "relocating": VacuumActivity.CLEANING,
+    "remote_control": VacuumActivity.CLEANING,
+    "room_clean": VacuumActivity.CLEANING,
+    "zone_clean": VacuumActivity.CLEANING,
+    "spot_clean": VacuumActivity.CLEANING,
+    "go_to": VacuumActivity.CLEANING,
+    "whole_house_clean": VacuumActivity.CLEANING,
+    "returning_to_wash": VacuumActivity.RETURNING,
+    "washing_mop": VacuumActivity.DOCKED,
+    "drying": VacuumActivity.DOCKED,
+    "mapping": VacuumActivity.CLEANING,
+    "mapping_paused": VacuumActivity.PAUSED,
+    "return_to_wash_paused": VacuumActivity.PAUSED,
 }
-PAUSED_WORK_STATUSES = frozenset({1, 13, 18, 19})
 
 # Fan speed presets are the suction levels of the things model (see
 # ThingsModel.wind_levels); translated through
@@ -128,6 +129,11 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         self._issue_room_ids: frozenset[str] | None = None
         self._attr_supported_features = features
         self._fan_speeds = model.wind_levels()
+        self._status_keys = model.work_status_keys()
+
+    def _status_key(self, work_status: int | None) -> str | None:
+        """Return the key of a raw work status (``unknown_<n>`` when not known)."""
+        return level_key(self._status_keys, work_status)
 
     @property
     @override
@@ -136,7 +142,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         data = self.coordinator.data
         if data is None or data.work_status is None:
             return None
-        return WORK_STATUS_ACTIVITY.get(data.work_status)
+        return KEY_ACTIVITY.get(self._status_key(data.work_status) or "")
 
     @property
     @override
@@ -237,7 +243,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         # so look at the robot first (one extra API call).
         await self.coordinator.async_refresh()
         data = self.coordinator.data
-        if data is not None and data.work_status in PAUSED_WORK_STATUSES:
+        if data is not None and self._status_key(data.work_status) in PAUSED_STATUS_KEYS:
             inputs = {INPUT_STATUS: CLEAN_CONTINUE}
         else:
             inputs = {

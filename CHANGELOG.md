@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Other Imou robot models are mapped from their own things model. The statuses, the error codes and the Wi-Fi levels are matched by the labels in the model (Chinese labels such as 待机中 or 充电中) instead of by number, so a robot that numbers its values differently still shows the right status and activity. A label that is not known shows as `unknown_<n>`; labels in a language the integration does not know fall back to the number tables, and values a model does not declare are only filled from the number table when the declared labels agree with it. Unknown values show with the raw value and the model label as attributes. A model without labels keeps using the number tables. The L11-A and the RV1 Pro Max show exactly what they showed before.
+- Which statuses count as active (fast polling) or paused (start continues instead of starting) is defined per status, not per number.
+- New: a Charging binary sensor for a robot whose model has `power_status` (RV1 Pro Max). It is on while the robot reports "charging". A robot without `power_status` gets no such entity.
+- New: a clear notice when a model is not fully supported. When a core function is missing (start and stop, return to dock, battery or status) or a value is not recognised, Home Assistant shows a repair issue that names what is missing or unknown and links to a prefilled GitHub issue form. The issue disappears when a later setup finds nothing missing, when the robot is no longer found, or when the integration is removed. The issue id does not contain the robot's serial. Nothing changes for the L11-A and the RV1 Pro Max.
+- A model that is not verified yet gets one line in the log at setup, asking to share the diagnostics.
+- Diagnostics: a `support_report` per robot with the functions that were found, the missing core functions and the unknown labels.
+
 ## 0.3.1
 
 - Fix: the battery showed 0 % on an Imou RV1 Pro Max (issue #1). While charging it reports a negative value (-38 for 38 %); the integration now shows the absolute value.

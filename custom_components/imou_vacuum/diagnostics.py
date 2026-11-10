@@ -27,6 +27,7 @@ from .const import (
 )
 from .coordinator import ImouConfigEntry, ImouCoordinator
 from .probe import find_urls, redact_url, summarize, summarize_members
+from .support import support_report
 
 TO_REDACT = {CONF_APP_ID, CONF_APP_SECRET}
 
@@ -153,6 +154,7 @@ async def async_get_config_entry_diagnostics(
                 else None,
                 "online": data.online if data is not None else None,
                 "values": data.values if data is not None else None,
+                "support_report": support_report(coordinator.model, device.model),
                 "resolved_model": coordinator.model.as_diagnostics(),
                 "things_model": coordinator.model.raw,
                 "probe": await _guard(_async_probe(hass, coordinator)),

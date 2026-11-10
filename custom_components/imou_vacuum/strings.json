@@ -74,6 +74,9 @@
     "binary_sensor": {
       "mop_fitted": {
         "name": "Mop fitted"
+      },
+      "charging": {
+        "name": "Charging"
       }
     },
     "button": {
@@ -204,6 +207,12 @@
           }
         }
       }
+    }
+  },
+  "issues": {
+    "model_not_fully_supported": {
+      "title": "{model} is not fully supported yet",
+      "description": "The robot model {model} differs from the models this integration was verified on. Missing core functions: {missing}. Values that are not recognised: {unknown}. Other functions may work, but the missing or unknown parts may not show or react correctly.\n\nPlease help to support this model: select Learn more to open a prefilled GitHub issue, and attach the diagnostics download of this integration (Settings > Devices & services > Imou Vacuum (Open Platform) > the three dots > Download diagnostics). Check the file before you attach it."
     }
   },
   "exceptions": {

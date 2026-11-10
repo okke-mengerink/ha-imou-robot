@@ -14,6 +14,11 @@ import math
 from typing import Any
 
 from .const import (
+    CHARGING_LABEL,
+    CHARGING_VALUE,
+    ERROR_CODE,
+    ERROR_KEYS,
+    ERROR_LABEL_KEYS,
     FALLBACK_INPUT_REFS,
     FALLBACK_OUTPUT_REFS,
     FALLBACK_PROPERTY_REFS,
@@ -21,8 +26,16 @@ from .const import (
     LEVEL_KEYS,
     NEVER_POLL_IDENTIFIERS,
     POLL_IDENTIFIERS,
+    PROP_ERROR_INFO,
+    PROP_POWER_STATUS,
+    PROP_WIFI,
     PROP_WIND_POWER,
+    PROP_WORK_STATUS,
+    WIFI_KEYS,
+    WIFI_LABEL_KEYS,
     WIND_ENUM_LABEL_KEYS,
+    WORK_STATUS_KEYS,
+    WORK_STATUS_LABEL_KEYS,
 )
 
 
@@ -323,6 +336,74 @@ class ThingsModel:
                 for value, label in sorted(prop.enum_labels.items())
             }
         return dict(LEVEL_KEYS[PROP_WIND_POWER])
+
+    def enum_keys(
+        self,
+        identifier: str,
+        child: str | None,
+        label_keys: Mapping[str, str],
+        numeric: Mapping[int, str],
+    ) -> dict[int, str]:
+        """Return an enum's raw value -> translation key, in value order.
+
+        With labels in the model, the label decides: a label that is not in
+        ``label_keys`` gives ``unknown_<n>``. When none of the labels is known
+        (another language), or the model has no labels, the whole number table
+        applies. Values the model does not declare get their number-table key only
+        when every declared, recognised label agrees with the number table (same
+        key for the same value) and no declared value uses that key; otherwise they
+        become ``unknown_<n>``.
+        """
+        prop = self.member(identifier, child)
+        if prop is None or not prop.enum_labels:
+            return dict(numeric)
+        keys = {
+            value: label_keys.get(label.strip(), f"unknown_{value}")
+            for value, label in prop.enum_labels.items()
+        }
+        recognised = {
+            value: key
+            for value, label in prop.enum_labels.items()
+            if (key := label_keys.get(label.strip())) is not None
+        }
+        if not recognised:
+            return dict(numeric)
+        agree = all(numeric.get(value) == key for value, key in recognised.items())
+        used = set(keys.values())
+        for value, key in numeric.items():
+            if value in keys:
+                continue
+            keys[value] = key if agree and key not in used else f"unknown_{value}"
+        return dict(sorted(keys.items()))
+
+    def work_status_keys(self) -> dict[int, str]:
+        """Return work_status value -> key (see ``enum_keys``)."""
+        return self.enum_keys(PROP_WORK_STATUS, None, WORK_STATUS_LABEL_KEYS, WORK_STATUS_KEYS)
+
+    def error_keys(self) -> dict[int, str]:
+        """Return errorinfo.errcode value -> key (see ``enum_keys``)."""
+        return self.enum_keys(PROP_ERROR_INFO, ERROR_CODE, ERROR_LABEL_KEYS, ERROR_KEYS)
+
+    def wifi_keys(self) -> dict[int, str]:
+        """Return wifi_rssi_sdj value -> key (see ``enum_keys``)."""
+        return self.enum_keys(PROP_WIFI, None, WIFI_LABEL_KEYS, WIFI_KEYS)
+
+    def is_charging(self, raw: Any) -> bool | None:
+        """Return whether a ``power_status`` value means "charging" (None: unknown).
+
+        With labels in the model the label (充电中) decides, otherwise (no labels, or
+        none of them is the charging label) the value 1.
+        """
+        value = to_int(raw)
+        if value is None:
+            return None
+        prop = self.prop(PROP_POWER_STATUS)
+        if prop is not None and CHARGING_LABEL in {
+            label.strip() for label in prop.enum_labels.values()
+        }:
+            label = prop.enum_labels.get(value)
+            return None if label is None else label.strip() == CHARGING_LABEL
+        return value == CHARGING_VALUE
 
     def has_service(self, identifier: str) -> bool:
         """Return whether the model has a service with this identifier."""

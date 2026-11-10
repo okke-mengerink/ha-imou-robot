@@ -24,7 +24,7 @@ from .api import (
     ImouError,
 )
 from .const import (
-    ACTIVE_WORK_STATUSES,
+    ACTIVE_STATUS_KEYS,
     CLEAN_MODE_ROOMS,
     CLEAN_PLAN_GENERAL,
     CLEAN_START,
@@ -257,7 +257,12 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
 
     def _update_polling_interval(self, state: ImouRobotState) -> None:
         """30 s while the robot is active (or just got a command), else 300 s."""
-        active = state.online and state.work_status in ACTIVE_WORK_STATUSES
+        status = state.work_status
+        active = (
+            state.online
+            and status is not None
+            and self.model.work_status_keys().get(status) in ACTIVE_STATUS_KEYS
+        )
         boosted = time.monotonic() < self._boost_until
         self.update_interval = timedelta(
             seconds=SCAN_INTERVAL_ACTIVE if active or boosted else SCAN_INTERVAL_IDLE

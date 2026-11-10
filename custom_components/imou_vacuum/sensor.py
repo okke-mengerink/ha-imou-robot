@@ -21,7 +21,6 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     ERROR_CODE,
-    ERROR_KEYS,
     LIFE_FILTER,
     LIFE_MAIN_BRUSH,
     LIFE_RAW_PER_HOUR,
@@ -35,8 +34,6 @@ from .const import (
     PROP_WIFI,
     PROP_WORK_STATUS,
     SERVICE_CLEAN_LIST,
-    WIFI_KEYS,
-    WORK_STATUS_KEYS,
 )
 from .coordinator import (
     ImouConfigEntry,
@@ -45,7 +42,7 @@ from .coordinator import (
     default_room_name,
 )
 from .entity import ImouEntity
-from .model import PropertyDef, to_int
+from .model import ThingsModel, to_int
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,10 +84,9 @@ class ImouEnumSensorDescription(SensorEntityDescription):
 
     identifier: str
     child: str | None = None
-    known: Mapping[int, str]
+    # the model's raw value -> key (label based, see ThingsModel.enum_keys)
+    keys_fn: Callable[[ThingsModel], Mapping[int, str]]
     raw_fn: Callable[[ImouRobotState], int | None]
-    # values that are always offered, even if the model does not list them
-    base_values: tuple[int, ...] = ()
 
 
 def _hours(child: str) -> Callable[[Any], float | None]:
@@ -158,7 +154,7 @@ ENUM_SENSORS: tuple[ImouEnumSensorDescription, ...] = (
         key="status",
         translation_key="status",
         identifier=PROP_WORK_STATUS,
-        known=WORK_STATUS_KEYS,
+        keys_fn=ThingsModel.work_status_keys,
         raw_fn=lambda state: state.work_status,
     ),
     ImouEnumSensorDescription(
@@ -166,15 +162,14 @@ ENUM_SENSORS: tuple[ImouEnumSensorDescription, ...] = (
         translation_key="error",
         identifier=PROP_ERROR_INFO,
         child=ERROR_CODE,
-        known=ERROR_KEYS,
+        keys_fn=ThingsModel.error_keys,
         raw_fn=lambda state: state.error_code,
-        base_values=(0,),
     ),
     ImouEnumSensorDescription(
         key="wifi_signal",
         translation_key="wifi_signal",
         identifier=PROP_WIFI,
-        known=WIFI_KEYS,
+        keys_fn=ThingsModel.wifi_keys,
         raw_fn=lambda state: to_int(state.values.get(PROP_WIFI)),
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
@@ -198,9 +193,7 @@ async def async_setup_entry(
         for enum_description in ENUM_SENSORS:
             definition = model.member(enum_description.identifier, enum_description.child)
             if definition is not None:
-                entities.append(
-                    ImouEnumSensor(coordinator, enum_description, definition)
-                )
+                entities.append(ImouEnumSensor(coordinator, enum_description))
         if model.has_service(SERVICE_CLEAN_LIST):
             entities.append(ImouSchedulesSensor(coordinator))
     async_add_entities(entities)
@@ -239,21 +232,16 @@ class ImouEnumSensor(ImouEntity, SensorEntity):
         self,
         coordinator: ImouCoordinator,
         description: ImouEnumSensorDescription,
-        definition: PropertyDef,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
-        self._model_labels = definition.enum_labels
-        # Offer every value we can translate plus every value the model declares
-        # (those we cannot translate become unknown_<n>).
-        values = sorted(
-            {*description.known, *definition.enum_labels, *description.base_values}
-        )
-        self._keys = {
-            value: description.known.get(value, f"unknown_{value}") for value in values
-        }
-        self._attr_options = list(self._keys.values())
+        definition = coordinator.model.member(description.identifier, description.child)
+        self._model_labels = definition.enum_labels if definition is not None else {}
+        # Offer every value of the model's enum (by label; labels we cannot
+        # translate become unknown_<n>).
+        self._keys = dict(description.keys_fn(coordinator.model))
+        self._attr_options = list(dict.fromkeys(self._keys.values()))
 
     def _raw(self) -> int | None:
         data = self.coordinator.data
@@ -277,7 +265,10 @@ class ImouEnumSensor(ImouEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """For values we cannot translate, expose the raw value and model label."""
         raw = self._raw()
-        if raw is None or raw in self.entity_description.known:
+        if raw is None:
+            return None
+        key = self._keys.get(raw)
+        if key is not None and not key.startswith("unknown_"):
             return None
         attributes: dict[str, Any] = {"raw_value": raw}
         if label := self._model_labels.get(raw):

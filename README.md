@@ -34,6 +34,8 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 | Imou RV1 Pro Max | Reported by a user (issue #1), partly verified | Battery, return to dock and the 5 suction levels (off, quiet, standard, strong, max) were added in 0.3.1 from the user's diagnostics. Room cleaning and schedules are unverified. |
 | Any other Imou robot vacuum | unverified — please share diagnostics | Might work if its things model uses the same identifiers. See [Help us map other models](#help-us-map-other-models). |
 
+Other Imou robots are mapped from their things model: the robot's own refs, the labels of its statuses, error codes and suction levels (so a model that numbers them differently still maps correctly) and alternative identifiers such as `back_station` for return to dock. When a core function is missing (start and stop, return to dock, battery or status) or a value is not recognised, Home Assistant shows a repair notice that says what is missing or unknown and links to a GitHub issue that is already filled in with your model. Attach the diagnostics download to it and the model can be added.
+
 Verified on a real RV-L11-A:
 
 - Locate, start, pause, resume and return to dock.
@@ -233,7 +235,7 @@ Entities are created per robot, and only when the robot's model supports them.
 
 ### Other entities
 
-- Binary sensor: mop fitted
+- Binary sensors: mop fitted, and charging (only for a robot whose model has `power_status`, such as the RV1 Pro Max; on while the robot reports "charging")
 - Switches: auto-empty, carpet boost, resume after charging
 - Selects: suction (quiet / standard / max) and water level (low / medium / high).
 - Button: empty bin (empties the bin into the dock)
@@ -280,6 +282,8 @@ The log gets one warning at the first failed poll and one info line when polling
 ## Help us map other models
 
 The integration supports **Download diagnostics** (Settings > Devices & services > Imou Vacuum (Open Platform) > three-dot menu). The file contains the product-level things model, the current values, a read-only probe of the room, map and schedule data, and the last command that was sent. The App ID and App Secret are redacted, the device serial and name are not included, and the probe hides names, tokens and the path and query of URLs. Still, open the file and check it before you share it.
+
+The diagnostics also contain a `support_report` per robot: which functions were found (start, pause, stop, return to dock, battery, status, suction, room cleaning), which core functions are missing and which labels in the model are not known. The same information is in the repair notice that Home Assistant shows for a model that is not fully supported, together with a link to a prefilled GitHub issue.
 
 If your model is not (fully) working, open a [Help support my Imou robot](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml) issue, attach the diagnostics file and mention the model name. For anything else that goes wrong, use the [bug report](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=bug_report.yml) form.
 

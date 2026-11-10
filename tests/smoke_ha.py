@@ -45,6 +45,8 @@ VALUES_JSON = json.loads((ROOT / "tests/fixtures/l11a_values.json").read_text("u
 RV1_MODEL_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_model.json").read_text("utf-8"))
 RV1_VALUES_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_values.json").read_text("utf-8"))
 ICONS_JSON = json.loads((PKG_DIR / "icons.json").read_text("utf-8"))
+STRINGS_JSON = json.loads((PKG_DIR / "strings.json").read_text("utf-8"))
+EN_JSON = json.loads((PKG_DIR / "translations" / "en.json").read_text("utf-8"))
 
 RESULTS: list[tuple[bool, str]] = []
 
@@ -510,6 +512,58 @@ def test_entities() -> None:
     check("vacuum without 'location' service has no LOCATE, without WindPower no FAN_SPEED", not slim_vac.supported_features & VacuumEntityFeature.LOCATE and not slim_vac.supported_features & VacuumEntityFeature.FAN_SPEED and bool(slim_vac.supported_features & VacuumEntityFeature.START))
 
 
+def test_model_adaptive_entities() -> None:
+    from homeassistant.components.binary_sensor import BinarySensorDeviceClass  # noqa: PLC0415
+    from homeassistant.components.vacuum import VacuumActivity  # noqa: PLC0415
+
+    # Charging binary sensor: only for a model with power_status
+    rv1_values = {**RV1_VALUES_JSON["properties"], "112200": 1}
+    rv1 = FakeCoordinator(RV1_MODEL_JSON, rv1_values)
+    rv1_ents = make_entities(rv1)
+    charging = by_key(rv1_ents["binary_sensor"]).get("charging")
+    check("RV1 Pro Max: Charging binary sensor exists", charging is not None, str(list(by_key(rv1_ents["binary_sensor"]))))
+    if charging is not None:
+        check("Charging: device class battery_charging, translation key charging, on for power_status 1", charging.device_class == BinarySensorDeviceClass.BATTERY_CHARGING and charging.entity_description.translation_key == "charging" and charging.is_on is True, f"{charging.device_class} {charging.is_on}")
+        rv1.set_values(power_status=0)
+        check("Charging: off for power_status 0", charging.is_on is False)
+        rv1.set_values(power_status=2)
+        check("Charging: off for power_status 2 (abnormal)", charging.is_on is False)
+    l11a_ents = make_entities(FakeCoordinator(MODEL_JSON, VALUES_JSON["properties"]))
+    check("L11-A: no Charging binary sensor", "charging" not in by_key(l11a_ents["binary_sensor"]), str(list(by_key(l11a_ents["binary_sensor"]))))
+
+    # a model that numbers work_status differently (reversed) maps by label
+    renumbered = copy.deepcopy(MODEL_JSON)
+    for item in next(p for p in renumbered["properties"] if p["identifier"] == "work_status")["dataType"]["specs"]["list"]:
+        item["value"] = str(13 - int(item["value"]))
+    fake = FakeCoordinator(renumbered, {**VALUES_JSON["properties"], "12300": 10})  # 10 = charging here
+    ents = make_entities(fake)
+    vac = ents["vacuum"][0]
+    status = by_key(ents["sensor"])["status"]
+    check("renumbered work_status: value 10 is charging -> docked", vac.activity == VacuumActivity.DOCKED and status.native_value == "charging", f"{vac.activity} {status.native_value}")
+    expected = {13: VacuumActivity.IDLE, 12: VacuumActivity.PAUSED, 0: VacuumActivity.PAUSED, 11: VacuumActivity.RETURNING, 6: VacuumActivity.CLEANING, 7: VacuumActivity.ERROR, 1: VacuumActivity.CLEANING}
+    wrong = {}
+    for value, activity in expected.items():
+        fake.set_values(work_status=value)
+        if vac.activity != activity:
+            wrong[value] = vac.activity
+    check("renumbered work_status: activity follows the labels", not wrong, str(wrong))
+    check("renumbered work_status: status options start with the model's own order", status.options[0] == "return_paused" and status.options[13] == "standby" and len(status.options) == 20, str(status.options))
+    fake.set_values(work_status=12)  # paused in this numbering
+    asyncio.run(vac.async_start())
+    check("renumbered work_status: start while paused continues", fake.calls[-1] == ("control", "clean_control", {"status": 2}), str(fake.calls[-1]))
+    fake.set_values(work_status=10)
+    asyncio.run(vac.async_start())
+    check("renumbered work_status: start while charging starts a new run", fake.calls[-1][2].get("status") == 1, str(fake.calls[-1]))
+
+    # an unknown label gives unknown_<n> with the raw value and the model label
+    odd = copy.deepcopy(MODEL_JSON)
+    next(p for p in odd["properties"] if p["identifier"] == "work_status")["dataType"]["specs"]["list"][5]["desc"] = "新状态"
+    fake = FakeCoordinator(odd, {**VALUES_JSON["properties"], "12300": 5})
+    ents = make_entities(fake)
+    status = by_key(ents["sensor"])["status"]
+    check("unknown label: unknown_5 with raw value and model label", status.native_value == "unknown_5" and status.extra_state_attributes == {"raw_value": 5, "model_label": "新状态"} and "unknown_5" in status.options and ents["vacuum"][0].activity is None, f"{status.native_value} {status.extra_state_attributes}")
+
+
 def test_level_inputs() -> None:
     """The WindWater inputs: the new level plus the other one's current value."""
     coordinator_cls = mod("coordinator").ImouCoordinator
@@ -614,7 +668,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.3.1"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.4.0"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -1351,6 +1405,11 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("diagnostics redact App ID/Secret", dump["entry"]["app_id"] == "**REDACTED**" and dump["entry"]["app_secret"] == "**REDACTED**")
     check("diagnostics contain no secrets, serial or name", not any(s in blob for s in ("test-app", "new-secret", "test-secret", "TESTDEVICE0001", "RV-L11-A-TEST")), "leak")
     check("diagnostics tell which settings the robot reports", dump["robots"][0]["reports"]["seen_online"] is True and "rug_press" in dump["robots"][0]["reports"]["reported_identifiers"] and "auto_dust" not in dump["robots"][0]["reports"]["reported_identifiers"], str(dump["robots"][0]["reports"]))
+    check("diagnostics include the support report (L11-A: verified, nothing missing or unknown)", dump["robots"][0]["support_report"]["verified_model"] is True and dump["robots"][0]["support_report"]["missing_core"] == [] and dump["robots"][0]["support_report"]["unknown_enum_labels"] == {} and dump["robots"][0]["support_report"]["capabilities"]["room_cleaning"] is True, str(dump["robots"][0].get("support_report")))
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    check("L11-A: no model support repair issue", ir.async_get(hass).async_get_issue("imou_vacuum", "model_support_TESTDEVICE0001") is None)
+    check("L11-A: no Charging entity (the model has no power_status)", "charging" not in ids)
     check("diagnostics include the things model and values", dump["robots"][0]["things_model"]["properties"] and dump["robots"][0]["values"]["work_status"] == 3 and dump["robots"][0]["resolved_model"]["services"]["clean_control"]["ref"] == "2700")
 
     # ---- diagnostics probe: read-only, summarized, redacted ---------------------------------
@@ -1834,6 +1893,17 @@ async def rv1_setup_checks(config_dir: str) -> None:
 
         check("RV1 Pro Max: polled refs include windpower 118900 and not back_charging/water", "118900" in client.last_refs and "1019" not in client.last_refs and "1028" not in client.last_refs, str(client.last_refs))
         check("RV1 Pro Max: battery -38 shows 38 %", state("battery").state == "38", str(state("battery")))
+        check("RV1 Pro Max: power_status 112200 is polled", "112200" in client.last_refs, str(client.last_refs))
+        check("RV1 Pro Max: Charging binary sensor exists (no power_status reported yet -> unknown)", "charging" in ids and state("charging").state == "unknown", str(state("charging")))
+        client.props["112200"] = 1
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: Charging is on for power_status 1 (battery_charging)", state("charging").state == "on" and state("charging").attributes["device_class"] == "battery_charging" and state("charging").name == "RV1-PRO-MAX-TEST Charging", f"{state('charging').state} {dict(state('charging').attributes)}")
+        client.props["112200"] = 0
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: Charging is off for power_status 0", state("charging").state == "off", str(state("charging").state))
+        from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+        check("RV1 Pro Max: no model support repair issue", ir.async_get(hass).async_get_issue("imou_vacuum", "model_support_TESTDEVICE0002") is None)
         features = int(state("vacuum").attributes["supported_features"])
         check("RV1 Pro Max: RETURN_HOME is supported (back_station)", bool(features & int(VacuumEntityFeature.RETURN_HOME)), str(features))
         await call("vacuum", "return_to_base", "vacuum")
@@ -1869,6 +1939,8 @@ async def rv1_setup_checks(config_dir: str) -> None:
         diagnostics = importlib.import_module(f"{PKG}.diagnostics")
         polls_before = client.poll_count
         dump = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+        report = dump["robots"][0]["support_report"]
+        check("RV1 Pro Max: diagnostics support_report (partly verified, nothing missing or unknown)", report["partly_verified"] is True and report["verified_model"] is False and report["missing_core"] == [] and report["unknown_enum_labels"] == {}, str(report))
         probe_props = dump["robots"][0]["probe"]["properties"]
         check("RV1 Pro Max: probe reads exactly the declared room/map properties", set(probe_props) == {"partition_area", "map_name", "sequence", "area_clean_plan"}, str(set(probe_props)))
         check("RV1 Pro Max: probe is one property call with the 4 refs, no large ones", client.poll_count == polls_before + 1 and sorted(client.last_refs) == ["120600", "121600", "122300", "126200"], f"{client.poll_count - polls_before} {client.last_refs}")
@@ -1887,8 +1959,144 @@ def test_rv1_setup() -> None:
         worker.join()
 
 
+# ---------------------------------------------------------------------------
+# 7. a model that is not fully supported: repair issue, log line, removal
+# ---------------------------------------------------------------------------
+class UnknownModelClient(FakeClient):
+    """A robot of an unknown model; without a dock function and with an unknown label."""
+
+    drop_dock = True
+    empty = False
+
+    async def async_list_devices(self) -> list[Any]:
+        api = mod("api")
+        if UnknownModelClient.empty:
+            return []
+        return [api.ImouDevice(device_id="TESTDEVICE0003", product_id="PRODUCT_ID_X", name="Mystery robot", model="Zed 9 & Co", status="online", version="1.0.0", brand="lechange")]
+
+    async def async_get_product_model(self, product_id: str) -> dict[str, Any]:
+        data = copy.deepcopy(MODEL_JSON)
+        if UnknownModelClient.drop_dock:
+            data["properties"] = [p for p in data["properties"] if p["identifier"] != "back_charging"]
+            next(p for p in data["properties"] if p["identifier"] == "wifi_rssi_sdj")["dataType"]["specs"]["list"][3]["desc"] = "新等级"
+        return data
+
+
+async def unknown_model_checks(config_dir: str) -> None:
+    from homeassistant import bootstrap, config_entries, loader  # noqa: PLC0415
+    from homeassistant.core import HomeAssistant  # noqa: PLC0415
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    package = importlib.import_module(PKG)
+    package.ImouClient = UnknownModelClient
+    package.async_get_clientsession = lambda hass: None
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    capture = Capture(level=logging.INFO)
+    logging.getLogger(PKG).addHandler(capture)
+    UnknownModelClient.drop_dock = True
+    hass = HomeAssistant(config_dir)
+    loader.async_setup(hass)
+    hass.config.skip_pip = True
+    hass.config.language = "en"
+    hass.config_entries = config_entries.ConfigEntries(hass, {})
+    await loader.async_get_custom_components(hass)
+    await bootstrap.async_load_base_functionality(hass)
+    await hass.async_start()
+    try:
+        entry = config_entries.ConfigEntry(
+            data={"app_id": "unknown-app", "app_secret": "s", "region": "eu"}, discovery_keys={},
+            domain="imou_vacuum", entry_id="unknown-app", minor_version=1, options={}, source="user",
+            subentries_data=None, title="t", unique_id="unknown-app", version=1,
+        )  # fmt: skip
+        await hass.config_entries.async_add(entry)
+        await hass.async_block_till_done()
+        check("unknown model: entry is loaded", entry.state is config_entries.ConfigEntryState.LOADED, str(entry.state))
+        registry = ir.async_get(hass)
+        issue_id = "model_support_unknown-app_" + hashlib.sha256(b"TESTDEVICE0003").hexdigest()[:12]
+        issue = registry.async_get_issue("imou_vacuum", issue_id)
+        check("unknown model: a repair issue is created", issue is not None)
+        own_issues = [i for (d, i) in registry.issues if d == "imou_vacuum"]
+        check("unknown model: the device id is in no issue id or placeholder", all("TESTDEVICE0003" not in i for i in own_issues) and (issue is None or all("TESTDEVICE0003" not in str(v) for v in issue.translation_placeholders.values())) and own_issues == [issue_id], str(own_issues))
+        if issue is not None:
+            check("unknown model: the issue holds the entry id", dict(issue.data or {}) == {"entry_id": "unknown-app"}, str(issue.data))
+            expected_url = "https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml&title=%5BModel%5D%3A+Zed+9+%26+Co&robot_model=Zed+9+%26+Co"
+            check("unknown model: issue translation key, severity, not fixable", issue.translation_key == "model_not_fully_supported" and issue.severity == ir.IssueSeverity.WARNING and issue.is_fixable is False, f"{issue.translation_key} {issue.severity} {issue.is_fixable}")
+            check("unknown model: placeholders name the model, the missing function and the unknown value", dict(issue.translation_placeholders) == {"model": "Zed 9 & Co", "missing": "return_to_dock", "unknown": "wifi_rssi_sdj"}, str(issue.translation_placeholders))
+            check("unknown model: learn_more_url is the prefilled GitHub issue form", issue.learn_more_url == expected_url, str(issue.learn_more_url))
+        infos = [r.getMessage() for r in records if r.levelno == logging.INFO and "is not verified yet" in r.getMessage()]
+        check("unknown model: exactly one 'not verified yet' info line, naming the model", len(infos) == 1 and infos[0].startswith("Zed 9 & Co is not verified yet; please share"), str(infos))
+        coordinator = entry.runtime_data.coordinators["TESTDEVICE0003"]
+        vacuum_ents = [e for e in er_entries(hass, entry) if e.domain == "vacuum"]
+        check("unknown model: the robot still works (vacuum entity exists)", len(vacuum_ents) == 1 and coordinator.model.prop("back_charging") is None)
+        diagnostics = importlib.import_module(f"{PKG}.diagnostics")
+        report = (await diagnostics.async_get_config_entry_diagnostics(hass, entry))["robots"][0]["support_report"]
+        check("unknown model: diagnostics list what is missing and unknown", report["missing_core"] == ["return_to_dock"] and report["unknown_enum_labels"] == {"wifi_rssi_sdj": {3: "新等级"}} and report["verified_model"] is False, str(report))
+
+        # a later setup that finds nothing missing removes the issue again
+        UnknownModelClient.drop_dock = False
+        records.clear()
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        check("unknown model: the issue is deleted when nothing is missing any more", registry.async_get_issue("imou_vacuum", issue_id) is None)
+        infos = [r.getMessage() for r in records if r.levelno == logging.INFO and "is not verified yet" in r.getMessage()]
+        check("unknown model: still not verified -> one info line per setup", len(infos) == 1, str(infos))
+
+        # a robot that is no longer found removes its issue
+        UnknownModelClient.drop_dock = True
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        check("unknown model: the issue is back after a reload", registry.async_get_issue("imou_vacuum", issue_id) is not None)
+        UnknownModelClient.empty = True
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        check("unknown model: the issue is deleted when the robot is no longer found", registry.async_get_issue("imou_vacuum", issue_id) is None and entry.state is config_entries.ConfigEntryState.SETUP_ERROR, str(entry.state))
+        UnknownModelClient.empty = False
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        check("unknown model: the issue is back once the robot is found again", registry.async_get_issue("imou_vacuum", issue_id) is not None)
+
+        # removing the config entry removes its issue (and leaves other domains' issues alone)
+        ir.async_create_issue(hass, "other_domain", issue_id, is_fixable=False, severity=ir.IssueSeverity.WARNING, translation_key="x", data={"entry_id": "unknown-app"})
+        await hass.config_entries.async_remove(entry.entry_id)
+        await hass.async_block_till_done()
+        check("unknown model: removing the config entry deletes its repair issue", registry.async_get_issue("imou_vacuum", issue_id) is None and not [1 for (d, _) in registry.issues if d == "imou_vacuum"])
+        check("unknown model: an issue of another domain is left alone", registry.async_get_issue("other_domain", issue_id) is not None)
+    finally:
+        logging.getLogger(PKG).removeHandler(capture)
+        await hass.async_stop()
+
+
+def er_entries(hass: Any, entry: Any) -> list[Any]:
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    return er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+
+
+def test_unknown_model() -> None:
+    config_dir = tempfile.mkdtemp(prefix="imou-unknown-")
+    try:
+        asyncio.run(unknown_model_checks(config_dir))
+    finally:
+        worker = threading.Thread(target=shutil.rmtree, args=(config_dir,), kwargs={"ignore_errors": True})
+        worker.start()
+        worker.join()
+
+
+def test_issue_translations() -> None:
+    strings, english = STRINGS_JSON, EN_JSON
+    issue = strings["issues"]["model_not_fully_supported"]
+    check("issue text is in strings.json and translations/en.json, identical", strings == english and strings["entity"]["binary_sensor"]["charging"] == {"name": "Charging"})
+    check("issue text does not overclaim", "Other functions may work, but the missing or unknown parts may not show or react correctly." in issue["description"] and "Everything else works" not in issue["description"])
+    check("issue title and description use the three placeholders", "{model}" in issue["title"] and all(p in issue["description"] for p in ("{model}", "{missing}", "{unknown}")) and "diagnostics" in issue["description"].lower() and "GitHub" in issue["description"], str(issue))
+
+
 def main() -> int:
-    for func in (test_imports, test_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup):
+    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_unknown_model, test_issue_translations):
         print(f"\n=== {func.__name__} ===")
         try:
             func()

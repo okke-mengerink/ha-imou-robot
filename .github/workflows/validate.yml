@@ -51,6 +51,7 @@ jobs:
           python3 -I tests/test_health.py
           python3 -I tests/test_probe.py
           python3 -I tests/test_rooms.py
+          python3 -I tests/test_support.py
       - name: Smoke test against Home Assistant
         run: >
           uv run --python ${{ matrix.python }}

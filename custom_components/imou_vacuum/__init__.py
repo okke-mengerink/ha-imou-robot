@@ -8,15 +8,17 @@ things model.
 from __future__ import annotations
 
 import copy
+import hashlib
 import logging
 
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
     ConfigEntryNotReady,
 )
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import (
@@ -38,6 +40,11 @@ from .const import (
 )
 from .coordinator import ImouConfigEntry, ImouCoordinator, ImouRuntimeData
 from .model import ThingsModel
+from .support import (
+    needs_notice,
+    new_model_issue_url,
+    support_report,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,6 +94,66 @@ async def _async_discover_robots(
     return robots, errors
 
 
+def _support_issue_id(entry_id: str, device_id: str) -> str:
+    """Return the repair issue id; the device id (a serial) is only hashed into it."""
+    digest = hashlib.sha256(device_id.encode()).hexdigest()[:12]
+    return f"model_support_{entry_id}_{digest}"
+
+
+@callback
+def _async_delete_support_issues(
+    hass: HomeAssistant, entry_id: str, keep: frozenset[str] = frozenset()
+) -> None:
+    """Delete the model-support repair issues of this config entry, except ``keep``."""
+    registry = ir.async_get(hass)
+    for domain, issue_id in list(registry.issues):
+        if domain != DOMAIN or issue_id in keep:
+            continue
+        issue = registry.async_get_issue(domain, issue_id)
+        if issue is not None and (issue.data or {}).get("entry_id") == entry_id:
+            ir.async_delete_issue(hass, domain, issue_id)
+
+
+@callback
+def _async_report_support(
+    hass: HomeAssistant, entry: ImouConfigEntry, device: ImouDevice, model: ThingsModel
+) -> None:
+    """Tell the user when this robot model is not (fully) supported.
+
+    One log line for a model that is not verified yet, and a repair issue (deleted
+    again when nothing is missing any more) when a core function is missing or a
+    value is unknown.
+    """
+    report = support_report(model, device.model)
+    name = device.model or "This robot"
+    if not report["verified_model"]:
+        _LOGGER.info(
+            "%s is not verified yet; please share the diagnostics download so it can "
+            "be mapped (see %s)",
+            name,
+            new_model_issue_url(device.model),
+        )
+    issue_id = _support_issue_id(entry.entry_id, device.device_id)
+    if not needs_notice(report):
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="model_not_fully_supported",
+        translation_placeholders={
+            "model": name,
+            "missing": ", ".join(report["missing_core"]) or "none",
+            "unknown": ", ".join(report["unknown_enum_labels"]) or "none",
+        },
+        learn_more_url=new_model_issue_url(device.model),
+        data={"entry_id": entry.entry_id},
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool:
     """Set up Imou Vacuum (Open Platform) from a config entry."""
     client = ImouClient(
@@ -118,15 +185,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool
                 translation_placeholders={"error": model_errors[-1]},
             )
         # Retrying would only burn API quota; the user has to add the robot first.
+        _async_delete_support_issues(hass, entry.entry_id)
         raise ConfigEntryError(
             translation_domain=DOMAIN, translation_key="no_robots_found"
         )
 
+    # a robot that is no longer found must not leave its repair issue behind
+    _async_delete_support_issues(
+        hass,
+        entry.entry_id,
+        frozenset(_support_issue_id(entry.entry_id, d.device_id) for d, _ in robots),
+    )
     coordinators: dict[str, ImouCoordinator] = {}
     for device, model in robots:
         coordinator = ImouCoordinator(hass, entry, client, device, model)
         await coordinator.async_config_entry_first_refresh()
         coordinators[device.device_id] = coordinator
+        _async_report_support(hass, entry, device, model)
 
     entry.runtime_data = ImouRuntimeData(
         client=client, coordinators=coordinators, options=copy.deepcopy(dict(entry.options))
@@ -150,3 +225,8 @@ async def _async_options_updated(hass: HomeAssistant, entry: ImouConfigEntry) ->
 async def async_unload_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool:
     """Unload a config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> None:
+    """Delete the repair issues of a removed config entry."""
+    _async_delete_support_issues(hass, entry.entry_id)

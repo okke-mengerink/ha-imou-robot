@@ -46,9 +46,6 @@ RETRY_INTERVAL: Final = 60
 # command the robot ignores becomes visible.
 COMMAND_GRACE_SECONDS: Final = 30
 
-# work_status values during which the robot is considered active.
-ACTIVE_WORK_STATUSES: Final = frozenset({2, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 17})
-
 # ---------------------------------------------------------------------------
 # Things-model identifiers (matched case-insensitively, stored lower-case).
 # Refs are always resolved at runtime from the device's things model.
@@ -68,6 +65,7 @@ OUTPUT_TIMER: Final = "timer"  # clean_list: the schedules
 
 PROP_WORK_STATUS: Final = "work_status"
 PROP_POWER: Final = "power"
+PROP_POWER_STATUS: Final = "power_status"  # RV1 Pro Max: 0 normal, 1 charging, 2 abnormal
 PROP_BACK_CHARGING: Final = "back_charging"
 PROP_BACK_STATION: Final = "back_station"  # RV1 Pro Max: return to base station
 PROP_CLEAN_AREA: Final = "clean_area"
@@ -106,6 +104,7 @@ ERROR_VALID: Final = "valid"
 POLL_IDENTIFIERS: Final[tuple[str, ...]] = (
     PROP_WORK_STATUS,
     PROP_POWER,
+    PROP_POWER_STATUS,
     PROP_BACK_CHARGING,
     PROP_CLEAN_AREA,
     PROP_CLEAN_TIME,
@@ -188,6 +187,7 @@ SCHEDULE_MIN_REFRESH_SECONDS: Final = 60  # on-demand reads are cached this long
 FALLBACK_PROPERTY_REFS: Final[dict[str, str]] = {
     PROP_WORK_STATUS: "12300",
     PROP_POWER: "11600",
+    PROP_POWER_STATUS: "112200",
     PROP_BACK_CHARGING: "1019",
     PROP_BACK_STATION: "119300",
     PROP_CLEAN_AREA: "1020",
@@ -307,3 +307,84 @@ WIND_ENUM_LABEL_KEYS: Final[dict[str, str]] = {
 }
 # Level sent for the other setting when neither the cloud nor a command knows it.
 DEFAULT_LEVEL: Final = 2
+
+# ---------------------------------------------------------------------------
+# Label based mapping. Imou publishes no things models, but every model lists its
+# enum values with a (Chinese) label. When a model has labels, the label decides
+# the key, so a model that numbers its values differently still maps correctly.
+# A label that is not listed here becomes "unknown_<n>". A model without labels
+# uses the numeric tables above.
+# ---------------------------------------------------------------------------
+WORK_STATUS_LABEL_KEYS: Final[dict[str, str]] = {
+    "待机中": "standby",
+    "暂停中": "paused",
+    "回充中": "returning",
+    "充电中": "charging",
+    "定位中": "relocating",
+    "遥控中": "remote_control",
+    "异常中": "error",
+    "选区清扫中": "room_clean",
+    "划区清扫中": "zone_clean",
+    "定点清扫中": "spot_clean",
+    "指哪到哪": "go_to",
+    "集尘中": "emptying_bin",
+    "全屋清扫中": "whole_house_clean",
+    "回充暂停中": "return_paused",
+    "回洗拖布中": "returning_to_wash",
+    "拖布清洗中": "washing_mop",
+    "烘干中": "drying",
+    "建图中": "mapping",
+    "建图暂停中": "mapping_paused",
+    "回洗暂停中": "return_to_wash_paused",
+}
+WIFI_LABEL_KEYS: Final[dict[str, str]] = {
+    "异常": "abnormal",
+    "无网络": "no_network",
+    "较差": "poor",
+    "一般": "fair",
+    "较好": "good",
+}
+ERROR_LABEL_KEYS: Final[dict[str, str]] = {
+    "无异常": "none",
+    "主轮等卡住": "wheel_stuck",
+    "风机异常": "fan",
+    "未检测水箱": "no_water_tank",
+    "水量不足": "water_low",
+    "跌落": "cliff",
+    "雷达上盖卡住": "lidar_cover_stuck",
+    "设备离地": "lifted",
+    "设备在禁区上": "in_no_go_zone",
+    "电池异常": "battery",
+    "雷达异常": "lidar",
+    "主刷等异常": "main_brush",
+}
+
+# work_status keys (not numbers, see above) during which the robot is active
+# (fast polling) or paused (start continues instead of starting).
+ACTIVE_STATUS_KEYS: Final = frozenset(
+    {
+        "returning",
+        "relocating",
+        "remote_control",
+        "room_clean",
+        "zone_clean",
+        "spot_clean",
+        "go_to",
+        "emptying_bin",
+        "whole_house_clean",
+        "return_paused",
+        "returning_to_wash",
+        "mapping",
+    }
+)
+PAUSED_STATUS_KEYS: Final = frozenset(
+    {"paused", "return_paused", "mapping_paused", "return_to_wash_paused"}
+)
+# The same set by number, for the numeric tables (L11-A and RV1 Pro Max).
+ACTIVE_WORK_STATUSES: Final = frozenset(
+    number for number, key in WORK_STATUS_KEYS.items() if key in ACTIVE_STATUS_KEYS
+)
+
+# power_status: the label (and, without labels, the value) that means "charging".
+CHARGING_LABEL: Final = "充电中"
+CHARGING_VALUE: Final = 1
