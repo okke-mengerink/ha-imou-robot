@@ -81,11 +81,21 @@ Then set up the integration as described under [Setup](#setup).
 ## Setup
 
 1. Create a free developer account on the Imou Open Platform at https://open.imoulife.com and sign in.
-2. Open the **Control Board**, go to **Device Access Service** and add your robot with its serial number and safety code (both on the label on the robot), or check that it is already listed.
+2. Open the **Control Board**, go to **Device Access Service** and add your robot with its serial number and safety code (both on the label on the robot), or check that it is already listed. No safety code on the label? See [below](#no-safety-code-on-the-label).
 3. Open **App Information**. It shows your **App ID** and **App Secret**. Keep the App Secret private, like a password.
 4. In Home Assistant, go to **Settings > Devices & services > Add integration**, select **Imou Vacuum (Open Platform)**, and enter the App ID and App Secret. Choose the region that matches the data centre of your Imou account: Europe (default), Singapore (Asia) or North America.
 
 If the App Secret changes, Home Assistant offers a re-authentication.
+
+### No safety code on the label?
+
+Some RV-L11-A units have no safety code on a sticker, so they cannot be added in step 2. A user on the [Home Assistant forum](https://community.home-assistant.io/t/imou-vacuum-open-platform-hacs-integration-for-imou-robot-vacuums-rv-l11-a-tested/1033267) found this workaround (not verified by the maintainer):
+
+1. Create an account in the Imou Life app and add the robot there with its QR code.
+2. Sign in to the Imou Open Platform with the same login as the app, at https://auth.imoulife.com/OAuth2/login.
+3. The robot from step 1 is now listed under **Device Access Service** in the sidebar.
+
+Sign-in sends a verification code by email. The user did not receive that code on an outlook.com address, so use another email provider for the Imou account if you can.
 
 ## Room cleaning
 
