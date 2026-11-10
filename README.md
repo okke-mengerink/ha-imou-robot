@@ -12,9 +12,9 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 
 > **Using this integration?** Give it a ⭐ on GitHub: stars help other Imou owners find it. Do you have another Imou robot? [Share its diagnostics](#help-us-map-other-models) so it can be supported too.
 
-![Home Assistant device page of an Imou RV-L11-A with the Imou Vacuum (Open Platform) integration: device info, controls, sensors and diagnostic entities](https://raw.githubusercontent.com/okke-mengerink/ha-imou-robot/main/docs/images/device-page.png)
+![Home Assistant device page of an Imou RV-L11-A with the Imou Vacuum (Open Platform) integration: device info, controls, sensors including the schedules sensor, and diagnostic entities](https://raw.githubusercontent.com/okke-mengerink/ha-imou-robot/main/docs/images/device-page.png)
 
-*The device page of an Imou RV-L11-A in Home Assistant. The screenshot is from an installation that runs in Dutch, so its entity names are Dutch; the integration itself ships English names only.*
+*The device page of an Imou RV-L11-A in Home Assistant (version 0.3.1). "Stofzuiger boven" is the name the owner gave the robot.*
 
 ## Why this integration?
 
@@ -315,6 +315,8 @@ python3 -I tests/test_api.py
 python3 -I tests/test_model.py
 python3 -I tests/test_commanded.py
 python3 -I tests/test_health.py
+python3 -I tests/test_probe.py
+python3 -I tests/test_rooms.py
 ```
 
 The smoke test sets the integration up in a bare Home Assistant core with a fake API client (no network, no credentials):
@@ -323,7 +325,9 @@ The smoke test sets the integration up in a bare Home Assistant core with a fake
 uv run --python 3.14 --with "homeassistant==2026.10.2" python -I tests/smoke_ha.py
 ```
 
-Test fixtures contain an anonymised copy of the product-level L11-A things model. Never commit serial numbers, tokens or App IDs.
+Test fixtures contain anonymised copies of the product-level L11-A and RV1 Pro Max things models. Never commit serial numbers, tokens or App IDs.
+
+Releases: HACS installs the integration from the release asset `imou_vacuum.zip` (`zip_release` in `hacs.json`). The workflow `release.yml` builds that zip and attaches it when a release is published, after checking that the tag matches the version in `manifest.json`. GitHub counts the downloads of the zip, which shows roughly how often the integration is installed or updated through HACS.
 
 See the [changelog](https://github.com/okke-mengerink/ha-imou-robot/blob/main/CHANGELOG.md) for what changed per release.
 

@@ -1,0 +1,33 @@
+name: Release asset
+
+# HACS installs this integration from imou_vacuum.zip (hacs.json: zip_release),
+# so every published release needs that file. GitHub counts its downloads.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    name: Attach imou_vacuum.zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the manifest version matches the tag
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('custom_components/imou_vacuum/manifest.json'))['version'])")
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::manifest.json version ${version} does not match the release tag ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+      - name: Build the zip (the integration files at the root of the archive)
+        run: git archive --format=zip -o imou_vacuum.zip "HEAD:custom_components/imou_vacuum"
+
+      - name: Upload the zip to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" imou_vacuum.zip --clobber

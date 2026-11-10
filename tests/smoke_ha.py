@@ -621,7 +621,10 @@ def test_files() -> None:
         and manifest["issue_tracker"] == "https://github.com/okke-mengerink/ha-imou-robot/issues",
     )  # fmt: skip
     hacs = json.loads((ROOT / "hacs.json").read_text("utf-8"))
-    check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True}, str(hacs))
+    check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True, "zip_release": True, "filename": "imou_vacuum.zip"}, str(hacs))
+    # the release workflow zips exactly this folder; the archive name must match hacs.json
+    release_workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text("utf-8")
+    check("release workflow builds and uploads the zip named in hacs.json", f"-o {hacs['filename']}" in release_workflow and f"{hacs['filename']} --clobber" in release_workflow and "HEAD:custom_components/imou_vacuum" in release_workflow)
     check("brand icons present", (PKG_DIR / "brand/icon.png").is_file() and (PKG_DIR / "brand/icon@2x.png").is_file())
 
     # the domain was renamed in 0.2.0: manifest, folder and DOMAIN agree, and nothing of the old name is left
