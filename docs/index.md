@@ -71,9 +71,8 @@ The integration works through the cloud. Imou's free tier includes 30,000 API ca
 With Home Assistant 2026.3 or newer you can clean individual rooms. The Imou API does not report the map or the room list, so the integration reads the rooms from the robot's schedules in the Imou Life app. To set it up:
 
 1. In the Imou Life app, create a schedule that selects the rooms one by one. The schedule may be switched off.
-2. Name the rooms under Settings > Devices & services > Imou Vacuum (Open Platform) > Configure. Put one `id = name` on each line.
-3. Map the rooms to Home Assistant areas in the vacuum entity's settings.
-4. Use the action `vacuum.clean_area`, or ask Assist to clean an area.
+2. Go to Settings > Devices & services > Imou Vacuum (Open Platform) > Configure and choose **Link rooms to areas**. Pick a Home Assistant area for each room. The room takes the area's name, and on Home Assistant 2026.3 or newer it is also linked to the area. The Imou app does not show room numbers; the **Clean <room>** buttons that the integration creates for every room help you find out which number is which room. (**Rename rooms (advanced)** in the same menu is the text list, one `id = name` per line.)
+3. Use the action `vacuum.clean_area`, or ask Assist to clean an area.
 
 ## Limitations
 

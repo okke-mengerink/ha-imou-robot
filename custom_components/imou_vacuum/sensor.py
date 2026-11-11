@@ -17,7 +17,6 @@ from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfArea, UnitOfTi
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
-from homeassistant.util import dt as dt_util
 
 from .const import (
     CLEAN_BOX_KEYS,
@@ -51,23 +50,13 @@ from .coordinator import (
     ImouRobotState,
     default_room_name,
 )
-from .entity import ImouEntity
+from .entity import ImouEntity, local_start, local_time
 from .model import ThingsModel, to_int
 from .rooms import Schedule
 
 _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
-
-
-def _local_start(timestamp: int | None) -> str | None:
-    """Return a schedule's start as local ISO 8601; never raises."""
-    if timestamp is None:
-        return None
-    try:
-        return dt_util.as_local(dt_util.utc_from_timestamp(timestamp)).isoformat()
-    except (ValueError, OverflowError, OSError):
-        return None
 
 
 def _battery(value: Any) -> int | None:
@@ -357,7 +346,9 @@ def _schedule_attributes(schedule: Schedule, names: Mapping[int, str]) -> dict[s
     attributes: dict[str, Any] = {
         "enabled": schedule.enabled,
         "active": schedule.active,
-        "start": _local_start(schedule.start),
+        "start": local_start(schedule.start),
+        "time": schedule.time_of_day or local_time(schedule.start),
+        "days": schedule.days,
         "repeat": schedule.period,
         "rooms": (
             [names.get(room_id, default_room_name(room_id)) for room_id in schedule.room_ids]

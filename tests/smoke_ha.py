@@ -121,6 +121,17 @@ class FakeCoordinator:
         self.last_update_success = True
         self.calls: list[tuple[Any, ...]] = []
         self.commanded: defaultdict[str, Any] = defaultdict(mod("commanded").CommandedValue)
+        self.schedules: Any = None  # no schedules read yet
+        self.rooms_cleaned: list[list[int]] = []
+
+    def can_switch_schedules(self) -> bool:
+        return mod("coordinator").ImouCoordinator.can_switch_schedules(self)
+
+    def can_clean_rooms(self) -> bool:
+        return mod("coordinator").ImouCoordinator.can_clean_rooms(self)
+
+    def room_names(self) -> dict[int, str]:
+        return {}  # no schedules read yet, so no rooms
 
     def set_values(self, **values: Any) -> None:
         self.data.values.update(values)
@@ -143,10 +154,13 @@ class FakeCoordinator:
     async def async_control(self, service: str, inputs: dict[str, Any] | None = None) -> None:
         self.calls.append(("control", service, dict(inputs or {})))
 
+    async def async_clean_rooms(self, room_ids: list[int]) -> None:
+        self.rooms_cleaned.append(list(room_ids))
+
 
 def make_entities(coordinator: Any) -> dict[str, list[Any]]:
     """Run every platform's async_setup_entry against the fake coordinator."""
-    entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinators={"x": coordinator}))
+    entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinators={"x": coordinator}), async_on_unload=lambda unsub: None)
     out: dict[str, list[Any]] = {}
     for platform in ("vacuum", "sensor", "binary_sensor", "switch", "select", "button"):
         collected: list[Any] = []
@@ -157,6 +171,15 @@ def make_entities(coordinator: Any) -> dict[str, list[Any]]:
         asyncio.run(mod(platform).async_setup_entry(None, entry, add))
         out[platform] = collected
     return out
+
+
+def no_rooms_model_for_buttons() -> dict[str, Any]:
+    """The L11-A model without the partition_area input of clean_control."""
+    model_json = copy.deepcopy(MODEL_JSON)
+    for service in model_json["services"]:
+        if service["identifier"] == "clean_control":
+            service["inputData"] = [i for i in service["inputData"] if i["identifier"] != "partition_area"]
+    return model_json
 
 
 def by_key(entities: list[Any]) -> dict[str, Any]:
@@ -177,6 +200,19 @@ def test_entities() -> None:
     expected_ids = sorted(f"TESTDEVICE0001_{key}" for key in ('auto_empty', 'battery', 'carpet_boost', 'cleaned_area', 'cleaning_time', 'empty_bin', 'error', 'filter', 'main_brush', 'mop_fitted', 'mop_water_level', 'resume_after_charging', 'schedules', 'sensors', 'side_brush', 'status', 'suction_level', 'vacuum', 'wifi_signal'))  # main (v0.4.x) behaviour
     check("L11-A has exactly the same unique ids as on main", sorted(e.unique_id for v in ents.values() for e in v) == expected_ids, str(sorted(e.unique_id for v in ents.values() for e in v)))
     check("19 entities with unique ids", total == 19 and len({e.unique_id for v in ents.values() for e in v}) == 19)
+
+    # --- Clean <room> buttons ---------------------------------------------
+    room_coordinator = FakeCoordinator(MODEL_JSON, VALUES_JSON["properties"])
+    room_coordinator.room_names = lambda: {3: "Room 3", 4: "Kantoor"}  # type: ignore[method-assign]
+    room_buttons = make_entities(room_coordinator)["button"]
+    clean = {b.room_id: b for b in room_buttons if hasattr(b, "room_id")}
+    check("room buttons: one per room, unique id <device id>_clean_room_<room id>, translation key clean_room, no entity category", sorted(clean) == [3, 4] and [clean[r].unique_id for r in (3, 4)] == ["TESTDEVICE0001_clean_room_3", "TESTDEVICE0001_clean_room_4"] and all(b.translation_key == "clean_room" and b.entity_category is None for b in clean.values()))
+    check("room buttons: a default name reads 'room 3', a real name is kept", clean[3].translation_placeholders == {"room": "room 3"} and clean[4].translation_placeholders == {"room": "Kantoor"}, str([b.translation_placeholders for b in clean.values()]))
+    asyncio.run(clean[4].async_press())
+    check("room button press cleans only that room", room_coordinator.rooms_cleaned == [[4]], str(room_coordinator.rooms_cleaned))
+    no_rooms_coordinator = FakeCoordinator(no_rooms_model_for_buttons(), VALUES_JSON["properties"])
+    no_rooms_coordinator.room_names = room_coordinator.room_names  # type: ignore[method-assign]
+    check("a model without room cleaning (no partition_area input) gets no room buttons", not [b for b in make_entities(no_rooms_coordinator)["button"] if hasattr(b, "room_id")])
 
     # --- vacuum -----------------------------------------------------------
     vac = ents["vacuum"][0]
@@ -627,6 +663,7 @@ def test_files() -> None:
     en = json.loads((PKG_DIR / "translations/en.json").read_text("utf-8"))
     check("strings.json equals translations/en.json", strings == en)
     check("English only: no other translation file", sorted(p.name for p in (PKG_DIR / "translations").iterdir()) == ["en.json"])
+    check("L2: switch.py does not import a private name from sensor.py", "from .sensor import" not in (PKG_DIR / "switch.py").read_text("utf-8") and "_local_start" not in (PKG_DIR / "sensor.py").read_text("utf-8"))
 
     descriptions: dict[str, list[Any]] = {
         "sensor": list(mod("sensor").SENSORS) + list(mod("sensor").ENUM_SENSORS),
@@ -646,7 +683,7 @@ def test_files() -> None:
             check(f"[{lang}] {platform}.{key} has a translated state for every known value", set(states) == set(known.values()) and all(states.values()), str(set(known.values()) ^ set(states)))
         fan_states = data["entity"]["vacuum"]["robot"]["state_attributes"]["fan_speed"]["state"]
         check(f"[{lang}] vacuum fan speed presets are translated", set(fan_states) == set(const.LEVEL_KEYS["windpower"].values()) | set(const.WIND_ENUM_LABEL_KEYS.values()) and all(fan_states.values()), str(fan_states))
-        check(f"[{lang}] options flow texts: both steps, field, error and abort", {"init", "rooms"} <= set(data["options"]["step"]) and data["options"]["step"]["rooms"]["data"]["room_names"] and data["options"]["step"]["init"]["data"]["robot"] and data["options"]["error"]["invalid_room_names"] and data["options"]["abort"]["no_rooms"] and "{robot}" in data["options"]["step"]["rooms"]["title"])
+        check(f"[{lang}] options flow texts: the menu, both room steps, field, error and abort", {"init", "menu", "room_areas", "rooms"} <= set(data["options"]["step"]) and set(data["options"]["step"]["menu"]["menu_options"]) == {"room_areas", "rooms"} and data["options"]["step"]["menu"]["menu_options"]["room_areas"] == "Link rooms to areas" and "{robot}" in data["options"]["step"]["room_areas"]["title"] and "Clean room" in data["options"]["step"]["room_areas"]["description"] and data["entity"]["button"]["clean_room"]["name"] == "Clean {room}" and data["options"]["step"]["rooms"]["data"]["room_names"] and data["options"]["step"]["init"]["data"]["robot"] and data["options"]["error"]["invalid_room_names"] and data["options"]["abort"]["no_rooms"] and "{robot}" in data["options"]["step"]["rooms"]["title"])
         check(f"[{lang}] schedules sensor name and invalid_room exception", data["entity"]["sensor"]["schedules"]["name"] and "{room}" in data["exceptions"]["invalid_room"]["message"])
         check(f"[{lang}] region selector options", set(data["selector"]["region"]["options"]) == set(const.REGION_HOSTS))
         check(f"[{lang}] config errors/abort/steps present", {"cannot_connect", "invalid_auth", "unknown"} <= set(data["config"]["error"]) and "already_configured" in data["config"]["abort"] and {"user", "reauth_confirm"} <= set(data["config"]["step"]))
@@ -671,7 +708,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.5.0"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.6.0"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -747,7 +784,7 @@ SCHEDULES_VALUE = {
     "timeZoneSec": 3600,
     "value": [
         {"period": [], "unlock": True, "active": True, "cleanAreas": [2], "startTime": 1794224460, "endTime": 0, "segmentTagIds": ["Kantoor"]},
-        {"period": [1, 3], "unlock": False, "active": True, "cleanAreas": [], "startTime": 1794300000, "endTime": 0, "segmentTagIds": []},
+        {"period": [0], "unlock": False, "active": True, "cleanAreas": [], "startTime": 50400, "endTime": 0, "segmentTagIds": []},
         {"period": [], "unlock": True, "active": True, "cleanAreas": [3, 4], "startTime": 1794400000, "endTime": 0, "segmentTagIds": ["Slaapkamer", "Slaapkamer"]},
     ],
 }
@@ -789,6 +826,7 @@ class FakeClient:
         self.fail_control_with: Exception | None = None  # makes only service calls fail
         self.fail_schedules_with: Exception | None = None  # makes only clean_list fail
         self.timer_value: Any = copy.deepcopy(SCHEDULES_VALUE)
+        self.latency = False  # service calls yield to the event loop first (to interleave concurrent calls)
         self.ignore_sets = False  # simulate a cloud that accepts but does not apply writes
         self.ignore_level_control = False  # WindWater accepted (code 0) but not applied
         self.apply_level_property_writes = False  # the real L11-A ignores 1027/1028 writes
@@ -837,9 +875,13 @@ class FakeClient:
     async def async_control(self, product_id: str, device_id: str, ref: str, content: dict[str, Any] | None = None) -> dict[str, Any]:
         if ref == "2500":  # clean_list (read-only probe): kept out of self.calls
             self.probe_service_calls.append((ref, dict(content or {})))
+            if self.latency:
+                await asyncio.sleep(0)
             if (failure := self.fail_schedules_with or self.fail_with) is not None:
                 raise failure
             return {"content": {"outputData": {"2501": copy.deepcopy(self.timer_value)}, "service": ref}}
+        if self.latency:
+            await asyncio.sleep(0)
         self.calls.append(("control", device_id, ref, dict(content or {})))
         if (failure := self.fail_control_with or self.fail_commands_with or self.fail_with) is not None:
             raise failure
@@ -963,7 +1005,9 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     device = devices[0] if len(devices) == 1 else None
     check("one device with name/model/manufacturer/sw_version", device is not None and (device.name, device.model, device.manufacturer, device.sw_version) == ("RV-L11-A-TEST", "L11-A", "Imou", "0.4.50") and ("imou_vacuum", "TESTDEVICE0001") in device.identifiers, str(device))
     entities = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
-    check("19 entities registered", len(entities) == 19, str(len(entities)))
+    room_button_ids = {f"TESTDEVICE0001_clean_room_{room_id}" for room_id in (2, 3, 4)}
+    check("a Clean button exists for every room of the schedules", {e.unique_id for e in entities} >= room_button_ids)
+    check("L11-A entities: the 19 of main plus one Clean button per room (22), and no schedule switch", len(entities) == 22 and len({e.unique_id for e in entities} - room_button_ids) == 19 and not any("schedule_" in e.unique_id for e in entities) and not [e for e in entities if e.domain == "switch" and "schedule" in e.unique_id], str(sorted(e.unique_id for e in entities)))
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in entities}
     print("entity ids:", ", ".join(sorted(ids.values())))
     check("existing registry entries stay enabled (upgrade): switches are not disabled", all(e.disabled_by is None for e in entities if e.domain == "switch"), str({e.unique_id: e.disabled_by for e in entities if e.domain == "switch"}))
@@ -1056,6 +1100,11 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("fan speed 'quiet' -> WindWater {Wind:1, Water:1 = pending}", client.calls == [("control", "TESTDEVICE0001", "3100", {"3103": 1, "3102": 1})], str(client.calls))
     await call("button", "press", "empty_bin")
     check("empty bin -> control 2300 {}", client.calls == [("control", "TESTDEVICE0001", "2300", {})], str(client.calls))
+    check("room buttons are named 'Clean <room>' (the room's name, with the id suffix of a duplicate name)", [state(f"clean_room_{r}").name for r in (2, 3, 4)] == ["RV-L11-A-TEST Clean Kantoor", "RV-L11-A-TEST Clean Slaapkamer (3)", "RV-L11-A-TEST Clean Slaapkamer (4)"], str([state(f"clean_room_{r}").name for r in (2, 3, 4)]))
+    check("room buttons: unique id, translation key, no entity category, broom icon", all((ent_reg.async_get(ids[f"clean_room_{r}"]).unique_id, ent_reg.async_get(ids[f"clean_room_{r}"]).translation_key, ent_reg.async_get(ids[f"clean_room_{r}"]).entity_category) == (f"TESTDEVICE0001_clean_room_{r}", "clean_room", None) for r in (2, 3, 4)) and ICONS_JSON["entity"]["button"]["clean_room"]["default"] == "mdi:broom")
+    await call("button", "press", "clean_room_3")
+    check("pressing 'Clean Slaapkamer (3)' sends a clean of room 3 only (mode 1, partition_area [3])", client.calls == [("control", "TESTDEVICE0001", "2700", {"2701": 1, "2702": 1, "2703": 0, "2704": "[3]"})], str(client.calls))
+    check("... the press is recorded as the last command", coordinator.last_command is not None and coordinator.last_command["inputs"]["partition_area"] == {"type": "json", "value": [3]}, str(coordinator.last_command))
     await hass.async_block_till_done()
     check("switch states follow the commanded values", (state("auto_empty").state, state("carpet_boost").state, state("resume_after_charging").state) == ("on", "off", "on"))
     check("select and fan speed share the commanded suction (last command wins)", (state("suction_level").state, state("vacuum").attributes["fan_speed"], state("mop_water_level").state) == ("quiet", "quiet", "low"), f"{state('suction_level').state} {state('vacuum').attributes['fan_speed']} {state('mop_water_level').state}")
@@ -1301,6 +1350,15 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         client.status = status
         seen = await poll(4)
         check(f"status '{status}': stays available with the last data", all(x == "docked" for x, _ in seen) and coordinator.health.failures == 0 and state("battery").state == "1" and state("suction_level").state == "standard", str(seen))
+    # the error DV1030 (device asleep) is not offline: the last data stays, no failure counted
+    client.fail_with = api.ImouDeviceOfflineError("DV1030", "device sleep")
+    seen = await poll(4)
+    check("API error DV1030 (asleep): stays available with the last data, not counted as a failure", all(x == "docked" for x, _ in seen) and coordinator.health.failures == 0 and state("battery").state == "1", f"{seen} {coordinator.health.failures}")
+    client.fail_with = api.ImouDeviceOfflineError("DV1062", "no heartbeat")
+    seen = await poll(3)
+    check("API error DV1062 (no heartbeat) still counts as offline", [x for x, _ in seen] == ["docked", "docked", "unavailable"], str(seen))
+    client.fail_with = None
+    await poll()
     client.status = "sleep"
     client.report_while_not_online = True
     client.props["11600"] = 55
@@ -1363,7 +1421,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
     client = FakeClient.instance
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)}
-    check("entities are back after reauth reload", len(ids) == 19 and state("vacuum").state == "docked")
+    check("entities are back after reauth reload", len(ids) == 22 and state("vacuum").state == "docked")
 
     # ---- diagnostics ------------------------------------------------------------------------
     diagnostics = importlib.import_module(f"{PKG}.diagnostics")
@@ -1481,9 +1539,13 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("schedules sensor: 2 of the 3 schedules are enabled", sched.state == "2", str(sched.state))
     check("schedules sensor: translated name, translation key, not a diagnostic entity", sched.name == "RV-L11-A-TEST Schedules" and sched_entry.translation_key == "schedules" and sched_entry.entity_category is None, f"{sched.name} {sched_entry.entity_category}")
     schedule_attrs = sched.attributes["schedules"]
-    check("schedules sensor: one attribute entry per schedule", len(schedule_attrs) == 3 and all(set(a) == {"enabled", "active", "start", "repeat", "rooms"} for a in schedule_attrs), str(schedule_attrs))
-    check("schedules sensor: enabled, raw active, raw repeat", [(a["enabled"], a["active"], a["repeat"]) for a in schedule_attrs] == [(True, True, []), (False, True, [1, 3]), (True, True, [])], str(schedule_attrs))
-    check("schedules sensor: start is ISO 8601 with a time zone (the timestamp of the robot)", [datetime.fromisoformat(a["start"]).tzinfo is not None and int(datetime.fromisoformat(a["start"]).timestamp()) for a in schedule_attrs] == [1794224460, 1794300000, 1794400000], str(schedule_attrs))
+    check("schedules sensor: one attribute entry per schedule", len(schedule_attrs) == 3 and all(set(a) == {"enabled", "active", "start", "time", "days", "repeat", "rooms"} for a in schedule_attrs), str(schedule_attrs))
+    check("schedules sensor: enabled, raw active, raw repeat", [(a["enabled"], a["active"], a["repeat"]) for a in schedule_attrs] == [(True, True, []), (False, True, [0]), (True, True, [])], str(schedule_attrs))
+    check("schedules sensor: a one-off schedule's start is ISO 8601 with a time zone (the timestamp of the robot), a repeating one has no date", [a["start"] is None or (datetime.fromisoformat(a["start"]).tzinfo is not None and int(datetime.fromisoformat(a["start"]).timestamp())) for a in schedule_attrs] == [1794224460, True, 1794400000] and schedule_attrs[1]["start"] is None, str(schedule_attrs))
+    check("schedules sensor: a repeating schedule (period [0], startTime 50400) shows time 14:00 and days ['sun'] (verified: the Imou app shows Sun 14:00)", schedule_attrs[1]["time"] == "14:00" and schedule_attrs[1]["days"] == ["sun"], str(schedule_attrs[1]))
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    check("schedules sensor: a one-off schedule has a time (local, from its timestamp) and no days", [(a["time"], a["days"]) for a in (schedule_attrs[0], schedule_attrs[2])] == [(datetime.fromtimestamp(t, ZoneInfo(hass.config.time_zone)).strftime("%H:%M"), []) for t in (1794224460, 1794400000)], str(schedule_attrs))
     check("schedules sensor: rooms by name, 'whole_house' without rooms, equal names get the id", [a["rooms"] for a in schedule_attrs] == [["Kantoor"], "whole_house", ["Slaapkamer (3)", "Slaapkamer (4)"]], str(schedule_attrs))
     check("the schedules sensor has the calendar icon", ICONS_JSON["entity"]["sensor"]["schedules"]["default"] == "mdi:calendar-clock")
     check("room names: labels where aligned, equal names get the id", coordinator.room_names() == {2: "Kantoor", 3: "Slaapkamer (3)", 4: "Slaapkamer (4)"}, str(coordinator.room_names()))
@@ -1550,6 +1612,9 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     await coordinator.async_refresh_schedules()
     check("... after a minute it reads again", len(client.probe_service_calls) == 2, str(client.probe_service_calls))
     check("the cache is a constant of 60 seconds", const.SCHEDULE_MIN_REFRESH_SECONDS == 60)
+
+    client.calls.clear()
+    client.probe_service_calls.clear()
 
     # ---- room cleaning (Home Assistant 2026.3 and newer) ----------------------------------------------------
     from homeassistant.components import vacuum as vacuum_component  # noqa: PLC0415
@@ -1642,21 +1707,51 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         await coordinator.async_refresh_schedules()
         await hass.async_block_till_done()
 
-    # ---- options flow: room names ------------------------------------------------------------------
+    # ---- room buttons follow the rooms of the schedules ----------------------------------------------
+    def button_state(room_id: int) -> Any:
+        entity_id = ent_reg.async_get_entity_id("button", "imou_vacuum", f"TESTDEVICE0001_clean_room_{room_id}")
+        return hass.states.get(entity_id) if entity_id else None
+
+    client.timer_value = {"timeZone": 1, "timeZoneSec": 3600, "value": [{"unlock": True, "cleanAreas": [2, 7], "startTime": 5}]}
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    await coordinator.async_refresh_schedules()
+    await hass.async_block_till_done()
+    check("room buttons: a room that shows up later gets a button (default name reads 'room 7')", button_state(7) is not None and button_state(7).name == "RV-L11-A-TEST Clean room 7", str(button_state(7)))
+    check("room buttons: a room that is no longer in the schedules is unavailable, the others are not", [button_state(r).state for r in (2, 3, 4, 7)] == ["unknown", "unavailable", "unavailable", "unknown"], str([button_state(r).state for r in (2, 3, 4, 7)]))
+    client.timer_value = copy.deepcopy(SCHEDULES_VALUE)
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    await coordinator.async_refresh_schedules()
+    await hass.async_block_till_done()
+    check("room buttons: a room that comes back is available again (no second entity)", [button_state(r).state for r in (2, 3, 4)] == ["unknown"] * 3 and {e.unique_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id) if "_clean_room_" in e.unique_id} >= {f"TESTDEVICE0001_clean_room_{r}" for r in (2, 3, 4, 7)}, str(sorted(e.unique_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id) if "_clean_room_" in e.unique_id)))
+
+    # ---- options flow: menu, room names, areas ------------------------------------------------------
     def suggested(result: Any) -> Any:
         key = next(k for k in result["data_schema"].schema if str(k) == "room_names")
         return key.description["suggested_value"]
 
+    async def options_step(step: str) -> Any:
+        """Start the options flow (one robot) and choose a step in the menu."""
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] == "menu", result
+        return await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": step})
+
     coordinator._schedules_fetched_at = None  # the 60 second cache would hide the change  # noqa: SLF001
     client.timer_value = {"timeZone": 1, "timeZoneSec": 3600, "value": [{"unlock": True, "cleanAreas": [], "startTime": 5}]}
+    probe_calls_menu = len(client.probe_service_calls)
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    check("options flow: a robot without known rooms aborts with no_rooms", result["type"] == "abort" and result["reason"] == "no_rooms", str(result))
+    check("options flow: one robot goes straight to the menu (Link rooms to areas, Rename rooms)", result["type"] == "menu" and result["step_id"] == "menu" and result["menu_options"] == ["room_areas", "rooms"] and result["description_placeholders"] == {"robot": "RV-L11-A-TEST"}, str(result))
+    check("options flow: the menu does not read the schedules yet", len(client.probe_service_calls) == probe_calls_menu, str(client.probe_service_calls))
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "rooms"})
+    check("options flow: a robot without known rooms aborts with no_rooms (rooms step)", result["type"] == "abort" and result["reason"] == "no_rooms", str(result))
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    result = await options_step("room_areas")
+    check("options flow: a robot without known rooms aborts with no_rooms (room_areas step)", result["type"] == "abort" and result["reason"] == "no_rooms", str(result))
     client.timer_value = copy.deepcopy(SCHEDULES_VALUE)
     coordinator._schedules_fetched_at = None  # noqa: SLF001
     probe_calls_before = len(client.probe_service_calls)
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await options_step("rooms")
     flow_id = result["flow_id"]
-    check("options flow: one robot goes straight to the rooms form", result["type"] == "form" and result["step_id"] == "rooms" and result["description_placeholders"] == {"robot": "RV-L11-A-TEST"}, str(result))
+    check("options flow: the rooms step (Rename rooms, advanced) still shows its form", result["type"] == "form" and result["step_id"] == "rooms" and result["description_placeholders"] == {"robot": "RV-L11-A-TEST"}, str(result))
     check("options flow: reads the schedules once", len(client.probe_service_calls) == probe_calls_before + 1, str(client.probe_service_calls))
     check("options flow: the field is a multiline text", [str(k) for k in result["data_schema"].schema] == ["room_names"] and next(iter(result["data_schema"].schema.values())).config["multiline"] is True)
     check("options flow: prefilled with the labels (and defaults), one 'id = name' per line, no id suffix", suggested(result) == "2 = Kantoor\n3 = Slaapkamer\n4 = Slaapkamer", repr(suggested(result)))
@@ -1676,7 +1771,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(ids["vacuum"])
         segments = await vac_entity.async_get_segments()
         check("the segments use the saved names", seg(segments) == [("2", "Werkkamer"), ("3", "Blauwe kamer"), ("4", "Slaapkamer")], str(seg(segments)))
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await options_step("rooms")
     check("options flow: the saved names are prefilled the next time", suggested(result) == "2 = Werkkamer\n3 = Blauwe kamer\n4 = Slaapkamer", repr(suggested(result)))
     hass.config_entries.options.async_abort(result["flow_id"])
 
@@ -1688,6 +1783,8 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     options_list = next(iter(result["data_schema"].schema.values())).config["options"]
     check("options flow: with two robots the first step is a robot select (by name)", result["type"] == "form" and result["step_id"] == "init" and [o["label"] for o in options_list] == ["RV-L11-A-TEST", "Second robot"], str(result))
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"robot": "SECONDROBOT0002"})
+    check("options flow: the menu is for the chosen robot", result["type"] == "menu" and result["step_id"] == "menu" and result["description_placeholders"] == {"robot": "Second robot"}, str(result))
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "rooms"})
     check("options flow: the rooms form is for the chosen robot", result["type"] == "form" and result["step_id"] == "rooms" and result["description_placeholders"] == {"robot": "Second robot"}, str(result))
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"room_names": "2 = Keuken"})
     check("options flow: the other robot's names are kept", result["type"] == "create_entry" and result["data"] == {"room_names": {"TESTDEVICE0001": {"2": "Werkkamer", "3": "Blauwe kamer"}, "SECONDROBOT0002": {"2": "Keuken"}}}, str(result))
@@ -1696,7 +1793,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     client = FakeClient.instance
     check("entry is loaded again with its one real robot", entry.state is config_entries.ConfigEntryState.LOADED and list(entry.runtime_data.coordinators) == ["TESTDEVICE0001"], str(entry.state))
     check("the first robot keeps its own names", coordinator.room_names()[2] == "Werkkamer")
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await options_step("rooms")
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"room_names": ""})
     await hass.async_block_till_done()
     coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
@@ -1704,20 +1801,142 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("an empty text clears the names of that robot (labels and defaults again)", result["type"] == "create_entry" and coordinator.room_names() == {2: "Kantoor", 3: "Slaapkamer (3)", 4: "Slaapkamer (4)"}, str(coordinator.room_names()))
 
     # only real user overrides are stored: not the default name, not the current automatic name
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await options_step("rooms")
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"room_names": "2 = Room 2\n3 = Slaapkamer\n4 = Eigen kamer"})
     await hass.async_block_till_done()
     coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
     client = FakeClient.instance
     check("options flow: default ('Room 2') and automatic ('Slaapkamer') names are not stored, a real override is", result["type"] == "create_entry" and result["data"]["room_names"]["TESTDEVICE0001"] == {"4": "Eigen kamer"}, str(result))
     check("... the displayed names are still right", coordinator.room_names() == {2: "Kantoor", 3: "Slaapkamer", 4: "Eigen kamer"}, str(coordinator.room_names()))
-    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await options_step("rooms")
     check("... and they are prefilled again", suggested(result) == "2 = Kantoor\n3 = Slaapkamer\n4 = Eigen kamer", repr(suggested(result)))
     result = await hass.config_entries.options.async_configure(result["flow_id"], {"room_names": "2 = Werkkamer"})
     await hass.async_block_till_done()
     coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
     client = FakeClient.instance
     check("options flow: removing a line removes that override", result["data"]["room_names"]["TESTDEVICE0001"] == {"2": "Werkkamer"} and coordinator.room_names()[4] == "Slaapkamer (4)", str(result))
+
+    # ---- options flow: link rooms to areas ---------------------------------------------------------
+    from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+
+    area_reg = ar.async_get(hass)
+    kitchen, living, bath = (area_reg.async_create(name) for name in ("Kitchen", "Living room", "Bathroom"))
+
+    def vacuum_options() -> dict[str, Any]:
+        return json.loads(json.dumps(dict(ent_reg.async_get(ids["vacuum"]).options.get("vacuum", {}))))
+
+    seeded = {
+        "area_mapping": {kitchen.id: ["3"], "deleted_area": ["4"], living.id: ["9"]},
+        "last_seen_segments": [{"id": "9", "name": "Nine", "group": None}, {"id": "3", "name": "Old three", "group": None}],
+        "other_key": {"keep": "me"},
+    }
+    ent_reg.async_update_entity_options(ids["vacuum"], "vacuum", seeded)
+    options_before = json.loads(json.dumps(dict(entry.options)))
+    result = await options_step("room_areas")
+    labels = [str(k) for k in result["data_schema"].schema]
+    check("room areas: one optional field per room, labelled 'Room <id>: <name>' (the user's name, else the app's label)", result["type"] == "form" and result["step_id"] == "room_areas" and labels == ["Room 2: Werkkamer", "Room 3: Slaapkamer", "Room 4: Slaapkamer"] and all(type(k).__name__ == "Optional" for k in result["data_schema"].schema) and result["description_placeholders"] == {"robot": "RV-L11-A-TEST"}, str(result))
+    check("room areas: every field is an area selector", all(type(v).__name__ == "AreaSelector" for v in result["data_schema"].schema.values()), str(list(result["data_schema"].schema.values())))
+    suggestions = {str(k): k.description.get("suggested_value") if k.description else None for k in result["data_schema"].schema}
+    check("room areas: the current links of the vacuum are suggested (a deleted area is not)", suggestions == {"Room 2: Werkkamer": None, "Room 3: Slaapkamer": kitchen.id, "Room 4: Slaapkamer": None}, str(suggestions))
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"Room 2: Werkkamer": living.id, "Room 4: Slaapkamer": bath.id})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("room areas: the rooms take the names of their areas, a room without an area keeps its name (none stored)", result["type"] == "create_entry" and result["data"]["room_names"]["TESTDEVICE0001"] == {"2": "Living room", "4": "Bathroom"} and dict(entry.options) == result["data"], str(result))
+    check("room areas: the names of the other robot are kept", result["data"]["room_names"]["SECONDROBOT0002"] == {"2": "Keuken"}, str(result))
+    check("room areas: the entry reloads and shows the new names", entry.state is config_entries.ConfigEntryState.LOADED and coordinator.room_names() == {2: "Living room", 3: "Slaapkamer", 4: "Bathroom"}, str(coordinator.room_names()))
+    check("room areas: the Clean buttons are named after the areas", [state(f"clean_room_{r}").name for r in (2, 3, 4)] == ["RV-L11-A-TEST Clean Living room", "RV-L11-A-TEST Clean Slaapkamer", "RV-L11-A-TEST Clean Bathroom"], str([state(f"clean_room_{r}").name for r in (2, 3, 4)]))
+    if ha_clean_area() is not None:
+        check(
+            "room areas (CLEAN_AREA): area_mapping = old minus the shown rooms plus the new links, ids as ascending strings; other rooms and other keys stay",
+            vacuum_options()["area_mapping"] == {living.id: ["2", "9"], bath.id: ["4"]} and vacuum_options()["other_key"] == {"keep": "me"},
+            str(vacuum_options()),
+        )
+        check(
+            "room areas (CLEAN_AREA): last_seen_segments keeps its entries, renames the shown rooms and adds the new ones (ascending)",
+            vacuum_options()["last_seen_segments"] == [{"id": "9", "name": "Nine", "group": None}, {"id": "3", "name": "Slaapkamer", "group": None}, {"id": "2", "name": "Living room", "group": None}, {"id": "4", "name": "Bathroom", "group": None}],
+            str(vacuum_options()["last_seen_segments"]),
+        )
+        vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(ids["vacuum"])
+        segments = await vac_entity.async_get_segments()
+        check("room areas (CLEAN_AREA): the segments carry the names stored in last_seen_segments", seg(segments) == [("2", "Living room"), ("3", "Slaapkamer"), ("4", "Bathroom"), ("9", "Nine")], str(seg(segments)))
+        check("room areas (CLEAN_AREA): no 'new rooms' repair issue after linking (every room is in last_seen_segments)", ir.async_get(hass).async_get_issue("vacuum", f"segments_changed_{ent_reg.async_get(ids['vacuum']).id}") is None)
+    else:
+        check("room areas (no CLEAN_AREA, Home Assistant 2026.1): the vacuum registry options are not touched", vacuum_options() == seeded, str(vacuum_options()))
+
+    # the labels follow the new names; the links are the defaults; clearing every room removes the links but keeps the names
+    result = await options_step("room_areas")
+    suggestions = {str(k): k.description.get("suggested_value") if k.description else None for k in result["data_schema"].schema}
+    if ha_clean_area() is not None:
+        check("room areas: the second time the saved links are suggested, under the new labels", suggestions == {"Room 2: Living room": living.id, "Room 3: Slaapkamer": None, "Room 4: Bathroom": bath.id}, str(suggestions))
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("room areas: submitting no area keeps the stored names", result["type"] == "create_entry" and result["data"]["room_names"]["TESTDEVICE0001"] == {"2": "Living room", "4": "Bathroom"} and coordinator.room_names() == {2: "Living room", 3: "Slaapkamer", 4: "Bathroom"}, str(result))
+    if ha_clean_area() is not None:
+        check("room areas (CLEAN_AREA): clearing the rooms removes them from the mapping; the room that was not shown stays", vacuum_options()["area_mapping"] == {living.id: ["9"]} and vacuum_options()["other_key"] == {"keep": "me"}, str(vacuum_options()))
+    # an unknown (deleted) area counts as no area; a real area again; one area for two rooms
+    result = await options_step("room_areas")
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"Room 2: Living room": "no_such_area", "Room 3: Slaapkamer": kitchen.id, "Room 4: Bathroom": kitchen.id})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("room areas: an unknown area is ignored (that room keeps its name), two rooms may share an area", result["type"] == "create_entry" and result["data"]["room_names"]["TESTDEVICE0001"] == {"2": "Living room", "3": "Kitchen", "4": "Kitchen"} and coordinator.room_names() == {2: "Living room", 3: "Kitchen (3)", 4: "Kitchen (4)"}, f"{result} {coordinator.room_names()}")
+    if ha_clean_area() is not None:
+        check("room areas (CLEAN_AREA): a shared area maps both rooms; the names with the ' (id)' suffix of the new duplicate are stored as last seen", vacuum_options()["area_mapping"] == {living.id: ["9"], kitchen.id: ["3", "4"]} and [(e["id"], e["name"]) for e in vacuum_options()["last_seen_segments"]] == [("9", "Nine"), ("3", "Kitchen (3)"), ("2", "Living room"), ("4", "Kitchen (4)")], str(vacuum_options()))
+        segments = await hass.data[vacuum_component.DATA_COMPONENT].get_entity(ids["vacuum"]).async_get_segments()
+        check("room areas (CLEAN_AREA): ... and these are the names the segments show", seg(segments) == [("2", "Living room"), ("3", "Kitchen (3)"), ("4", "Kitchen (4)"), ("9", "Nine")], str(seg(segments)))
+    # a robot whose vacuum is not in the entity registry: names are still saved, nothing else is written
+    ent_reg.async_update_entity_options(ids["vacuum"], "vacuum", None)
+    ent_reg.async_remove(ids["vacuum"])
+    result = await options_step("room_areas")
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"Room 2: Living room": bath.id})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("room areas: without a vacuum in the entity registry the names are saved and nothing fails", result["type"] == "create_entry" and result["data"]["room_names"]["TESTDEVICE0001"]["2"] == "Bathroom", str(result))
+    ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)}  # the vacuum entity is created again by the reload
+    check("... and the reload creates the vacuum entity again", "vacuum" in ids and entry.state is config_entries.ConfigEntryState.LOADED, str(sorted(ids)))
+    ent_reg.async_update_entity_options(ids["vacuum"], "vacuum", None)
+    options_updated = {**options_before}
+    hass.config_entries.async_update_entry(entry, options=options_updated)  # back to the options of before this block
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("room areas: back to the options from before (names as the earlier tests expect)", coordinator.room_names()[2] == "Werkkamer", str(coordinator.room_names()))
+
+    # ---- rooms with a name of the user stay known when no schedule lists them -----------------------
+    hass.config_entries.async_update_entry(entry, options={"room_names": {"TESTDEVICE0001": {"1": "Een", "2": "Twee", "3": "Drie"}}})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    client.timer_value = {"timeZone": 1, "timeZoneSec": 3600, "value": [{"unlock": True, "cleanAreas": [2], "startTime": 5, "segmentTagIds": ["Kantoor"]}]}
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    await coordinator.async_refresh_schedules()
+    await hass.async_block_till_done()
+    check("remembered rooms: names for rooms 1-3, the schedule lists only room 2 -> room_names has 1, 2 and 3", coordinator.room_names() == {1: "Een", 2: "Twee", 3: "Drie"} and coordinator.known_room_tags() == {1: None, 2: "Kantoor", 3: None}, str(coordinator.room_names()))
+    check("remembered rooms: the Clean buttons of rooms 1, 2 and 3 are available", [button_state(r).state for r in (1, 2, 3)] == ["unknown"] * 3 and button_state(1).name == "RV-L11-A-TEST Clean Een", str([button_state(r) for r in (1, 2, 3)]))
+    result = await options_step("rooms")
+    check("remembered rooms: the rooms step lists rooms 1, 2 and 3", suggested(result) == "1 = Een\n2 = Twee\n3 = Drie", repr(suggested(result)))
+    hass.config_entries.options.async_abort(result["flow_id"])
+    result = await options_step("room_areas")
+    check("remembered rooms: the areas step lists rooms 1, 2 and 3", [str(k) for k in result["data_schema"].schema] == ["Room 1: Een", "Room 2: Twee", "Room 3: Drie"], str([str(k) for k in result["data_schema"].schema]))
+    hass.config_entries.options.async_abort(result["flow_id"])
+    result = await options_step("rooms")
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"room_names": "2 = Twee"})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    check("remembered rooms: removing a line forgets the room", 1 not in coordinator.room_names() and coordinator.room_names()[2] == "Twee" and button_state(1).state == "unavailable", f"{coordinator.room_names()} {button_state(1).state}")
+    hass.config_entries.async_update_entry(entry, options={"room_names": {"TESTDEVICE0001": {"2": "Werkkamer"}}})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
+    client = FakeClient.instance
+    client.timer_value = copy.deepcopy(SCHEDULES_VALUE)
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    await coordinator.async_refresh_schedules()
+    await hass.async_block_till_done()
 
     # the update listener reloads on an options change only, not on a data-only update (reauth reloads by itself)
     reloads: list[str] = []
@@ -1791,7 +2010,8 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         regs = {e.unique_id.removeprefix(f"{robot_id}_"): e for e in er.async_entries_for_config_entry(ent_reg, fresh.entry_id)}
         disabled = {k for k in switch_keys if regs[k].disabled_by is not None}
         check(f"fresh install, {label}: disabled by default = {sorted(expected_disabled)}", disabled == expected_disabled and fresh.state is config_entries.ConfigEntryState.LOADED, f"{disabled} {fresh.state}")
-        check(f"fresh install, {label}: all 19 entities are created (disabled ones in the registry only)", len(regs) == 19, str(len(regs)))
+        expected_count = 19 if "initial_status" in flags else 22  # schedules (and with them the rooms) are only read from an online robot
+        check(f"fresh install, {label}: all {expected_count} entities are created (disabled ones in the registry only)", len(regs) == expected_count, str(len(regs)))
         if expected_disabled:
             check(f"fresh install, {label}: disabled_by is the integration, disabled switches have no state", all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION and hass.states.get(regs[k].entity_id) is None for k in expected_disabled))
             check(f"fresh install, {label}: the reported switch is on and says so", hass.states.get(regs["carpet_boost"].entity_id).state == "on" and hass.states.get(regs["carpet_boost"].entity_id).attributes["reported_by_device"] is True)
@@ -1955,6 +2175,7 @@ async def rv1_setup_checks(config_dir: str) -> None:
         for key in ("mop_intensity", "dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag", "schedules"):
             check(f"RV1 Pro Max: entity {key} exists", key in ids, str(sorted(ids)))
         await coordinator.async_refresh()
+        check("RV1 Pro Max: no schedule switches", not any(k.startswith("schedule_") for k in ids), str(sorted(ids)))
         check("RV1 Pro Max: polled refs include mop_speed 119100 and station_status 121100", {"119100", "121100"} <= set(client.last_refs), str(client.last_refs))
         check("RV1 Pro Max: mop intensity options gentle/standard/strong, unknown while not reported", state("mop_intensity").attributes["options"] == ["gentle", "standard", "strong"] and state("mop_intensity").state == "unknown", str(dict(state("mop_intensity").attributes)))
         client.props["119100"] = 1
@@ -1990,7 +2211,7 @@ async def rv1_setup_checks(config_dir: str) -> None:
         check("RV1 Pro Max: Schedules sensor counts the one enabled schedule", schedules.state == "1", str(schedules))
         check(
             "RV1 Pro Max: schedule attributes: raw start, repeat days, whole house, start null",
-            schedules.attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "repeat": [7, 1, 2, 3, 4, 5, 6], "rooms": "whole_house", "start_raw": 82800, "once": False}],
+            schedules.attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "time": None, "days": [], "repeat": [7, 1, 2, 3, 4, 5, 6], "rooms": "whole_house", "start_raw": 82800, "once": False}],
             str(schedules.attributes["schedules"]),
         )
         check("RV1 Pro Max: a whole-house schedule gives no rooms", coordinator.room_names() == {}, str(coordinator.room_names()))
@@ -2001,7 +2222,7 @@ async def rv1_setup_checks(config_dir: str) -> None:
         check("RV1 Pro Max: room names from the room schedule (exact name, else default)", coordinator.room_names() == {3: "Kitchen", 5: "Room 5"}, str(coordinator.room_names()))
         check(
             "RV1 Pro Max: room schedule attributes (once, rooms by name)",
-            state("schedules").attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "repeat": [], "rooms": ["Kitchen", "Room 5"], "start_raw": 3600, "once": True}],
+            state("schedules").attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "time": None, "days": [], "repeat": [], "rooms": ["Kitchen", "Room 5"], "start_raw": 3600, "once": True}],
             str(state("schedules").attributes["schedules"]),
         )
         if ha_clean_area() is not None:
@@ -2161,6 +2382,7 @@ def test_unknown_model() -> None:
 
 def test_issue_translations() -> None:
     strings, english = STRINGS_JSON, EN_JSON
+    check("no schedule switch text, icon or schedule write error is left in the translations", "schedule" not in strings["entity"]["switch"] and "schedule" not in ICONS_JSON["entity"]["switch"] and not [k for k in strings["exceptions"] if k.startswith("schedule_")])
     issue = strings["issues"]["model_not_fully_supported"]
     check("issue text is in strings.json and translations/en.json, identical", strings == english and strings["entity"]["binary_sensor"]["charging"] == {"name": "Charging"})
     check("issue text does not overclaim", "Other functions may work, but the missing or unknown parts may not show or react correctly." in issue["description"] and "Everything else works" not in issue["description"])

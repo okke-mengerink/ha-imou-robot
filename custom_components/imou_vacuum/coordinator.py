@@ -62,12 +62,15 @@ from .probe import redact, summarize
 from .rooms import (
     ScheduleList,
     known_rooms,
+    remembered_rooms,
     parse_schedules,
     partition_area,
     segment_names,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+ASLEEP_CODE = "DV1030"  # the device is asleep (an error code, not a failure)
 
 
 @dataclass
@@ -182,14 +185,18 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         A failed poll, or a robot that the cloud calls "offline", keeps the last
         good data (the entities stay available) until it has happened several
         times in a row or the last good data is too old. Any other status, such as
-        "sleep" or "upgrading", is not a failure: the last data is shown.
+        "sleep" or "upgrading" (or the error DV1030, the robot is asleep), is not a
+        failure: the last data is shown.
         """
+        asleep = False
         try:
             result = await self.client.async_get_properties(
                 self.device.product_id, self.device.device_id, self.poll_refs
             )
-        except ImouDeviceOfflineError:
-            return self._poll_failed("the robot is offline")
+        except ImouDeviceOfflineError as err:
+            if err.code.upper() != ASLEEP_CODE:
+                return self._poll_failed("the robot is offline")
+            asleep = True  # DV1030: not offline, the same as the status "sleep"
         except ImouAuthError as err:
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN, translation_key="auth_failed"
@@ -198,11 +205,11 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             return self._poll_failed(str(err), err)
 
         # A missing status is treated as online.
-        status = (result.status or "online").lower()
+        status = "sleep" if asleep else (result.status or "online").lower()
         if status == "offline":
             return self._poll_failed("the robot is offline")
 
-        values = self.model.parse_values(result.values)
+        values = {} if asleep else self.model.parse_values(result.values)
         if status != "online" and not values and self.data is not None:
             values = dict(self.data.values)  # asleep or upgrading: show the last data
         if status == "online":
@@ -394,6 +401,15 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         self.async_update_listeners()
         return True
 
+    def can_clean_rooms(self) -> bool:
+        """Whether the model's ``clean_control`` takes a mode and a room list."""
+        control = self.model.service(SERVICE_CLEAN_CONTROL)
+        return (
+            control is not None
+            and control.input_ref(INPUT_MODE) is not None
+            and control.input_ref(INPUT_PARTITION_AREA) is not None
+        )
+
     def room_overrides(self) -> dict[int, str]:
         """Return the room names the user chose for this robot, by room id."""
         options = self.config_entry.options.get(CONF_ROOM_NAMES, {})
@@ -404,13 +420,21 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 overrides[room_id] = name
         return overrides
 
-    def room_names(self) -> dict[int, str]:
-        """Return the name of every room of the schedules, by room id.
+    def known_room_tags(self) -> dict[int, str | None]:
+        """Return every room (ascending) with its label from the Imou app, if any.
 
-        The user's name, else the room type label from the Imou app, else
-        ``Room <id>``; rooms with the same name get their id appended.
+        These are the rooms of the schedules plus the rooms the user named, so a
+        named room stays when no schedule lists it any more.
         """
-        known = known_rooms(self.schedules)
+        return remembered_rooms(known_rooms(self.schedules), self.room_overrides())
+
+    def room_names(self) -> dict[int, str]:
+        """Return the name of every known room, by room id.
+
+        The rooms are those of the schedules and those the user named. The user's name,
+        else the room type label from the Imou app, else ``Room <id>``; rooms with the same name get their id appended.
+        """
+        known = self.known_room_tags()
         return segment_names(known, known, self.room_overrides(), default_room_name)
 
     async def async_clean_rooms(self, room_ids: list[int]) -> None:

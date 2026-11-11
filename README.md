@@ -57,7 +57,7 @@ Verified on a real RV-L11-A:
 - **Advanced commands:** `vacuum.send_command` calls any service of the robot's things model, checked against that model.
 - **Adaptive polling:** every 300 s when idle or docked, every 30 s while active, plus a quick refresh after each command.
 
-Not supported: the map, zone cleaning and editing schedules. The robot does not report its map or room list through the Imou Open Platform API. The integration is cloud only; there is no local control.
+Not supported: the map, zone cleaning and creating, editing or switching schedules (schedules are read-only). The robot does not report its map or room list through the Imou Open Platform API. The integration is cloud only; there is no local control.
 
 ## Requirements
 
@@ -104,13 +104,13 @@ Sign-in sends a verification code by email. The user did not receive that code o
 
 ## Room cleaning
 
-Room cleaning needs Home Assistant 2026.3 or newer, which added room cleaning for vacuums. On older versions everything else works as before.
+The **Clean <room>** buttons work on every Home Assistant version. The `vacuum.clean_area` action and the link to areas need Home Assistant 2026.3 or newer, which added room cleaning for vacuums. On older versions everything else works as before.
 
 The Imou Open Platform API does not report the robot's map or room list, not even while it cleans. The room ids do appear in the robot's schedules, so the integration reads the rooms from there:
 
-1. **Put your rooms in a schedule.** In the Imou Life app, create a schedule and select the rooms one by one (not "whole house": the app stores that as an empty list). You may switch the schedule off; the integration only reads it. A room that you have mapped to an area stays available, even if you delete the schedule later.
-2. **Name the rooms.** Go to **Settings > Devices & services > Imou Vacuum (Open Platform) > Configure**. The list is prefilled with the rooms that were found. Write one room per line as `id = name`, for example `3 = Office`.
-3. **Map the rooms to areas.** Open the settings of the vacuum entity and configure the segment-to-area mapping: choose the Home Assistant area for each room.
+1. **Put your rooms in a schedule.** In the Imou Life app, create a schedule and select the rooms one by one (not "whole house": the app stores that as an empty list). You may switch the schedule off; the integration only reads it. A room that you gave a name or linked to an area stays available, even if you delete the schedule later.
+2. **Find out which number is which room.** The Imou app does not show room numbers. The integration creates a button **Clean <room>** for every room it found (a room without a name is called, for example, "Clean room 3"). Press one and see where the robot goes. A button is unavailable when its room is no longer known.
+3. **Link the rooms to areas.** Go to **Settings > Devices & services > Imou Vacuum (Open Platform) > Configure** and choose **Link rooms to areas**. Pick a Home Assistant area for each room. The room takes the name of the area. On Home Assistant 2026.3 or newer the room is also linked to the area, so that `vacuum.clean_area` can use it (this replaces setting the segment-to-area mapping by hand in the vacuum entity's settings). A room you leave empty keeps its name, and its area link is removed.
 4. **Clean.** Use the action `vacuum.clean_area`, or ask Assist to clean an area:
 
 ```yaml
@@ -124,9 +124,20 @@ data:
 
 When a new room id appears in your schedules, Home Assistant shows a repair notice so that you can map it.
 
-**About the room names.** The app does not store room names in the schedules but room *types* (such as "Bedroom" or "Office"), and it leaves out rooms without a type. A type is therefore only used as the name when every selected room in that schedule has one; other rooms are called "Room <id>". Two rooms can have the same type; those names get the id added, for example "Bedroom (3)". Your own names from step 2 always win.
+**About the room names.** The app does not store room names in the schedules but room *types* (such as "Bedroom" or "Office"), and it leaves out rooms without a type. A type is therefore only used as the name when every selected room in that schedule has one; other rooms are called "Room <id>". Two rooms can have the same type; those names get the id added, for example "Bedroom (3)". Your own names (from **Link rooms to areas** or **Rename rooms**) always win.
 
-**Which id is which room?** Start a single room with `vacuum.send_command` (see below) and watch where the robot goes.
+**Rename rooms (advanced).** The same menu has **Rename rooms (advanced)**: a text list with one room per line as `id = name`, for example `3 = Office`. Removing a line removes that name, and the room is forgotten when no schedule lists it.
+
+**Which id is which room?** Use the **Clean <room>** buttons, or start a single room with `vacuum.send_command` (see below), and watch where the robot goes.
+
+## Schedules
+
+The schedules of the Imou app are read once an hour and shown in the Schedules sensor.
+
+- **L11-A format (RV-L11-A):** a repeating schedule shows its local time of day in `time` (for example `14:00`) and its days in `days` (`sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`). The robot counts 0 as Sunday; the days 1 to 6 are assumed to be Monday to Saturday. A one-off schedule has a `start` (local date and time) and a `time`, and no `days`. Other attributes are `enabled`, `active`, `repeat` (the raw days), `rooms` (names, or `whole_house`).
+- **RV1 Pro Max:** the format is different and the meaning of its start time is unknown, so the raw `start_raw` and `once` are shown and `time` stays empty.
+
+**Schedules are read-only.** Home Assistant cannot switch a schedule on or off, create it or change it, because writing a schedule back through the cloud API loses its room/whole-house setting (a room schedule became a whole-house schedule in a live test). Change schedules in the Imou app.
 
 ### Advanced: vacuum.send_command
 
@@ -178,7 +189,7 @@ Choose the region that matches the data centre of your Imou account: **Europe** 
 
 ### Can I clean specific rooms?
 
-Yes, with Home Assistant 2026.3 or newer. See [Room cleaning](#room-cleaning). Zone cleaning and the map are not available, because the robot does not report its map through the Imou Open Platform API.
+Yes. The **Clean <room>** buttons work on every version, and `vacuum.clean_area` needs Home Assistant 2026.3 or newer. See [Room cleaning](#room-cleaning). Zone cleaning and the map are not available, because the robot does not report its map through the Imou Open Platform API.
 
 ### Will it work with Google Home or Alexa?
 
@@ -231,7 +242,7 @@ Entities are created per robot, and only when the robot's model supports them.
 - Cleaning time (min)
 - Consumable usage in hours: side brush, main brush, filter and sensors (diagnostic). The robot reports minutes used; the sensors show hours (minutes / 60, one decimal).
 - Wi-Fi signal (enum, diagnostic)
-- Schedules: the number of enabled schedules in the Imou app. The attribute `schedules` lists each schedule with `enabled`, `active` (raw), `start` (local time), `repeat` (raw, as the robot reports it) and `rooms` (names, or `whole_house`). Read once an hour. On an RV1 Pro Max each schedule also has `start_raw` (the robot's `start_time`, not converted: its meaning is unknown, so `start` stays `null`), `once` (runs one time) and `repeat` (the days, as a list of numbers).
+- Schedules: the number of enabled schedules in the Imou app. The attribute `schedules` lists each schedule with `enabled`, `active` (raw), `start` (local date and time of a one-off schedule, `null` for a weekly schedule), `time` (local time of day, for example `14:00`), `days` (for a weekly schedule, for example `["sun"]`), `repeat` (raw, as the robot reports it) and `rooms` (names, or `whole_house`). Read once an hour. On an RV1 Pro Max each schedule also has `start_raw` (the robot's `start_time`, not converted: its meaning is unknown, so `start` stays `null`), `once` (runs one time) and `repeat` (the days, as a list of numbers).
 - Dock status (only for a robot whose model has `station_status`, such as the RV1 Pro Max): Clean water tank (normal / not installed / water low), Dirty water tank (normal / not installed / full) and Dust bag (normal / not installed / full).
 
 ### Other entities
@@ -300,6 +311,8 @@ Contributions of identifier and enum mappings are welcome.
 
 ## Known limitations and unverified points
 
+- The Imou error codes DV1007 (offline), DV1030 (the device is asleep) and DV1062 (the device has no heartbeat, wake it on the device) are treated as "device offline" in commands and other calls. While polling, DV1030 is treated like the status `sleep`: the last data stays visible and it is not counted as a failed poll.
+
 - Suction, water level and fan speed are set through the `WindWater` service, verified on an L11-A. Plain property writes for these are ignored by the L11-A. Models without a `WindWater` service get property writes instead (unverified). Other models may use another scale; those values show as `unknown_<n>` and can be added to `LEVEL_KEYS`.
 - Property writes work on an L11-A for carpet boost (the cloud confirms the new value) and for return to dock. The L11-A never reports auto-empty or resume after charging, before or after a write, and the Imou app has no such settings, so its firmware probably does not implement them although the shared things model lists them. Whether such a write has any effect cannot be verified.
 - A switch whose setting the robot did not report in its first poll is created but disabled by default (the poll must be of an online robot; otherwise nothing is disabled). Enable it in the entity settings if your model supports it. Every switch has the attribute `reported_by_device`. Entities created by an earlier version keep their state: disable or delete those two switches by hand.
@@ -308,7 +321,6 @@ Contributions of identifier and enum mappings are welcome.
 - There is no map and no zone cleaning. On an L11-A the room, map and cleaning-parameter properties stay empty in the cloud, even while the robot cleans a room, so the rooms are read from the schedules.
 - The RV1 Pro Max reports its consumable counters (brushes, filter, sensors) as 0, so those sensors stay at 0.
 - The meaning of the schedule start time of the RV1 Pro Max is unknown (the Imou app shows 02:00 for a schedule whose `start_time` is 82800), so it is shown raw as `start_raw`. The format of `area_array` for a room schedule is also unverified; several formats are accepted.
-- Schedules are read-only. The meaning of the schedule field `active` and the format of repeating days are unverified; both are shown raw.
 - Only the Europe region has been verified. Singapore and North America use the same calls on other Imou hosts.
 - Commands are fire-and-forget: the cloud output code is not interpreted.
 - A value you set from Home Assistant is shown for at most 30 s while the robot still reports the old value; after that the reported value wins, so a command the robot ignores is visible. Only for settings the cloud never reports (auto-empty and resume after charging on the L11-A) the last value you set stays.

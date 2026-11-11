@@ -267,6 +267,23 @@ def test_offline_error_is_typed() -> None:
         raise AssertionError("expected ImouDeviceOfflineError")
 
 
+def test_asleep_and_no_heartbeat_codes_are_offline() -> None:
+    for code, msg in (("DV1007", "x"), ("DV1030", "device sleep"), ("DV1062", "no heartbeat")):
+
+        def handler(method: str, body: dict[str, Any], code=code, msg=msg) -> tuple[int, dict[str, Any]]:
+            if method == "accessToken":
+                return ok({"accessToken": "tok", "expireTime": 259200})
+            return err(code, msg)
+
+        client, _ = make_client(handler)
+        try:
+            run(client.async_get_properties("p", DEVICE_ID, ["1"]))
+        except api.ImouDeviceOfflineError as exc:
+            assert exc.code == code
+        else:
+            raise AssertionError(f"expected ImouDeviceOfflineError for {code}")
+
+
 def test_invalid_credentials_give_auth_error() -> None:
     client, _ = make_client(lambda m, b: err("SN1004", "appId or secret is wrong"))
     try:

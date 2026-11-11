@@ -6,9 +6,30 @@ from typing import Any, override
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import ImouCoordinator
+
+
+def local_start(timestamp: int | None) -> str | None:
+    """Return a schedule's start as local ISO 8601; never raises."""
+    if timestamp is None:
+        return None
+    try:
+        return dt_util.as_local(dt_util.utc_from_timestamp(timestamp)).isoformat()
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def local_time(timestamp: int | None) -> str | None:
+    """Return the local time of day (HH:MM) of a timestamp; never raises."""
+    if timestamp is None:
+        return None
+    try:
+        return dt_util.as_local(dt_util.utc_from_timestamp(timestamp)).strftime("%H:%M")
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 class ImouEntity(CoordinatorEntity[ImouCoordinator]):

@@ -15,8 +15,10 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    AreaSelector,
     SelectSelector,
     SelectOptionDict,
     SelectSelectorConfig,
@@ -37,7 +39,17 @@ from .const import (
     REGION_HOSTS,
 )
 from .coordinator import ImouCoordinator, default_room_name
-from .rooms import format_room_names, known_rooms, parse_room_names
+from .model import to_int
+from .rooms import (
+    areas_by_room,
+    format_room_names,
+    new_area_mapping,
+    new_last_seen_segments,
+    parse_room_names,
+    room_area_labels,
+    segment_names,
+)
+from .vacuum import CLEAN_AREA
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -165,11 +177,13 @@ class ImouRobotConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class ImouOptionsFlow(OptionsFlow):
-    """Let the user name the rooms of a robot."""
+    """Let the user name the rooms of a robot and link them to areas."""
 
     def __init__(self) -> None:
         """Initialize the flow."""
         self._device_id: str | None = None
+        # form label -> room id of the "link rooms to areas" form
+        self._area_labels: dict[str, int] = {}
 
     @property
     def _coordinators(self) -> dict[str, ImouCoordinator]:
@@ -185,10 +199,10 @@ class ImouOptionsFlow(OptionsFlow):
             return self.async_abort(reason="no_rooms")
         if user_input is not None and user_input[CONF_ROBOT] in coordinators:
             self._device_id = user_input[CONF_ROBOT]
-            return await self.async_step_rooms()
+            return await self.async_step_menu()
         if len(coordinators) == 1:
             self._device_id = next(iter(coordinators))
-            return await self.async_step_rooms()
+            return await self.async_step_menu()
         schema = vol.Schema(
             {
                 vol.Required(CONF_ROBOT): SelectSelector(
@@ -204,6 +218,116 @@ class ImouOptionsFlow(OptionsFlow):
         )
         return self.async_show_form(step_id="init", data_schema=schema)
 
+    async def async_step_menu(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose between linking rooms to areas and the advanced names text."""
+        coordinator = self._coordinators.get(self._device_id or "")
+        if coordinator is None:
+            return self.async_abort(reason="no_rooms")
+        return self.async_show_menu(
+            step_id="menu",
+            menu_options=["room_areas", "rooms"],
+            description_placeholders={"robot": coordinator.device.name},
+        )
+
+    def _vacuum_entity_id(self, coordinator: ImouCoordinator) -> str | None:
+        """Return the entity id of the robot's vacuum, if it is in the entity registry."""
+        return er.async_get(self.hass).async_get_entity_id(
+            "vacuum", DOMAIN, f"{coordinator.device.device_id}_vacuum"
+        )
+
+    async def async_step_room_areas(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Link every room to an area: the room takes the area's name."""
+        coordinator = self._coordinators.get(self._device_id or "")
+        if coordinator is None:
+            return self.async_abort(reason="no_rooms")
+        if user_input is None:
+            await coordinator.async_refresh_schedules()  # pick up new schedules
+        known = coordinator.known_room_tags()
+        if not known:
+            return self.async_abort(reason="no_rooms")
+
+        device_id = coordinator.device.device_id
+        area_registry = ar.async_get(self.hass)
+        entity_registry = er.async_get(self.hass)
+        vacuum_id = self._vacuum_entity_id(coordinator)
+        vacuum_entry = entity_registry.async_get(vacuum_id) if vacuum_id else None
+        vacuum_options = dict(vacuum_entry.options.get("vacuum", {})) if vacuum_entry else {}
+
+        if user_input is None:
+            labels = room_area_labels(known, coordinator.room_overrides(), default_room_name)
+            self._area_labels = labels
+            schema = vol.Schema({vol.Optional(label): AreaSelector() for label in labels})
+            current = areas_by_room(
+                vacuum_options.get("area_mapping"),
+                known,
+                {area.id for area in area_registry.async_list_areas()},
+            )
+            return self.async_show_form(
+                step_id="room_areas",
+                data_schema=self.add_suggested_values_to_schema(
+                    schema,
+                    {
+                        label: current[room_id]
+                        for label, room_id in labels.items()
+                        if room_id in current
+                    },
+                ),
+                description_placeholders={"robot": coordinator.device.name},
+            )
+
+        # the area of every room that was in the form; an unknown area counts as none
+        chosen: dict[int, str | None] = {}
+        area_names: dict[int, str] = {}
+        for label, room_id in self._area_labels.items():
+            if room_id not in known:
+                continue
+            area_id = user_input.get(label)
+            area = area_registry.async_get_area(area_id) if area_id else None
+            chosen[room_id] = area.id if area is not None else None
+            if area is not None:
+                area_names[room_id] = area.name
+
+        # a. the room takes the name of its area; rooms without an area keep their name
+        stored = dict(self.config_entry.options.get(CONF_ROOM_NAMES, {}))
+        device_names = dict(stored.get(device_id, {}))
+        device_names.update({str(room_id): name for room_id, name in area_names.items()})
+        stored[device_id] = device_names
+
+        # b. the link to the area (Home Assistant 2026.3 and newer, for "Clean area")
+        if CLEAN_AREA is not None and vacuum_id is not None:
+            overrides = {
+                room_id: name
+                for key, name in device_names.items()
+                if (room_id := to_int(key)) is not None and isinstance(name, str) and name
+            }
+            # the names the coordinator will show once these options are saved
+            new_names = segment_names(known, known, overrides, default_room_name)
+            entity_registry.async_update_entity_options(
+                vacuum_id,
+                "vacuum",
+                {
+                    **vacuum_options,
+                    "area_mapping": new_area_mapping(
+                        vacuum_options.get("area_mapping"),
+                        chosen,
+                        {area.id for area in area_registry.async_list_areas()},
+                    ),
+                    "last_seen_segments": new_last_seen_segments(
+                        vacuum_options.get("last_seen_segments"),
+                        {room_id: new_names[room_id] for room_id in chosen},
+                    ),
+                },
+            )
+
+        # c. save the names; the update listener reloads the entry when they changed
+        return self.async_create_entry(
+            data={**self.config_entry.options, CONF_ROOM_NAMES: stored}
+        )
+
     async def async_step_rooms(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -213,7 +337,7 @@ class ImouOptionsFlow(OptionsFlow):
             return self.async_abort(reason="no_rooms")
         if user_input is None:
             await coordinator.async_refresh_schedules()  # pick up new schedules
-        known = known_rooms(coordinator.schedules)
+        known = coordinator.known_room_tags()
         if not known:
             return self.async_abort(reason="no_rooms")
 

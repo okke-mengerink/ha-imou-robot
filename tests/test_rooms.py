@@ -402,5 +402,117 @@ def test_struct_items_use_the_struct_output() -> None:
     assert [s.timer_id for s in rooms.parse_schedules(both, None, members).schedules] == [99]
 
 
+def test_repeating_schedule_start_is_local_time_of_day() -> None:
+    # verified live on an RV-L11-A: period [0], startTime 50400 and timeZoneSec 3600
+    # is "Sun 14:00" in the Imou app
+    value = [{"unlock": True, "period": [0], "cleanAreas": [1], "startTime": 50400, "endTime": 0}]
+    schedule = rooms.parse_schedules(response(value)).schedules[0]
+    assert schedule.time_of_day == "14:00" and schedule.days == ["sun"]
+    assert schedule.start is None and schedule.period == [0]
+    # more days, in the order of the robot; unusable entries are skipped
+    value = [{"period": [1, 3, 6, 7, -1, True, "x", "2"], "cleanAreas": [], "startTime": 27000}]
+    schedule = rooms.parse_schedules(response(value)).schedules[0]
+    assert schedule.time_of_day == "07:30" and schedule.days == ["mon", "wed", "sat", "tue"]
+    # a startTime that is not a time of day gives no time of day
+    for start in (None, "bad", -1, 86400):
+        value = [{"period": [0], "cleanAreas": [], "startTime": start}]
+        schedule = rooms.parse_schedules(response(value)).schedules[0]
+        assert schedule.time_of_day is None and schedule.days == ["sun"] and schedule.start is None
+    # a repeating schedule with an epoch startTime keeps it as start; the days come from period
+    value = [{"period": [0, 2], "cleanAreas": [], "startTime": 1794224460}]
+    schedule = rooms.parse_schedules(response(value)).schedules[0]
+    assert schedule.start == 1794224460 and schedule.time_of_day is None, schedule
+    assert schedule.days == ["sun", "tue"] and schedule.period == [0, 2]
+    assert rooms.parse_schedules(response([{"period": [0], "startTime": 0}])).schedules[0].time_of_day == "00:00"
+    assert rooms.parse_schedules(response([{"period": [0], "startTime": 86399}])).schedules[0].time_of_day == "23:59"
+
+
+def test_one_off_schedule_keeps_epoch_start() -> None:
+    # verified live: 1794224460 with timeZoneSec 3600 is shown as 12:41
+    schedule = rooms.parse_schedules(REAL, "2501").schedules[0]
+    assert schedule.start == 1794224460 and schedule.time_of_day is None and schedule.days == []
+    assert (schedule.start + 3600) % 86400 == 12 * 3600 + 41 * 60
+
+
+def test_rv1_schedule_time_is_unchanged() -> None:
+    result = rooms.parse_schedules(rv1_response(rv1_item()), None, rv1_members())
+    schedule = result.schedules[0]
+    assert schedule.start is None and schedule.time_of_day is None and schedule.days == []
+
+
+def _default(room_id: int) -> str:
+    return f"Room {room_id}"
+
+
+def test_room_area_labels() -> None:
+    known = {2: "Kantoor", 3: None, 4: "Slaapkamer", 10: "Room 10"}
+    labels = rooms.room_area_labels(known, {4: "Logeerkamer"}, _default)
+    assert list(labels.items()) == [("Room 2: Kantoor", 2), ("Room 3", 3), ("Room 4: Logeerkamer", 4), ("Room 10", 10)], labels
+    # the same label name for two rooms still gives two labels (the number is in it)
+    both = rooms.room_area_labels({1: "Wc", 2: "Wc"}, {}, _default)
+    assert list(both) == ["Room 1: Wc", "Room 2: Wc"]
+    assert rooms.room_area_labels({}, {}, _default) == {}
+
+
+def test_remembered_rooms() -> None:
+    assert rooms.remembered_rooms({4: "Wc"}, {1: "A", 2: "B", 4: "Mine"}) == {1: None, 2: None, 4: "Wc"}
+    assert rooms.remembered_rooms({}, {}) == {} and rooms.remembered_rooms({3: None, 1: "K"}, {}) == {1: "K", 3: None}
+
+
+def test_room_button_name() -> None:
+    assert rooms.room_button_name("Room 3", "Room 3") == "room 3"
+    assert rooms.room_button_name("Kantoor", "Room 3") == "Kantoor"
+
+
+def test_areas_by_room() -> None:
+    mapping = {"kitchen": ["2", "3"], "office": ["3", "10"], "gone": ["4"], "bad": "x"}
+    assert rooms.areas_by_room(mapping, [2, 3, 4, 5]) == {2: "kitchen", 3: "kitchen", 4: "gone"}
+    assert rooms.areas_by_room(mapping, [2, 3, 10], {"office", "kitchen"}) == {2: "kitchen", 3: "kitchen", 10: "office"}
+    assert rooms.areas_by_room(None, [2]) == {} and rooms.areas_by_room({"a": None}, [2]) == {}
+
+
+def test_new_area_mapping() -> None:
+    old = {"kitchen": ["2", "3"], "office": ["10", "4"], "attic": ["7"]}
+    # room 2 moves to office, 3 loses its area, 4 gets the kitchen; 7 and 10 are not shown and stay
+    new = rooms.new_area_mapping(old, {2: "office", 3: None, 4: "kitchen"})
+    assert new == {"kitchen": ["4"], "office": ["2", "10"], "attic": ["7"]}, new
+    assert list(new["office"]) == ["2", "10"]  # numeric ascending, not "10" < "2"
+    # an area without segments is dropped; the input is not changed
+    assert rooms.new_area_mapping({"a": ["1"]}, {1: None}) == {}
+    assert old == {"kitchen": ["2", "3"], "office": ["10", "4"], "attic": ["7"]}
+    # no duplicates, integers in the old data become strings
+    assert rooms.new_area_mapping({"a": [1, "1", 5]}, {2: "a", 5: None}) == {"a": ["1", "2"]}
+    assert rooms.new_area_mapping(None, {2: "a"}) == {"a": ["2"]} and rooms.new_area_mapping("x", {}) == {}
+
+
+def test_new_area_mapping_keeps_extra_links_when_unchanged() -> None:
+    old = {"kitchen": ["2", "3"], "office": ["3"], "attic": ["7"]}
+    # room 3 is in kitchen and office; the form shows kitchen (first by id is "kitchen")
+    assert rooms.areas_by_room(old, [3]) == {3: "kitchen"}
+    assert rooms.new_area_mapping(old, {3: "kitchen"}) == {"kitchen": ["2", "3"], "office": ["3"], "attic": ["7"]}
+    # a link to an area that does not exist stays when the shown area is unchanged
+    assert rooms.new_area_mapping(old, {3: "office"}, {"office"}) == old
+    # changed: removed from every area, added only to the new one
+    assert rooms.new_area_mapping(old, {3: "attic"}) == {"kitchen": ["2"], "attic": ["3", "7"]}
+    # cleared: removed from every area
+    assert rooms.new_area_mapping(old, {3: None}) == {"kitchen": ["2"], "attic": ["7"]}
+    assert old == {"kitchen": ["2", "3"], "office": ["3"], "attic": ["7"]}
+
+
+def test_new_last_seen_segments() -> None:
+    old = [{"id": "2", "name": "Old", "group": None}, {"id": "9", "name": "Gone", "group": "g"}, "junk", {"name": "no id"}]
+    new = rooms.new_last_seen_segments(old, {2: "Kantoor", 4: "Wc", 3: "Kast"})
+    assert new == [
+        {"id": "2", "name": "Kantoor", "group": None},
+        {"id": "9", "name": "Gone", "group": "g"},
+        {"id": "3", "name": "Kast", "group": None},
+        {"id": "4", "name": "Wc", "group": None},
+    ], new
+    assert rooms.new_last_seen_segments(None, {1: "A"}) == [{"id": "1", "name": "A", "group": None}]
+    assert old[0]["name"] == "Old"  # not changed in place
+    # extra keys of an entry stay, a repeated id is dropped
+    assert rooms.new_last_seen_segments([{"id": "1", "name": "x", "extra": 1}, {"id": 1, "name": "y"}], {}) == [{"id": "1", "name": "x", "extra": 1}]
+
+
 if __name__ == "__main__":
     sys.exit(run_all(globals()))

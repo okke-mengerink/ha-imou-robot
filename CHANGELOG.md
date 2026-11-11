@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- New: the Schedules sensor shows the local time of day (`time`, for example `14:00`) and readable days (`days`, for example `["sun"]`) of repeating L11-A schedules; before, a repeating schedule had no time. Period 0 is Sunday (verified); 1 to 6 as Monday to Saturday is assumed. A one-off schedule is unchanged.
+- New: a **Clean <room>** button for every room that is known (rooms of the schedules and rooms you named), for robots whose model supports room cleaning, also on Home Assistant versions before 2026.3. A room without a name reads "Clean room 3". New rooms get a button when they show up; a button whose room is no longer known becomes unavailable.
+- New: the options now start with a menu. **Link rooms to areas** shows one area picker per room: the room takes the area's name and, on Home Assistant 2026.3 or newer, the link is written to the vacuum's area mapping (and its last seen segments) for `vacuum.clean_area`. The Imou app does not show room numbers, so the Clean buttons help to find out which number is which room. **Rename rooms (advanced)** is the existing text list.
+- Rooms that you named (or linked to an area) stay known when no schedule lists them any more, so their buttons and the options keep working after you edit a schedule in the app. After the update this can bring back a room you named earlier: it gets a **Clean <room>** button and, on Home Assistant 2026.3 or newer, possibly a one-time "rooms changed" repair. To forget a room, remove its line under Configure → **Rename rooms (advanced)**.
+- Schedules stay read-only: writing them back through the cloud API loses the room/whole-house setting, so there are no schedule switches.
+- The Imou error code DV1062 (device has no heartbeat) is treated as "device offline", like DV1007.
+- The Imou error code DV1030 (device asleep) while polling is treated like the status "sleep": the last data stays and it is not counted as a failed poll.
+
 ## 0.5.0
 
 - Imou RV1 Pro Max schedules (issue #1): the `clean_list` service of this model returns an array of structs. The integration reads it through the members of the things model: enabled (state), whole house or rooms, once or repeating, the days (`select_day`) and the raw start time. The Schedules sensor shows `start_raw` and `once` for these schedules; `start` stays `null` because the meaning of `start_time` is unknown (the Imou app shows 02:00 for 82800). Rooms of a room schedule (`area_array`, several formats are accepted) feed the room cleaning and the options like those of the L11-A. The L11-A format is unchanged.

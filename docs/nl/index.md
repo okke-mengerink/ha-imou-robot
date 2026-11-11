@@ -71,9 +71,8 @@ De integratie werkt via de cloud, en Imou geeft gratis 30.000 API-aanroepen per 
 Met Home Assistant 2026.3 of nieuwer kun je per ruimte laten schoonmaken. De Imou-API geeft de kaart en de kamerlijst niet door, dus de integratie leest de kamers uit de schema's van de robot in de Imou Life-app. Zo stel je dat in:
 
 1. Maak in de Imou Life-app een schema waarin je de kamers één voor één selecteert. Het schema mag uitgeschakeld zijn.
-2. Geef de kamers een naam onder Instellingen > Apparaten en diensten > Imou Vacuum (Open Platform) > Configureren. Zet per regel één `id = naam`.
-3. Koppel de kamers aan Home Assistant-ruimtes (areas) in de instellingen van de stofzuiger-entiteit.
-4. Gebruik de actie `vacuum.clean_area`, of vraag Assist om een ruimte schoon te maken.
+2. Ga naar Instellingen > Apparaten en diensten > Imou Vacuum (Open Platform) > Configureren en kies **Link rooms to areas** (de menutekst is Engels). Kies per kamer een Home Assistant-ruimte (area). De kamer krijgt de naam van de ruimte en met Home Assistant 2026.3 of nieuwer wordt de kamer ook aan de ruimte gekoppeld. De Imou-app toont geen kamernummers; de knoppen **Clean <kamer>** die de integratie per kamer maakt, helpen om te zien welk nummer welke kamer is. (**Rename rooms (advanced)** in hetzelfde menu is de tekstlijst, per regel één `id = naam`.)
+3. Gebruik de actie `vacuum.clean_area`, of vraag Assist om een ruimte schoon te maken.
 
 ## Beperkingen
 

@@ -27,7 +27,6 @@ from .const import (
     CLEAN_STOP,
     DOMAIN,
     INPUT_MODE,
-    INPUT_PARTITION_AREA,
     INPUT_PLAN,
     INPUT_STATUS,
     PAUSED_STATUS_KEYS,
@@ -118,12 +117,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
             features |= VacuumEntityFeature.FAN_SPEED
         if model.services:
             features |= VacuumEntityFeature.SEND_COMMAND
-        if (
-            CLEAN_AREA is not None
-            and control is not None
-            and control.input_ref(INPUT_MODE) is not None
-            and control.input_ref(INPUT_PARTITION_AREA) is not None
-        ):
+        if CLEAN_AREA is not None and coordinator.can_clean_rooms():
             features |= CLEAN_AREA
         # the room ids for which a "segments changed" issue was last created
         self._issue_room_ids: frozenset[str] | None = None

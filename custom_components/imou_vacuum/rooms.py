@@ -10,7 +10,7 @@ unit tested with plain Python.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Container, Iterable, Mapping
 from dataclasses import dataclass, field
 import json
 from typing import Any
@@ -41,6 +41,10 @@ class Schedule:
     timer_id: int | None = None
     map_id: int | None = None
     room_names: dict[int, str] = field(default_factory=dict)  # exact names, by room id
+    # Only for the L11-A format of a repeating schedule: the local time of day
+    # ("HH:MM") and the repeat days ("sun" ... "sat"; the robot counts 0 = Sunday)
+    time_of_day: str | None = None
+    days: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +54,10 @@ class ScheduleList:
     tz_offset: int | None  # seconds
     schedules: list[Schedule] = field(default_factory=list)
 
+
+_DAY_SECONDS = 86400
+# period 0 = Sunday (verified on an L11-A); 1 = Monday ... 6 = Saturday is assumed
+_DAY_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
 
 # start/end times outside 2000-01-01..2100-01-01 (e.g. milliseconds) are not usable
 _MIN_TIMESTAMP = 946684800
@@ -80,6 +88,12 @@ def _timer_entry(response: Any, output_ref: str | None) -> Mapping[str, Any] | N
     return None
 
 
+
+
+def _timer_tz(timer: Mapping[str, Any]) -> int | None:
+    return to_int(ci_get(timer, "timeZoneSec"))
+
+
 def _parse_schedule(raw: Any) -> Schedule | None:
     if not isinstance(raw, Mapping):
         return None
@@ -105,16 +119,34 @@ def _parse_schedule(raw: Any) -> Schedule | None:
         and len(tags) == len(tags_raw)
         and all(tags)
     )
-    period = ci_get(raw, "period")
+    period_raw = ci_get(raw, "period")
+    period = list(period_raw) if isinstance(period_raw, list) else []
+    start_time = to_int(ci_get(raw, "startTime"))
+    # A repeating schedule's startTime is the LOCAL time of day in seconds (verified
+    # on an L11-A: 50400 with period [0] is "Sun 14:00" in the app); a one-off
+    # schedule's startTime is a unix timestamp.
+    time_of_day = None
+    seconds_of_day = start_time is not None and 0 <= start_time < _DAY_SECONDS
+    days: list[str] = []
+    if period:
+        if seconds_of_day:
+            time_of_day = f"{start_time // 3600:02d}:{start_time % 3600 // 60:02d}"
+        days = [
+            _DAY_NAMES[day]
+            for item in period
+            if not isinstance(item, bool) and (day := to_int(item)) is not None and 0 <= day < 7
+        ]
     return Schedule(
         enabled=True if enabled is None else enabled,
         active=ci_get(raw, "active"),
-        start=_timestamp(ci_get(raw, "startTime")),
+        start=None if period and seconds_of_day else _timestamp(ci_get(raw, "startTime")),
         end=_timestamp(ci_get(raw, "endTime")),
-        period=list(period) if isinstance(period, list) else [],
+        period=period,
         room_ids=room_ids,
         tags=tags,
         aligned=aligned,
+        time_of_day=time_of_day,
+        days=days,
     )
 
 
@@ -277,12 +309,19 @@ def parse_schedules(
         if members and items is not None:  # a list without usable schedules
             return ScheduleList(tz_offset=None, schedules=[])
         return None
+    return parse_timer(entry)
+
+
+def parse_timer(entry: Mapping[str, Any]) -> ScheduleList:
+    """Parse a raw L11-A ``timer`` object (timeZone, timeZoneSec, value list)."""
+    raw_items = ci_get(entry, "value")
+    if not isinstance(raw_items, list):
+        raw_items = []
+    tz_offset = _timer_tz(entry)
     schedules = [
-        schedule
-        for raw in ci_get(entry, "value")
-        if (schedule := _parse_schedule(raw)) is not None
+        schedule for raw in raw_items if (schedule := _parse_schedule(raw)) is not None
     ]
-    return ScheduleList(tz_offset=to_int(ci_get(entry, "timeZoneSec")), schedules=schedules)
+    return ScheduleList(tz_offset=tz_offset, schedules=schedules)
 
 
 def known_rooms(schedules: ScheduleList | None) -> dict[int, str | None]:
@@ -305,6 +344,17 @@ def known_rooms(schedules: ScheduleList | None) -> dict[int, str | None]:
             elif schedule.aligned:
                 names[room_id] = schedule.tags[index]
     return {room_id: names.get(room_id) for room_id in sorted(rooms)}
+
+
+def remembered_rooms(
+    known: Mapping[int, str | None], overrides: Mapping[int, str]
+) -> dict[int, str | None]:
+    """Return the rooms of the schedules plus the rooms the user named (ascending).
+
+    A room that only has a name of the user (no schedule lists it any more) has
+    no label (None), so the user's name is used.
+    """
+    return {room_id: known.get(room_id) for room_id in sorted({*known, *overrides})}
 
 
 def parse_room_names(text: str) -> dict[int, str]:
@@ -354,6 +404,119 @@ def segment_names(
         room_id: f"{name} ({room_id})" if counts[name] > 1 else name
         for room_id, name in names.items()
     }
+
+
+def _segment_sort_key(segment_id: str) -> tuple[bool, int, str]:
+    """Sort numeric segment ids by number, other ids after them."""
+    number = to_int(segment_id)
+    return (number is None, number or 0, segment_id)
+
+
+def room_area_labels(
+    known: Mapping[int, str | None],
+    overrides: Mapping[int, str],
+    default_name: Callable[[int], str],
+) -> dict[str, int]:
+    """Return the form label of every room, mapped to its room id (ascending).
+
+    The label is ``Room 3: Kantoor`` (the name of the user, else the label of the
+    Imou app) or just ``Room 3`` when the room only has its default name. The room
+    number is always in the label, so the labels are unique.
+    """
+    labels: dict[str, int] = {}
+    for room_id in sorted(known):
+        default = default_name(room_id)
+        name = overrides.get(room_id) or known[room_id]
+        labels[f"{default}: {name}" if name and name != default else default] = room_id
+    return labels
+
+
+def room_button_name(name: str, default: str) -> str:
+    """Return the room name for "Clean <room>": a default name reads "room 3"."""
+    return name.lower() if name == default else name
+
+
+def areas_by_room(
+    area_mapping: Any, room_ids: Iterable[int], valid_areas: Container[str] | None = None
+) -> dict[int, str]:
+    """Return the area linked to each room, from a vacuum ``area_mapping``.
+
+    ``area_mapping`` is ``{area_id: [segment_id, ...]}``. Rooms without an area, and
+    areas that are not in ``valid_areas`` (when given), are left out. When a room is
+    in several areas the first area (by id) wins.
+    """
+    result: dict[int, str] = {}
+    if not isinstance(area_mapping, Mapping):
+        return result
+    wanted = set(room_ids)
+    for area_id in sorted(str(key) for key in area_mapping):
+        if valid_areas is not None and area_id not in valid_areas:
+            continue
+        segments = area_mapping[area_id]
+        for segment in segments if isinstance(segments, (list, tuple)) else ():
+            room_id = to_int(segment)
+            if room_id in wanted and room_id not in result:
+                result[room_id] = area_id
+    return result
+
+
+def new_area_mapping(
+    old: Any,
+    shown: Mapping[int, str | None],
+    valid_areas: Container[str] | None = None,
+) -> dict[str, list[str]]:
+    """Return the vacuum ``area_mapping`` after the user chose areas for ``shown`` rooms.
+
+    ``shown`` maps each room id that was in the form to its area id (None: no area).
+    A room whose area equals the one the form showed (``areas_by_room`` of ``old``
+    with ``valid_areas``) keeps all its links. The other shown rooms are removed from
+    every area of ``old`` and added to their new area; segment ids that were not
+    shown stay. Segment ids are strings, ascending and without duplicates;
+    areas without segments are dropped.
+    """
+    default = areas_by_room(old, shown, valid_areas)
+    shown = {room_id: area for room_id, area in shown.items() if area != default.get(room_id)}
+    shown_ids = {str(room_id) for room_id in shown}
+    result: dict[str, set[str]] = {}
+    for area_id, segments in (old.items() if isinstance(old, Mapping) else ()):
+        for segment in segments if isinstance(segments, (list, tuple)) else ():
+            if str(segment) not in shown_ids:
+                result.setdefault(str(area_id), set()).add(str(segment))
+    for room_id, area_id in shown.items():
+        if area_id:
+            result.setdefault(area_id, set()).add(str(room_id))
+    return {
+        area_id: sorted(segments, key=_segment_sort_key)
+        for area_id, segments in result.items()
+        if segments
+    }
+
+
+def new_last_seen_segments(old: Any, names: Mapping[int, str]) -> list[dict[str, Any]]:
+    """Return the vacuum ``last_seen_segments`` with ``names`` (room id -> name) applied.
+
+    Entries of ``old`` keep their order and other keys; a listed room gets its new
+    name. Rooms that are not in ``old`` are added at the end (ascending), with
+    ``group`` None. Entries without an id are dropped.
+    """
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    wanted = {str(room_id): name for room_id, name in names.items()}
+    for entry in old if isinstance(old, (list, tuple)) else ():
+        if not isinstance(entry, Mapping) or "id" not in entry:
+            continue
+        segment_id = str(entry["id"])
+        if segment_id in seen:
+            continue
+        seen.add(segment_id)
+        item = {**entry, "id": segment_id}
+        if segment_id in wanted:
+            item["name"] = wanted[segment_id]
+        result.append(item)
+    for room_id in sorted(names):
+        if str(room_id) not in seen:
+            result.append({"id": str(room_id), "name": names[room_id], "group": None})
+    return result
 
 
 def partition_area(room_ids: Iterable[int]) -> str:

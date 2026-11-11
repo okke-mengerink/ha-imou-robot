@@ -47,10 +47,22 @@
     "step": {
       "init": {
         "title": "Choose a robot",
-        "description": "Choose the robot whose rooms you want to name.",
+        "description": "Choose the robot whose rooms you want to set up.",
         "data": {
           "robot": "Robot"
         }
+      },
+      "menu": {
+        "title": "Rooms of {robot}",
+        "description": "The robot does not report its rooms. They are read from the cleaning schedules in the Imou app.",
+        "menu_options": {
+          "room_areas": "Link rooms to areas",
+          "rooms": "Rename rooms (advanced)"
+        }
+      },
+      "room_areas": {
+        "title": "Link the rooms of {robot} to areas",
+        "description": "Choose an area for each room. The room takes the name of the area. On Home Assistant 2026.3 and newer the room is also linked to the area, so the Clean area action can use it. A room without an area keeps its current name, and on those versions its link to an area is removed.\n\nThe Imou app does not show room numbers. The Clean room buttons of this robot help to find out which number is which room: press one and see which room the robot cleans."
       },
       "rooms": {
         "title": "Room names of {robot}",
@@ -85,6 +97,9 @@
     "button": {
       "empty_bin": {
         "name": "Empty bin"
+      },
+      "clean_room": {
+        "name": "Clean {room}"
       }
     },
     "select": {

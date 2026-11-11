@@ -11,6 +11,9 @@
     "button": {
       "empty_bin": {
         "default": "mdi:delete-empty"
+      },
+      "clean_room": {
+        "default": "mdi:broom"
       }
     },
     "select": {

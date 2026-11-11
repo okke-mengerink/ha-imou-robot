@@ -171,8 +171,13 @@ def _looks_like_rate_limit(msg: str) -> bool:
     )
 
 
+# DV1007: offline; DV1030: the device is asleep; DV1062: the device has no heartbeat
+# and must be woken on the device itself. For us they all mean "device offline".
+_OFFLINE_CODES = frozenset({"DV1007", "DV1030", "DV1062"})
+
+
 def _looks_like_offline(code: str, msg: str) -> bool:
-    return code.upper() == "DV1007" or "offline" in msg.lower()
+    return code.upper() in _OFFLINE_CODES or "offline" in msg.lower()
 
 
 def _remaining_seconds(expire_time: Any) -> float:
