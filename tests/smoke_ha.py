@@ -44,6 +44,7 @@ MODEL_JSON = json.loads((ROOT / "tests/fixtures/l11a_model.json").read_text("utf
 VALUES_JSON = json.loads((ROOT / "tests/fixtures/l11a_values.json").read_text("utf-8"))
 RV1_MODEL_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_model.json").read_text("utf-8"))
 RV1_VALUES_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_values.json").read_text("utf-8"))
+RV1_CLEAN_LIST_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_clean_list.json").read_text("utf-8"))
 ICONS_JSON = json.loads((PKG_DIR / "icons.json").read_text("utf-8"))
 STRINGS_JSON = json.loads((PKG_DIR / "strings.json").read_text("utf-8"))
 EN_JSON = json.loads((PKG_DIR / "translations" / "en.json").read_text("utf-8"))
@@ -173,6 +174,8 @@ def test_entities() -> None:
     ents = make_entities(coordinator)
     total = sum(len(v) for v in ents.values())
     check("entity counts per platform (1/11/1/3/2/1)", [len(ents[p]) for p in ents] == [1, 11, 1, 3, 2, 1], str({p: len(v) for p, v in ents.items()}))
+    expected_ids = sorted(f"TESTDEVICE0001_{key}" for key in ('auto_empty', 'battery', 'carpet_boost', 'cleaned_area', 'cleaning_time', 'empty_bin', 'error', 'filter', 'main_brush', 'mop_fitted', 'mop_water_level', 'resume_after_charging', 'schedules', 'sensors', 'side_brush', 'status', 'suction_level', 'vacuum', 'wifi_signal'))  # main (v0.4.x) behaviour
+    check("L11-A has exactly the same unique ids as on main", sorted(e.unique_id for v in ents.values() for e in v) == expected_ids, str(sorted(e.unique_id for v in ents.values() for e in v)))
     check("19 entities with unique ids", total == 19 and len({e.unique_id for v in ents.values() for e in v}) == 19)
 
     # --- vacuum -----------------------------------------------------------
@@ -668,7 +671,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.4.0"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.5.0"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -1831,6 +1834,8 @@ class RV1Client(FakeClient):
         self.props = copy.deepcopy(RV1_VALUES_JSON["properties"])
         # room/map properties: never polled, only read by the diagnostics probe
         self.props.update({"126200": [3, 4], "122300": ["Map one"], "120600": [], "121600": []})
+        # clean_list: the real response of the user's robot (one whole-house schedule)
+        self.clean_list_output: Any = copy.deepcopy(RV1_CLEAN_LIST_JSON["content"]["outputData"])
 
     async def async_list_devices(self) -> list[Any]:
         api = mod("api")
@@ -1846,7 +1851,7 @@ class RV1Client(FakeClient):
     async def async_control(self, product_id: str, device_id: str, ref: str, content: dict[str, Any] | None = None) -> dict[str, Any]:
         if ref == "201600":  # clean_list (read-only): kept out of self.calls
             self.probe_service_calls.append((ref, dict(content or {})))
-            return {"content": {"outputData": {"201621": []}, "service": ref}}
+            return {"content": {"outputData": copy.deepcopy(self.clean_list_output), "service": ref}}
         self.calls.append(("control", device_id, ref, dict(content or {})))
         return {"content": {"outputData": {"200921": 0}, "service": ref}}
 
@@ -1945,6 +1950,73 @@ async def rv1_setup_checks(config_dir: str) -> None:
         check("RV1 Pro Max: probe reads exactly the declared room/map properties", set(probe_props) == {"partition_area", "map_name", "sequence", "area_clean_plan"}, str(set(probe_props)))
         check("RV1 Pro Max: probe is one property call with the 4 refs, no large ones", client.poll_count == polls_before + 1 and sorted(client.last_refs) == ["120600", "121600", "122300", "126200"], f"{client.poll_count - polls_before} {client.last_refs}")
         check("RV1 Pro Max: probe never reads curpath_data, virtual_area or swp_*", not {"121300", "121400", "146100", "146000", "145800", "145700"} & set(client.last_refs))
+
+        # --- 0.5.0: mop intensity, dock status, schedules ---------------------
+        for key in ("mop_intensity", "dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag", "schedules"):
+            check(f"RV1 Pro Max: entity {key} exists", key in ids, str(sorted(ids)))
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: polled refs include mop_speed 119100 and station_status 121100", {"119100", "121100"} <= set(client.last_refs), str(client.last_refs))
+        check("RV1 Pro Max: mop intensity options gentle/standard/strong, unknown while not reported", state("mop_intensity").attributes["options"] == ["gentle", "standard", "strong"] and state("mop_intensity").state == "unknown", str(dict(state("mop_intensity").attributes)))
+        client.props["119100"] = 1
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: mop_speed 1 -> standard", state("mop_intensity").state == "standard", state("mop_intensity").state)
+        await call("select", "select_option", "mop_intensity", option="strong")
+        check("RV1 Pro Max: mop intensity strong is a property write {119100: 2}", client.calls == [("set", "TESTDEVICE0002", {"119100": 2})], str(client.calls))
+        check("RV1 Pro Max: the commanded value shows at once", state("mop_intensity").state == "strong", state("mop_intensity").state)
+        await call("select", "select_option", "mop_intensity", option="gentle")
+        check("RV1 Pro Max: mop intensity gentle writes {119100: 0}", client.calls == [("set", "TESTDEVICE0002", {"119100": 0})], str(client.calls))
+        try:
+            await call("select", "select_option", "mop_intensity", option="turbo")
+        except Exception as err:  # noqa: BLE001
+            check("RV1 Pro Max: unknown mop intensity option is rejected and nothing is written", client.calls == [], f"{type(err).__name__} {client.calls}")
+        else:
+            check("RV1 Pro Max: unknown mop intensity option is rejected and nothing is written", False)
+        client.props["121100"] = {"121101": True, "121102": 0, "121103": 0, "121104": 0}
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: dock connected is on (connectivity)", state("dock_connected").state == "on" and state("dock_connected").attributes["device_class"] == "connectivity" and state("dock_connected").name == "RV1-PRO-MAX-TEST Dock connected", f"{state('dock_connected').state} {dict(state('dock_connected').attributes)}")
+        check("RV1 Pro Max: tanks and bag are normal", (state("clean_water_tank").state, state("dirty_water_tank").state, state("dust_bag").state) == ("normal", "normal", "normal"), str([state(k).state for k in ("clean_water_tank", "dirty_water_tank", "dust_bag")]))
+        client.props["121100"] = {"121101": False, "121102": 2, "121103": 2, "121104": 1}
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: dock disconnected, water low, dirty tank full, no dust bag", (state("dock_connected").state, state("clean_water_tank").state, state("dirty_water_tank").state, state("dust_bag").state) == ("off", "water_low", "full", "not_installed"), str([state(k).state for k in ("dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag")]))
+        check("RV1 Pro Max: station enum sensor options", state("clean_water_tank").attributes["options"] == ["normal", "not_installed", "water_low"] and state("dirty_water_tank").attributes["options"] == ["normal", "not_installed", "full"] and state("dust_bag").attributes["options"] == ["normal", "not_installed", "full"], str(dict(state("dust_bag").attributes)))
+        client.props["121100"] = {"121101": True, "121102": 9, "121103": 0, "121104": 0}
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: a value the model does not declare shows as unknown with the raw value (existing enum sensor behaviour)", state("clean_water_tank").state == "unknown" and state("clean_water_tank").attributes["raw_value"] == 9, str(dict(state("clean_water_tank").attributes)))
+        del client.props["121100"]
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: station_status not reported -> unknown", state("dock_connected").state == "unknown" and state("dust_bag").state == "unknown", f"{state('dock_connected').state} {state('dust_bag').state}")
+
+        schedules = state("schedules")
+        check("RV1 Pro Max: Schedules sensor counts the one enabled schedule", schedules.state == "1", str(schedules))
+        check(
+            "RV1 Pro Max: schedule attributes: raw start, repeat days, whole house, start null",
+            schedules.attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "repeat": [7, 1, 2, 3, 4, 5, 6], "rooms": "whole_house", "start_raw": 82800, "once": False}],
+            str(schedules.attributes["schedules"]),
+        )
+        check("RV1 Pro Max: a whole-house schedule gives no rooms", coordinator.room_names() == {}, str(coordinator.room_names()))
+        room_item = {"201662": 8, "201661": -1, "201668": "[]", "201667": 0, "201669": 3600, "201664": 0, "201663": 1, "201665": 1, "201666": [{"id": 3, "name": "Kitchen"}, {"id": 5}]}
+        client.clean_list_output = {"201621": [room_item]}
+        coordinator._schedules_fetched_at = None
+        check("RV1 Pro Max: schedules are refreshed", await coordinator.async_refresh_schedules() is True)
+        check("RV1 Pro Max: room names from the room schedule (exact name, else default)", coordinator.room_names() == {3: "Kitchen", 5: "Room 5"}, str(coordinator.room_names()))
+        check(
+            "RV1 Pro Max: room schedule attributes (once, rooms by name)",
+            state("schedules").attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "repeat": [], "rooms": ["Kitchen", "Room 5"], "start_raw": 3600, "once": True}],
+            str(state("schedules").attributes["schedules"]),
+        )
+        if ha_clean_area() is not None:
+            vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(ids["vacuum"])
+            segments = await vac_entity.async_get_segments()
+            check("RV1 Pro Max: segments come from the room schedule", [(seg.id, seg.name) for seg in segments] == [("3", "Kitchen"), ("5", "Room 5")], str(segments))
+        unknown_item = {**room_item, "201666": None}
+        client.clean_list_output = {"201621": [unknown_item]}
+        coordinator._schedules_fetched_at = None
+        check("RV1 Pro Max: schedules are refreshed (rooms unknown)", await coordinator.async_refresh_schedules() is True)
+        check(
+            "RV1 Pro Max: a rooms schedule without usable area_array shows 'unknown', not 'whole_house'",
+            [a["rooms"] for a in state("schedules").attributes["schedules"]] == ["unknown"],
+            str(state("schedules").attributes["schedules"]),
+        )
     finally:
         await hass.async_stop()
 

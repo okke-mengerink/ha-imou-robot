@@ -31,7 +31,7 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 | Robot | Status | Notes |
 |---|---|---|
 | Imou RV-L11-A (L11 series, with auto-empty dock) | Tested | Imou cloud `deviceModel` `L11-A`, Home Assistant 2026.10 |
-| Imou RV1 Pro Max | Reported by a user (issue #1), partly verified | Battery, return to dock and the 5 suction levels (off, quiet, standard, strong, max) were added in 0.3.1 from the user's diagnostics. Room cleaning and schedules are unverified. |
+| Imou RV1 Pro Max | Reported by a user (issue #1), partly verified | Confirmed by the user: battery, return to dock and the 5 suction levels (off, quiet, standard, strong, max). New in 0.5.0 and not yet confirmed: mop intensity, dock status and schedules. Room cleaning needs a room schedule in the Imou app, because the robot reports no rooms. |
 | Any other Imou robot vacuum | unverified — please share diagnostics | Might work if its things model uses the same identifiers. See [Help us map other models](#help-us-map-other-models). |
 
 Other Imou robots are mapped from their things model: the robot's own refs, the labels of its statuses, error codes and suction levels (so a model that numbers them differently still maps correctly) and alternative identifiers such as `back_station` for return to dock. When a core function is missing (start and stop, return to dock, battery or status) or a value is not recognised, Home Assistant shows a repair notice that says what is missing or unknown and links to a GitHub issue that is already filled in with your model. Attach the diagnostics download to it and the model can be added.
@@ -231,13 +231,14 @@ Entities are created per robot, and only when the robot's model supports them.
 - Cleaning time (min)
 - Consumable usage in hours: side brush, main brush, filter and sensors (diagnostic). The robot reports minutes used; the sensors show hours (minutes / 60, one decimal).
 - Wi-Fi signal (enum, diagnostic)
-- Schedules: the number of enabled schedules in the Imou app. The attribute `schedules` lists each schedule with `enabled`, `active` (raw), `start` (local time), `repeat` (raw, as the robot reports it) and `rooms` (names, or `whole_house`). Read once an hour.
+- Schedules: the number of enabled schedules in the Imou app. The attribute `schedules` lists each schedule with `enabled`, `active` (raw), `start` (local time), `repeat` (raw, as the robot reports it) and `rooms` (names, or `whole_house`). Read once an hour. On an RV1 Pro Max each schedule also has `start_raw` (the robot's `start_time`, not converted: its meaning is unknown, so `start` stays `null`), `once` (runs one time) and `repeat` (the days, as a list of numbers).
+- Dock status (only for a robot whose model has `station_status`, such as the RV1 Pro Max): Clean water tank (normal / not installed / water low), Dirty water tank (normal / not installed / full) and Dust bag (normal / not installed / full).
 
 ### Other entities
 
-- Binary sensors: mop fitted, and charging (only for a robot whose model has `power_status`, such as the RV1 Pro Max; on while the robot reports "charging")
+- Binary sensors: mop fitted; charging (only for a robot whose model has `power_status`, such as the RV1 Pro Max; on while the robot reports "charging"); dock connected (only for a robot whose model has `station_status`)
 - Switches: auto-empty, carpet boost, resume after charging
-- Selects: suction (quiet / standard / max) and water level (low / medium / high).
+- Selects: suction (quiet / standard / max) and water level (low / medium / high); mop intensity (gentle / standard / strong, only for a robot whose model has `mop_speed`, such as the RV1 Pro Max; set with a plain property write).
 - Button: empty bin (empties the bin into the dock)
 
 ### Suction and water levels
@@ -305,6 +306,8 @@ Contributions of identifier and enum mappings are welcome.
 - The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.) The RV1 Pro Max reports a negative battery value while charging (-38 for 38 %); the integration shows the absolute value.
 - Consumable usage: the L11-A reports minutes used, although its things model says hours (after a 34-minute run all four counters read 34). The sensors therefore show hours (minutes / 60, displayed with one decimal). The conversion is the constant `LIFE_RAW_PER_HOUR` in `const.py`; a model that really reports hours would need 1 there.
 - There is no map and no zone cleaning. On an L11-A the room, map and cleaning-parameter properties stay empty in the cloud, even while the robot cleans a room, so the rooms are read from the schedules.
+- The RV1 Pro Max reports its consumable counters (brushes, filter, sensors) as 0, so those sensors stay at 0.
+- The meaning of the schedule start time of the RV1 Pro Max is unknown (the Imou app shows 02:00 for a schedule whose `start_time` is 82800), so it is shown raw as `start_raw`. The format of `area_array` for a room schedule is also unverified; several formats are accepted.
 - Schedules are read-only. The meaning of the schedule field `active` and the format of repeating days are unverified; both are shown raw.
 - Only the Europe region has been verified. Singapore and North America use the same calls on other Imou hosts.
 - Commands are fire-and-forget: the cloud output code is not interpreted.

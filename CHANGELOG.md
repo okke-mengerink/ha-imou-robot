@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Imou RV1 Pro Max schedules (issue #1): the `clean_list` service of this model returns an array of structs. The integration reads it through the members of the things model: enabled (state), whole house or rooms, once or repeating, the days (`select_day`) and the raw start time. The Schedules sensor shows `start_raw` and `once` for these schedules; `start` stays `null` because the meaning of `start_time` is unknown (the Imou app shows 02:00 for 82800). Rooms of a room schedule (`area_array`, several formats are accepted) feed the room cleaning and the options like those of the L11-A. The L11-A format is unchanged.
+- New: Mop intensity select (gentle / standard / strong) for a robot whose model has `mop_speed` (RV1 Pro Max). It is set with a plain property write and polled with the other values.
+- New: dock status for a robot whose model has `station_status` (RV1 Pro Max): Dock connected binary sensor and Clean water tank, Dirty water tank and Dust bag sensors. Only the members the model has are created; unknown labels show as `unknown_<n>`.
+- Known: the RV1 Pro Max reports its consumable counters as 0.
+
 ## 0.4.0
 
 - Other Imou robot models are mapped from their own things model. The statuses, the error codes and the Wi-Fi levels are matched by the labels in the model (Chinese labels such as 待机中 or 充电中) instead of by number, so a robot that numbers its values differently still shows the right status and activity. A label that is not known shows as `unknown_<n>`; labels in a language the integration does not know fall back to the number tables, and values a model does not declare are only filled from the number table when the declared labels agree with it. Unknown values show with the raw value and the model label as attributes. A model without labels keeps using the number tables. The L11-A and the RV1 Pro Max show exactly what they showed before.

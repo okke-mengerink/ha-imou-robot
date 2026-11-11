@@ -350,5 +350,38 @@ def test_new_work_statuses() -> None:
     assert {14, 17} <= const.ACTIVE_WORK_STATUSES and not {15, 16, 18, 19} & const.ACTIVE_WORK_STATUSES
 
 
+def test_rv1_mop_levels_and_poll_refs() -> None:
+    model = rv1()
+    assert model.mop_levels() == {0: "gentle", 1: "standard", 2: "strong"}
+    refs = model.poll_refs()
+    assert "119100" in refs and "121100" in refs
+    # a label that is not known becomes unknown_<n>; no labels use the numbers
+    odd = model_mod.ThingsModel.from_api({"properties": [{"identifier": "mop_speed", "ref": "1", "dataType": {"type": "enum", "specs": {"list": [{"value": "0", "desc": "x"}, {"value": "1", "desc": "标准"}]}}}]})
+    assert odd.mop_levels() == {0: "unknown_0", 1: "standard"}
+    bare = model_mod.ThingsModel.from_api({"properties": [{"identifier": "mop_speed", "ref": "1", "dataType": {"type": "enum", "specs": {}}}]})
+    assert bare.mop_levels() == {0: "gentle", 1: "standard", 2: "strong"}
+    # the L11-A has neither
+    l11a = model_mod.ThingsModel.from_api(fixture("l11a_model.json"))
+    assert l11a.prop("mop_speed") is None and l11a.prop("station_status") is None
+    values = model.parse_values({"121100": {"121101": True, "121102": 2, "121103": 0, "121104": 1}})
+    assert values["station_status"] == {"connected": True, "clean_box": 2, "waste_box": 0, "dust_bag": 1}
+    assert model.enum_keys("station_status", "dust_bag", const.DUST_BAG_LABEL_KEYS, const.DUST_BAG_KEYS) == {0: "normal", 1: "not_installed", 2: "full"}
+    assert model.enum_keys("station_status", "clean_box", const.CLEAN_BOX_LABEL_KEYS, const.CLEAN_BOX_KEYS)[2] == "water_low"
+    assert model.enum_keys("station_status", "waste_box", const.WASTE_BOX_LABEL_KEYS, const.WASTE_BOX_KEYS)[2] == "full"
+
+
+def test_duplicate_level_labels_are_not_offered_twice() -> None:
+    def enum(identifier: str, labels: list[tuple[int, str]]) -> object:
+        items = [{"value": str(v), "desc": d} for v, d in labels]
+        return model_mod.ThingsModel.from_api({"properties": [{"identifier": identifier, "ref": "1", "dataType": {"type": "enum", "specs": {"list": items}}}]})
+
+    mop = enum("mop_speed", [(0, "标准"), (1, "标准"), (2, "强劲"), (3, "标准")])
+    levels = mop.mop_levels()
+    assert levels == {0: "standard", 1: "unknown_1", 2: "strong", 3: "unknown_3"}
+    assert len(set(levels.values())) == len(levels)
+    wind = enum("windpower", [(0, "中"), (1, "中")])
+    assert wind.wind_levels() == {0: "standard", 1: "unknown_1"}
+
+
 if __name__ == "__main__":
     raise SystemExit(run_all(globals()))

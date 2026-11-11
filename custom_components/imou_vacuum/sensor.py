@@ -20,6 +20,10 @@ from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CLEAN_BOX_KEYS,
+    CLEAN_BOX_LABEL_KEYS,
+    DUST_BAG_KEYS,
+    DUST_BAG_LABEL_KEYS,
     ERROR_CODE,
     LIFE_FILTER,
     LIFE_MAIN_BRUSH,
@@ -31,9 +35,15 @@ from .const import (
     PROP_ERROR_INFO,
     PROP_LIFE,
     PROP_POWER,
+    PROP_STATION_STATUS,
     PROP_WIFI,
     PROP_WORK_STATUS,
     SERVICE_CLEAN_LIST,
+    STATION_CLEAN_BOX,
+    STATION_DUST_BAG,
+    STATION_WASTE_BOX,
+    WASTE_BOX_KEYS,
+    WASTE_BOX_LABEL_KEYS,
 )
 from .coordinator import (
     ImouConfigEntry,
@@ -43,6 +53,7 @@ from .coordinator import (
 )
 from .entity import ImouEntity
 from .model import ThingsModel, to_int
+from .rooms import Schedule
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -176,6 +187,41 @@ ENUM_SENSORS: tuple[ImouEnumSensorDescription, ...] = (
 )
 
 
+def _station_value(child: str) -> Callable[[ImouRobotState], int | None]:
+    """Return a reader for one member of the ``station_status`` struct."""
+
+    def read(state: ImouRobotState) -> int | None:
+        status = state.values.get(PROP_STATION_STATUS)
+        return to_int(status.get(child)) if isinstance(status, Mapping) else None
+
+    return read
+
+
+def _station_sensor(
+    key: str,
+    child: str,
+    label_keys: Mapping[str, str],
+    numeric: Mapping[int, str],
+) -> ImouEnumSensorDescription:
+    return ImouEnumSensorDescription(
+        key=key,
+        translation_key=key,
+        identifier=PROP_STATION_STATUS,
+        child=child,
+        keys_fn=lambda model: model.enum_keys(
+            PROP_STATION_STATUS, child, label_keys, numeric
+        ),
+        raw_fn=_station_value(child),
+    )
+
+
+ENUM_SENSORS += (
+    _station_sensor("clean_water_tank", STATION_CLEAN_BOX, CLEAN_BOX_LABEL_KEYS, CLEAN_BOX_KEYS),
+    _station_sensor("dirty_water_tank", STATION_WASTE_BOX, WASTE_BOX_LABEL_KEYS, WASTE_BOX_KEYS),
+    _station_sensor("dust_bag", STATION_DUST_BAG, DUST_BAG_LABEL_KEYS, DUST_BAG_KEYS),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ImouConfigEntry,
@@ -302,19 +348,26 @@ class ImouSchedulesSensor(ImouEntity, SensorEntity):
         if schedules is None:
             return None
         names = self.coordinator.room_names()
-        return {
-            "schedules": [
-                {
-                    "enabled": schedule.enabled,
-                    "active": schedule.active,
-                    "start": _local_start(schedule.start),
-                    "repeat": schedule.period,
-                    "rooms": (
-                        [names.get(room_id, default_room_name(room_id)) for room_id in schedule.room_ids]
-                        if schedule.room_ids
-                        else "whole_house"
-                    ),
-                }
-                for schedule in schedules.schedules
-            ]
-        }
+        return {"schedules": [_schedule_attributes(s, names) for s in schedules.schedules]}
+
+
+def _schedule_attributes(schedule: Schedule, names: Mapping[int, str]) -> dict[str, Any]:
+    """Return one schedule for the attribute; ``start_raw`` and ``once`` only exist
+    for a robot that reports them (RV1 Pro Max), whose start time is not converted."""
+    attributes: dict[str, Any] = {
+        "enabled": schedule.enabled,
+        "active": schedule.active,
+        "start": _local_start(schedule.start),
+        "repeat": schedule.period,
+        "rooms": (
+            [names.get(room_id, default_room_name(room_id)) for room_id in schedule.room_ids]
+            if schedule.room_ids
+            else "unknown"
+            if schedule.rooms_unknown
+            else "whole_house"
+        ),
+    }
+    if schedule.start_raw is not None or schedule.once is not None:
+        attributes["start_raw"] = schedule.start_raw
+        attributes["once"] = schedule.once
+    return attributes

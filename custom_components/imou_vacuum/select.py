@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN, LEVEL_KEYS, PROP_WATER, PROP_WIND_POWER
+from .const import DOMAIN, LEVEL_KEYS, PROP_MOP_SPEED, PROP_WATER, PROP_WIND_POWER
 from .coordinator import ImouConfigEntry, ImouCoordinator
 from .entity import ImouEntity
 from .model import level_key, to_int
@@ -37,6 +37,11 @@ SELECTS: tuple[ImouSelectDescription, ...] = (
         translation_key="mop_water_level",
         identifier=PROP_WATER,
     ),
+    ImouSelectDescription(
+        key="mop_intensity",
+        translation_key="mop_intensity",
+        identifier=PROP_MOP_SPEED,
+    ),
 )
 
 
@@ -50,9 +55,17 @@ async def async_setup_entry(
         ImouLevelSelect(coordinator, description)
         for coordinator in entry.runtime_data.coordinators.values()
         for description in SELECTS
-        if description.identifier in LEVEL_KEYS
-        and coordinator.model.prop(description.identifier) is not None
+        if _supported(coordinator, description)
     )
+
+
+def _supported(coordinator: ImouCoordinator, description: ImouSelectDescription) -> bool:
+    prop = coordinator.model.prop(description.identifier)
+    if prop is None:
+        return False
+    if description.identifier == PROP_MOP_SPEED:
+        return prop.data_type == "enum"  # the mop levels come from the model's enum
+    return description.identifier in LEVEL_KEYS
 
 
 class ImouLevelSelect(ImouEntity, SelectEntity):
@@ -71,11 +84,12 @@ class ImouLevelSelect(ImouEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
-        self._levels = (
-            coordinator.model.wind_levels()
-            if description.identifier == PROP_WIND_POWER
-            else LEVEL_KEYS[description.identifier]
-        )
+        if description.identifier == PROP_WIND_POWER:
+            self._levels = coordinator.model.wind_levels()
+        elif description.identifier == PROP_MOP_SPEED:
+            self._levels = coordinator.model.mop_levels()
+        else:
+            self._levels = LEVEL_KEYS[description.identifier]
 
     def _raw(self) -> int | None:
         identifier = self.entity_description.identifier
@@ -108,7 +122,11 @@ class ImouLevelSelect(ImouEntity, SelectEntity):
                 translation_key="invalid_option",
                 translation_placeholders={"option": option},
             )
-        await self.coordinator.async_set_level(self.entity_description.identifier, level)
+        identifier = self.entity_description.identifier
+        if identifier == PROP_MOP_SPEED:  # a plain property write
+            await self.coordinator.async_set_properties({identifier: level})
+        else:
+            await self.coordinator.async_set_level(identifier, level)
         self.coordinator.commanded[self.entity_description.identifier].set(level)
         # every entity showing this setting (e.g. select and fan speed) updates now
         self.coordinator.async_update_listeners()

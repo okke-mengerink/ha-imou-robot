@@ -233,5 +233,174 @@ def test_partition_area() -> None:
     assert json.loads(rooms.partition_area([5, 6])) == [5, 6]
 
 
+# -- RV1 Pro Max: clean_list is an array of structs --------------------------
+def rv1_members() -> dict:
+    things = model.ThingsModel.from_api(fixture("rv1promax_model.json"))
+    return things.service("clean_list").output_members
+
+
+def rv1_response(item: dict) -> dict:
+    return {"content": {"outputData": {"201621": [item]}, "service": "201600"}}
+
+
+def rv1_item(**changes: object) -> dict:
+    item = {"201662": 7, "201661": -1, "201668": "[7,1,2,3,4,5,6]", "201667": 1, "201669": 82800, "201664": 0, "201663": 1, "201665": 0}
+    return {**item, **{k: v for k, v in changes.items()}}
+
+
+def test_model_keeps_array_struct_members() -> None:
+    members = rv1_members()
+    assert {k: v.ref for k, v in members.items()} == {
+        "map_id": "201661", "timerid": "201662", "state": "201663", "control": "201664",
+        "clean_type": "201665", "area_array": "201666", "cleaning_times": "201667",
+        "select_day": "201668", "start_time": "201669",
+    }
+    assert members["state"].enum_labels[1] == "开启"
+    # the L11-A has no array-of-struct output
+    l11a = model.ThingsModel.from_api(fixture("l11a_model.json"))
+    assert l11a.service("clean_list").output_members == {}
+
+
+def test_rv1_fixture_schedule() -> None:
+    result = rooms.parse_schedules(fixture("rv1promax_clean_list.json"), None, rv1_members())
+    assert result is not None and len(result.schedules) == 1
+    schedule = result.schedules[0]
+    assert schedule.enabled is True and schedule.once is False
+    assert schedule.room_ids == [] and schedule.tags == [] and schedule.aligned is False
+    assert schedule.period == [7, 1, 2, 3, 4, 5, 6]
+    assert schedule.start_raw == 82800 and schedule.start is None
+    assert schedule.timer_id == 1794324046 and schedule.map_id == -1
+    assert rooms.known_rooms(result) == {}
+    # without the members the format is unknown
+    assert rooms.parse_schedules(fixture("rv1promax_clean_list.json")) is None
+
+
+def test_rv1_room_schedules() -> None:
+    members = rv1_members()
+    for area in ("[3,5]", [3, 5], "3,5", "3, 5", [{"id": 3}, {"id": 5}], '[{"id":3},{"id":5}]'):
+        result = rooms.parse_schedules(rv1_response(rv1_item(**{"201665": 1, "201666": area})), None, members)
+        assert result.schedules[0].room_ids == [3, 5], area
+        assert rooms.known_rooms(result) == {3: None, 5: None}, area
+    named = rooms.parse_schedules(
+        rv1_response(rv1_item(**{"201665": 1, "201666": [{"id": 3, "name": "Kitchen"}, {"id": 5}]})), None, members
+    )
+    assert named.schedules[0].room_ids == [3, 5]
+    assert rooms.known_rooms(named) == {3: "Kitchen", 5: None}
+    # a whole-house schedule ignores area_array
+    whole = rooms.parse_schedules(rv1_response(rv1_item(**{"201666": "[3,5]"})), None, members)
+    assert whole.schedules[0].room_ids == []
+    # unusable area_array
+    bad = rooms.parse_schedules(rv1_response(rv1_item(**{"201665": 1, "201666": "x"})), None, members)
+    assert bad.schedules[0].room_ids == []
+
+
+def test_rv1_state_once_and_days() -> None:
+    members = rv1_members()
+
+    def parse(**changes: object):
+        return rooms.parse_schedules(rv1_response(rv1_item(**changes)), None, members).schedules[0]
+
+    assert parse(**{"201663": 2}).enabled is False
+    assert parse(**{"201663": 0}).enabled is False
+    once = parse(**{"201667": 0, "201668": "[]"})
+    assert once.once is True and once.period == []
+    assert parse(**{"201668": [1, 3]}).period == [1, 3]
+    # without labels in the model: state 1 is enabled, clean_type 1 rooms, cleaning_times 0 once
+    bare = {k: v.__class__(identifier=v.identifier, ref=v.ref, data_type=v.data_type) for k, v in members.items()}
+    item = rv1_item(**{"201663": 1, "201665": 1, "201666": "[2]", "201667": 0})
+    schedule = rooms.parse_schedules(rv1_response(item), None, bare).schedules[0]
+    assert schedule.enabled and schedule.room_ids == [2] and schedule.once is True
+    assert rooms.parse_schedules(rv1_response(rv1_item(**{"201663": 2})), None, bare).schedules[0].enabled is False
+
+
+def test_l11a_parsing_unchanged_with_members() -> None:
+    # passing (empty) members changes nothing for the L11-A format
+    assert rooms.parse_schedules(REAL, "2501", {}) == rooms.parse_schedules(REAL, "2501")
+    schedule = rooms.parse_schedules(REAL, "2501").schedules[0]
+    assert (schedule.once, schedule.start_raw, schedule.timer_id, schedule.map_id, schedule.room_names) == (None, None, None, None, {})
+
+
+def test_english_labels_decide_by_number() -> None:
+    members = rv1_members()
+
+    def english(member: object, labels: dict[int, str]) -> object:
+        return member.__class__(identifier=member.identifier, ref=member.ref, data_type=member.data_type, enum_labels=labels)
+
+    eng = dict(members)
+    eng["state"] = english(members["state"], {1: "On", 2: "Off"})
+    eng["clean_type"] = english(members["clean_type"], {0: "Whole house", 1: "Rooms"})
+    eng["cleaning_times"] = english(members["cleaning_times"], {0: "Once", 1: "Repeat"})
+    item = rv1_item(**{"201663": 1, "201665": 1, "201666": "[2]", "201667": 0})
+    schedule = rooms.parse_schedules(rv1_response(item), None, eng).schedules[0]
+    assert schedule.enabled is True and schedule.room_ids == [2] and schedule.once is True
+    off = rv1_item(**{"201663": 2, "201665": 0, "201666": "[2]", "201667": 1})
+    schedule = rooms.parse_schedules(rv1_response(off), None, eng).schedules[0]
+    assert schedule.enabled is False and schedule.room_ids == [] and schedule.once is False
+    # known labels still decide by label, not number
+    assert rooms.parse_schedules(rv1_response(rv1_item(**{"201663": 2})), None, members).schedules[0].enabled is False
+
+
+def test_struct_format_is_tried_before_l11a() -> None:
+    members = rv1_members()
+    wrapped = {"content": {"outputData": {"201621": {"value": [rv1_item()]}}, "service": "201600"}}
+    result = rooms.parse_schedules(wrapped, "201621", members)
+    schedule = result.schedules[0]
+    assert len(result.schedules) == 1 and schedule.timer_id == 7 and schedule.once is False
+    assert schedule.start_raw == 82800 and schedule.enabled is True and schedule.period == [7, 1, 2, 3, 4, 5, 6]
+    # the L11-A format still works when members are given
+    assert rooms.parse_schedules(REAL, "2501", members) == rooms.parse_schedules(REAL, "2501")
+
+
+def test_struct_item_without_identity_is_skipped() -> None:
+    members = rv1_members()
+    for junk in ({}, {"foo": 1}, {"201661": -1, "201665": 1}):
+        result = rooms.parse_schedules(rv1_response(junk), None, members)
+        assert result is not None and result.schedules == [], junk
+    result = rooms.parse_schedules(rv1_response({}), None, members)
+    assert [s for s in result.schedules if s.enabled] == []
+    mixed = {"content": {"outputData": {"201621": [{}, rv1_item()]}}}
+    assert len(rooms.parse_schedules(mixed, None, members).schedules) == 1
+
+
+def test_rooms_schedule_without_usable_rooms_is_unknown() -> None:
+    members = rv1_members()
+
+    def parse(**changes: object):
+        return rooms.parse_schedules(rv1_response(rv1_item(**changes)), None, members).schedules[0]
+
+    for area in ("[]", "", None, "x", "not a list", []):
+        schedule = parse(**{"201665": 1, "201666": area})
+        assert schedule.room_ids == [] and schedule.rooms_unknown is True, area
+    missing = rv1_item(**{"201665": 1})
+    schedule = rooms.parse_schedules(rv1_response(missing), None, members).schedules[0]
+    assert schedule.rooms_unknown is True and schedule.room_ids == []
+    # whole house is not unknown; with usable rooms nothing is unknown
+    assert parse(**{"201665": 0}).rooms_unknown is False
+    assert parse(**{"201665": 1, "201666": "[3]"}).rooms_unknown is False
+    # clean_type missing but area_array parses: those rooms are used
+    item = {k: v for k, v in rv1_item(**{"201666": "[3,5]"}).items() if k != "201665"}
+    schedule = rooms.parse_schedules(rv1_response(item), None, members).schedules[0]
+    assert schedule.room_ids == [3, 5] and schedule.rooms_unknown is False
+    # the L11-A is not affected
+    assert rooms.parse_schedules(REAL, "2501").schedules[0].rooms_unknown is False
+
+
+def test_struct_items_use_the_struct_output() -> None:
+    things = model.ThingsModel.from_api(fixture("rv1promax_model.json"))
+    service = things.service("clean_list")
+    assert service.output_members_ref == "201621"
+    assert model.ThingsModel.from_api(fixture("l11a_model.json")).service("clean_list").output_members_ref is None
+    members = service.output_members
+    other = [{"201662": 99, "201663": 1}]
+    both = {"content": {"outputData": {"200001": other, "201621": [rv1_item()]}}}
+    result = rooms.parse_schedules(both, None, members, service.output_members_ref)
+    assert [s.timer_id for s in result.schedules] == [7]
+    both = {"content": {"outputData": {"200001": {"value": other}, "201621": {"value": [rv1_item()]}}}}
+    result = rooms.parse_schedules(both, None, members, service.output_members_ref)
+    assert [s.timer_id for s in result.schedules] == [7]
+    # without a ref: the first list (as before)
+    assert [s.timer_id for s in rooms.parse_schedules(both, None, members).schedules] == [99]
+
+
 if __name__ == "__main__":
     sys.exit(run_all(globals()))

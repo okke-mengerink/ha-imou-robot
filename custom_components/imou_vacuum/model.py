@@ -24,9 +24,12 @@ from .const import (
     FALLBACK_PROPERTY_REFS,
     FALLBACK_SERVICE_REFS,
     LEVEL_KEYS,
+    MOP_SPEED_KEYS,
+    MOP_SPEED_LABEL_KEYS,
     NEVER_POLL_IDENTIFIERS,
     POLL_IDENTIFIERS,
     PROP_ERROR_INFO,
+    PROP_MOP_SPEED,
     PROP_POWER_STATUS,
     PROP_WIFI,
     PROP_WIND_POWER,
@@ -136,6 +139,11 @@ class ServiceDef:
     inputs: Mapping[str, str] = field(default_factory=dict)  # identifier -> ref
     outputs: Mapping[str, str] = field(default_factory=dict)  # identifier -> ref
     input_types: Mapping[str, str] = field(default_factory=dict)  # identifier -> lower-case type
+    # members (by lower-case identifier, with ref and enum labels) of the item struct
+    # of an output that is an array of structs (RV1 Pro Max clean_list); else empty
+    output_members: Mapping[str, PropertyDef] = field(default_factory=dict)
+    # ref of that array-of-struct output (None when there is none)
+    output_members_ref: str | None = None
 
     def input_ref(self, identifier: str) -> str | None:
         """Return the ref of an input parameter, or ``None`` if it does not exist."""
@@ -217,13 +225,52 @@ def _parse_service(raw: Any) -> ServiceDef | None:
         if isinstance(name, str) and name.strip().lower() in inputs:
             type_name = str(ci_get(ci_get(item, "dataType"), "type") or "").lower()
             input_types.setdefault(name.strip().lower(), type_name)
+    members_ref, members = _parse_output_members(ci_get(raw, "outputData"))
     return ServiceDef(
         identifier=identifier,
         ref=ref,
         inputs=inputs,
         outputs=outputs,
         input_types=input_types,
+        output_members=members,
+        output_members_ref=members_ref,
     )
+
+
+def _parse_output_members(items: Any) -> tuple[str | None, dict[str, PropertyDef]]:
+    """Return the ref and item struct members of the first output that is an array
+    of structs."""
+    for item in items or []:
+        data_type = ci_get(item, "dataType")
+        if str(ci_get(data_type, "type") or "").lower() != "array":
+            continue
+        element = ci_get(ci_get(data_type, "specs"), "item")
+        members = ci_get(element, "specs")
+        if str(ci_get(element, "type") or "").lower() != "struct" or not isinstance(members, list):
+            continue
+        parsed: dict[str, PropertyDef] = {}
+        for member in members:
+            if (prop := _parse_property(member)) is not None:
+                parsed.setdefault(prop.identifier, prop)
+        if parsed:
+            return _clean_ref(ci_get(item, "ref")) or None, parsed
+    return None, {}
+
+
+def _unique_level_keys(
+    labels: Mapping[int, str], label_keys: Mapping[str, str]
+) -> dict[int, str]:
+    """Raw value -> key in value order; a key that an earlier value already has
+    (same label) is not offered twice: the later value gets ``unknown_<n>``."""
+    keys: dict[int, str] = {}
+    used: set[str] = set()
+    for value, label in sorted(labels.items()):
+        key = label_keys.get(label.strip(), f"unknown_{value}")
+        if key in used:
+            key = f"unknown_{value}"
+        used.add(key)
+        keys[value] = key
+    return keys
 
 
 def _parse_parameters(items: Any, fallbacks: Mapping[str, str]) -> dict[str, str]:
@@ -331,11 +378,19 @@ class ThingsModel:
         """
         prop = self.prop(PROP_WIND_POWER)
         if prop is not None and prop.data_type == "enum" and prop.enum_labels:
-            return {
-                value: WIND_ENUM_LABEL_KEYS.get(label.strip(), f"unknown_{value}")
-                for value, label in sorted(prop.enum_labels.items())
-            }
+            return _unique_level_keys(prop.enum_labels, WIND_ENUM_LABEL_KEYS)
         return dict(LEVEL_KEYS[PROP_WIND_POWER])
+
+    def mop_levels(self) -> dict[int, str]:
+        """Return the mop intensity levels (raw value -> translation key).
+
+        The model's labels decide (unknown labels give ``unknown_<n>``); a model
+        without labels uses the number table.
+        """
+        prop = self.prop(PROP_MOP_SPEED)
+        if prop is not None and prop.enum_labels:
+            return _unique_level_keys(prop.enum_labels, MOP_SPEED_LABEL_KEYS)
+        return dict(MOP_SPEED_KEYS)
 
     def enum_keys(
         self,

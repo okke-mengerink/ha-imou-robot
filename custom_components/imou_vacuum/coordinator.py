@@ -362,7 +362,12 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             _LOGGER.debug("Could not read the schedules of %s: %s", self.device.name, err)
             self._schedules_due = time.monotonic() + SCHEDULE_RETRY_SECONDS
             return False
-        parsed = parse_schedules(response, service.output_ref(OUTPUT_TIMER))
+        parsed = parse_schedules(
+            response,
+            service.output_ref(OUTPUT_TIMER),
+            service.output_members,
+            service.output_members_ref,
+        )
         if parsed is None:
             _LOGGER.debug("The schedules of %s have an unknown format", self.device.name)
             self._schedules_due = time.monotonic() + SCHEDULE_RETRY_SECONDS

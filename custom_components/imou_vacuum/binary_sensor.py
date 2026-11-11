@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, override
 
@@ -14,7 +14,12 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import PROP_MOP_ENABLE, PROP_POWER_STATUS
+from .const import (
+    PROP_MOP_ENABLE,
+    PROP_POWER_STATUS,
+    PROP_STATION_STATUS,
+    STATION_CONNECTED,
+)
 from .coordinator import ImouConfigEntry, ImouCoordinator
 from .entity import ImouEntity
 from .model import ThingsModel, to_bool
@@ -27,6 +32,7 @@ class ImouBinarySensorDescription(BinarySensorEntityDescription):
     """Binary sensor backed by one boolean property."""
 
     identifier: str
+    child: str | None = None  # a member of a struct property
     # (model, raw value) -> state; a plain boolean unless the model says otherwise
     is_on_fn: Callable[[ThingsModel, Any], bool | None] = lambda _model, raw: to_bool(raw)
 
@@ -44,6 +50,13 @@ BINARY_SENSORS: tuple[ImouBinarySensorDescription, ...] = (
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         is_on_fn=lambda model, raw: model.is_charging(raw),
     ),
+    ImouBinarySensorDescription(
+        key="dock_connected",
+        translation_key="dock_connected",
+        identifier=PROP_STATION_STATUS,
+        child=STATION_CONNECTED,
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+    ),
 )
 
 
@@ -57,7 +70,7 @@ async def async_setup_entry(
         ImouBinarySensor(coordinator, description)
         for coordinator in entry.runtime_data.coordinators.values()
         for description in BINARY_SENSORS
-        if coordinator.model.prop(description.identifier) is not None
+        if coordinator.model.member(description.identifier, description.child) is not None
     )
 
 
@@ -78,6 +91,7 @@ class ImouBinarySensor(ImouEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         """Return whether the property is true."""
         description = self.entity_description
-        return description.is_on_fn(
-            self.coordinator.model, self.robot_values.get(description.identifier)
-        )
+        raw = self.robot_values.get(description.identifier)
+        if description.child is not None:
+            raw = raw.get(description.child) if isinstance(raw, Mapping) else None
+        return description.is_on_fn(self.coordinator.model, raw)

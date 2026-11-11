@@ -66,6 +66,12 @@ OUTPUT_TIMER: Final = "timer"  # clean_list: the schedules
 PROP_WORK_STATUS: Final = "work_status"
 PROP_POWER: Final = "power"
 PROP_POWER_STATUS: Final = "power_status"  # RV1 Pro Max: 0 normal, 1 charging, 2 abnormal
+PROP_MOP_SPEED: Final = "mop_speed"  # RV1 Pro Max: mop rotation level (enum)
+PROP_STATION_STATUS: Final = "station_status"  # RV1 Pro Max: dock status (struct)
+STATION_CONNECTED: Final = "connected"
+STATION_CLEAN_BOX: Final = "clean_box"
+STATION_WASTE_BOX: Final = "waste_box"
+STATION_DUST_BAG: Final = "dust_bag"
 PROP_BACK_CHARGING: Final = "back_charging"
 PROP_BACK_STATION: Final = "back_station"  # RV1 Pro Max: return to base station
 PROP_CLEAN_AREA: Final = "clean_area"
@@ -111,12 +117,14 @@ POLL_IDENTIFIERS: Final[tuple[str, ...]] = (
     PROP_WIND_POWER,
     PROP_WATER,
     PROP_MOP_ENABLE,
+    PROP_MOP_SPEED,
     PROP_KEEP_CLEAN,
     PROP_AUTO_DUST,
     PROP_RUG_PRESS,
     PROP_LIFE,
     PROP_ERROR_INFO,
     PROP_WIFI,
+    PROP_STATION_STATUS,
 )
 
 # Documented guard: these must never end up in the poll list.
@@ -305,6 +313,35 @@ WIND_ENUM_LABEL_KEYS: Final[dict[str, str]] = {
     "大": "strong",
     "最大": "max",
 }
+# Mop intensity levels of a model whose mop_speed is an enum (RV1 Pro Max: 0 gentle,
+# 1 standard, 2 strong): the model's labels (Chinese) -> translation keys. Unknown
+# labels become "unknown_<n>"; a model without labels uses the numbers.
+MOP_SPEED_LABEL_KEYS: Final[dict[str, str]] = {
+    "轻柔": "gentle",
+    "标准": "standard",
+    "强劲": "strong",
+}
+MOP_SPEED_KEYS: Final[dict[int, str]] = {0: "gentle", 1: "standard", 2: "strong"}
+# Dock status (station_status members): label -> key, and the numbers for a model
+# without labels. Unknown labels become "unknown_<n>".
+CLEAN_BOX_LABEL_KEYS: Final[dict[str, str]] = {
+    "正常": "normal",
+    "未安装": "not_installed",
+    "水量不足": "water_low",
+}
+CLEAN_BOX_KEYS: Final[dict[int, str]] = {0: "normal", 1: "not_installed", 2: "water_low"}
+WASTE_BOX_LABEL_KEYS: Final[dict[str, str]] = {
+    "正常": "normal",
+    "未安装": "not_installed",
+    "水量已满": "full",
+}
+WASTE_BOX_KEYS: Final[dict[int, str]] = {0: "normal", 1: "not_installed", 2: "full"}
+DUST_BAG_LABEL_KEYS: Final[dict[str, str]] = {
+    "正常": "normal",
+    "未安装": "not_installed",
+    "尘袋已满": "full",
+}
+DUST_BAG_KEYS: Final[dict[int, str]] = {0: "normal", 1: "not_installed", 2: "full"}
 # Level sent for the other setting when neither the cloud nor a command knows it.
 DEFAULT_LEVEL: Final = 2
 

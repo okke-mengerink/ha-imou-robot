@@ -3,6 +3,9 @@
     "binary_sensor": {
       "mop_fitted": {
         "default": "mdi:mop"
+      },
+      "dock_connected": {
+        "default": "mdi:home-lightning-bolt-outline"
       }
     },
     "button": {
@@ -28,6 +31,9 @@
           "medium": "mdi:water",
           "high": "mdi:water-plus"
         }
+      },
+      "mop_intensity": {
+        "default": "mdi:rotate-right"
       }
     },
     "sensor": {
@@ -54,6 +60,15 @@
       },
       "schedules": {
         "default": "mdi:calendar-clock"
+      },
+      "clean_water_tank": {
+        "default": "mdi:water-outline"
+      },
+      "dirty_water_tank": {
+        "default": "mdi:water-off-outline"
+      },
+      "dust_bag": {
+        "default": "mdi:bag-personal-outline"
       }
     },
     "switch": {

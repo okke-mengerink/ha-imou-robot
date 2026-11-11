@@ -77,6 +77,9 @@
       },
       "charging": {
         "name": "Charging"
+      },
+      "dock_connected": {
+        "name": "Dock connected"
       }
     },
     "button": {
@@ -101,6 +104,14 @@
           "low": "Low",
           "medium": "Medium",
           "high": "High"
+        }
+      },
+      "mop_intensity": {
+        "name": "Mop intensity",
+        "state": {
+          "gentle": "Gentle",
+          "standard": "Standard",
+          "strong": "Strong"
         }
       }
     },
@@ -180,6 +191,30 @@
       },
       "schedules": {
         "name": "Schedules"
+      },
+      "clean_water_tank": {
+        "name": "Clean water tank",
+        "state": {
+          "normal": "Normal",
+          "not_installed": "Not installed",
+          "water_low": "Water low"
+        }
+      },
+      "dirty_water_tank": {
+        "name": "Dirty water tank",
+        "state": {
+          "normal": "Normal",
+          "not_installed": "Not installed",
+          "full": "Full"
+        }
+      },
+      "dust_bag": {
+        "name": "Dust bag",
+        "state": {
+          "normal": "Normal",
+          "not_installed": "Not installed",
+          "full": "Full"
+        }
       }
     },
     "switch": {
