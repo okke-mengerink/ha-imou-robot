@@ -9,7 +9,7 @@ from homeassistant.components.switch import SwitchEntity, SwitchEntityDescriptio
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import PROP_AUTO_DUST, PROP_KEEP_CLEAN, PROP_RUG_PRESS
+from .const import PROP_RUG_PRESS
 from .coordinator import ImouConfigEntry, ImouCoordinator, SettingNotSupportedError
 from .entity import ImouEntity, async_add_after_first_poll
 from .model import to_bool
@@ -26,19 +26,9 @@ class ImouSwitchDescription(SwitchEntityDescription):
 
 SWITCHES: tuple[ImouSwitchDescription, ...] = (
     ImouSwitchDescription(
-        key="auto_empty",
-        translation_key="auto_empty",
-        identifier=PROP_AUTO_DUST,
-    ),
-    ImouSwitchDescription(
         key="carpet_boost",
         translation_key="carpet_boost",
         identifier=PROP_RUG_PRESS,
-    ),
-    ImouSwitchDescription(
-        key="resume_after_charging",
-        translation_key="resume_after_charging",
-        identifier=PROP_KEEP_CLEAN,
     ),
 )
 
@@ -76,12 +66,11 @@ class ImouSwitch(ImouEntity, SwitchEntity):
     ) -> None:
         """Initialize the switch."""
         # A setting that the robot did not report in its first online poll is
-        # probably not implemented by its firmware (the L11-A and RV1L Pro never
-        # report auto-empty or resume-after-charging, and writing them fails). The
-        # switch is still created, so that users of a model that does support it
-        # can enable it, but it is disabled by default. When the robot answers a
-        # write with DV1026 ("does not support this function") the switch becomes
-        # unavailable until the integration is reloaded.
+        # probably not implemented by its firmware. The switch is still created,
+        # so that users of a model that does support it can enable it, but it is
+        # disabled by default. When the robot answers a write with DV1026 ("does
+        # not support this function") the switch becomes unavailable until the
+        # integration is reloaded.
         super().__init__(coordinator, description.key, description.identifier)
         self.entity_description = description
         self._not_supported = False

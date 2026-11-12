@@ -32,7 +32,7 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 |---|---|---|
 | Imou RV-L11-A (L11 series, with auto-empty dock) | Tested | Imou cloud `deviceModel` `L11-A`, Home Assistant 2026.10 |
 | Imou RV1 Pro Max | Reported by a user (issue #1), partly verified | Confirmed by the user: battery, return to dock, the suction levels (quiet, standard, strong, max), the water volume (off, low, medium), the schedule start time and room cleaning of the two rooms from the user's schedule. Not yet verified: room cleaning with the rooms of the cleaning order (`sequence`); one robot's diagnostics list all of its rooms there, but that this holds for every robot and that those rooms can be cleaned is not confirmed. Not yet confirmed: dock status. The robot does not report the dock status, so those entities are disabled by default. |
-| Imou RV1L Pro | Reported by a user (issue #8), partly verified | Mapped from the user's diagnostics. Return to dock through `swp_backStation` is new in 0.6.1 and not yet confirmed. The robot does not report auto-empty or resume after charging, so those switches are disabled by default. |
+| Imou RV1L Pro | Reported by a user (issue #8), partly verified | Mapped from the user's diagnostics. Return to dock through `swp_backStation` is new in 0.6.1 and not yet confirmed. |
 | Any other Imou robot vacuum | unverified — please share diagnostics | Might work if its things model uses the same identifiers. See [Help us map other models](#help-us-map-other-models). |
 
 Other Imou robots are mapped from their things model: the robot's own refs, the labels of its statuses, error codes and suction levels (so a model that numbers them differently still maps correctly) and alternative identifiers such as `back_station` or `swp_backStation` for return to dock. When a core function is missing (start and stop, return to dock, battery or status) or a value is not recognised, Home Assistant shows a repair notice that says what is missing or unknown and links to a GitHub issue that is already filled in with your model. Attach the diagnostics download to it and the model can be added.
@@ -42,6 +42,7 @@ Verified on a real RV-L11-A:
 - Locate, start, pause, resume and return to dock.
 - Suction levels quiet, standard and max (set through the `WindWater` service).
 - Carpet boost.
+- The empty-bin button: the dock empties the robot's bin (confirmed by the owner).
 - Battery and status, including "emptying bin" after a run.
 - Cleaned area (m²) and cleaning time (min). A first real run of 31 m² in 34 min was tracked correctly.
 - Room cleaning of one room and of two rooms in one command (`clean_control` in room mode), and reading the schedules (`clean_list`).
@@ -50,7 +51,7 @@ Verified on a real RV-L11-A:
 
 - **Vacuum entity:** start (a whole-house clean, or resume when paused), pause, stop, return to dock, locate, and fan speed (the suction level: quiet, standard or max).
 - **Sensors:** battery, status, error, cleaned area (m²), cleaning time (min), consumable usage in hours (side brush, main brush, filter, sensors), Wi-Fi signal and a mop-fitted binary sensor.
-- **Controls:** suction and water level selects, carpet boost and other switches, and an empty-bin button. See [Entities](#entities).
+- **Controls:** suction and water level selects, the carpet boost switch, and an empty-bin button. See [Entities](#entities).
 - **Set up in the UI:** App ID, App Secret and region, with re-authentication when the App Secret changes. English translation. A diagnostics download for mapping new models.
 - **Automatic discovery:** every robot on your Imou account is found, and only the entities its model supports are created.
 - **Room cleaning (Home Assistant 2026.3 or newer):** clean one or more rooms with `vacuum.clean_area` or by voice, after mapping the robot's rooms to your Home Assistant areas. See [Room cleaning](#room-cleaning).
@@ -251,7 +252,7 @@ Entities are created per robot, and only when the robot's model supports them.
 ### Other entities
 
 - Binary sensors: mop fitted ("Fitted" / "Not fitted"); charging (only for a robot whose model has `power_status`, such as the RV1 models; on while the robot reports "charging", and without a `power_status` value on a negative battery value; otherwise it is unknown); dock connected (only for a robot whose model has `station_status`, disabled by default when the robot does not report it)
-- Switches: auto-empty, carpet boost, resume after charging
+- Switches: carpet boost
 - Selects: suction (quiet / standard / max; quiet / standard / strong / max for an RV1 model, which does not offer "off" like the Imou app, but shows it when the robot reports it) and water level (low / medium / high); water volume (off / low / medium, only for a robot whose model has `mop_speed`, such as the RV1 models; set with a plain property write; the Imou app also has "high", which the things model has no value for).
 - Button: empty bin (empties the bin into the dock)
 
@@ -317,8 +318,8 @@ Contributions of identifier and enum mappings are welcome.
 - The Imou error codes DV1007 (offline), DV1030 (the device is asleep) and DV1062 (the device has no heartbeat, wake it on the device) are treated as "device offline" in commands and other calls. While polling, DV1030 is treated like the status `sleep`: the last data stays visible and it is not counted as a failed poll.
 
 - Suction, water level and fan speed are set through the `WindWater` service, verified on an L11-A. Plain property writes for these are ignored by the L11-A. Models without a `WindWater` service get property writes instead (unverified). Other models may use another scale; those values show as `unknown_<n>` and can be added to `LEVEL_KEYS`.
-- Property writes work on an L11-A for carpet boost (the cloud confirms the new value) and for return to dock. The L11-A never reports auto-empty or resume after charging, before or after a write, and the Imou app has no such settings, so its firmware probably does not implement them although the shared things model lists them. Whether such a write has any effect cannot be verified.
-- The switches (and the dock sensors) are created after the robot's first online poll, so a robot that was offline when Home Assistant started gets them later. One whose setting the robot did not report in that poll is disabled by default (writing it fails on the RV1L Pro). Enable it in the entity settings if your model supports it. A switch is not made unavailable because the robot never reported its setting (a robot may accept a write without ever reporting it); it shows unknown. When the robot answers a write with the Imou error DV1026 ("device does not support this function"), Home Assistant shows the error "This robot does not support that setting" and the switch is unavailable until the integration is reloaded. Every switch has the attribute `reported_by_device`. Entities created by an earlier version keep their enabled state: disable or delete them by hand.
+- Property writes work on an L11-A for carpet boost (the cloud confirms the new value) and for return to dock. The L11-A firmware does not report auto-empty (`auto_dust`) or resume after charging (`keep_clean`), although the shared things model lists them, and no model reports them, so the integration has no entities for them (removed in 0.6.2) and does not poll them.
+- The carpet boost switch and the dock sensors are created after the robot's first online poll, so a robot that was offline when Home Assistant started gets them later. One whose setting the robot did not report in that poll is disabled by default. Enable it in the entity settings if your model supports it. A switch is not made unavailable because the robot never reported its setting (a robot may accept a write without ever reporting it); it shows unknown. When the robot answers a write with the Imou error DV1026 ("device does not support this function"), Home Assistant shows the error "This robot does not support that setting" and the switch is unavailable until the integration is reloaded. The switch has the attribute `reported_by_device`. Entities created by an earlier version keep their enabled state: disable or delete them by hand. The Auto-empty and Resume after charging switches of earlier versions stay in the entity registry as unavailable or unknown entities; delete them.
 - The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.) The RV1 Pro Max reports a negative battery value while charging (-38 for 38 %); the integration shows the absolute value.
 - Consumable usage: the L11-A reports minutes used, although its things model says hours (after a 34-minute run all four counters read 34). The sensors therefore show hours (minutes / 60, displayed with one decimal). The conversion is the constant `LIFE_RAW_PER_HOUR` in `const.py`; a model that really reports hours would need 1 there.
 - There is no map and no zone cleaning. On an L11-A the room, map and cleaning-parameter properties stay empty in the cloud, even while the robot cleans a room, so the rooms are read from the schedules.
@@ -326,7 +327,7 @@ Contributions of identifier and enum mappings are welcome.
 - RV1 schedules: `start_time` is the local time of day (7200 is 02:00 and 82800 is 23:00 in the app) and `select_day` counts 1 as Monday to 7 as Sunday. The format of `area_array` for a room schedule is unverified; several formats are accepted.
 - Only the Europe region has been verified. Singapore and North America use the same calls on other Imou hosts.
 - Commands are fire-and-forget: the cloud output code is not interpreted.
-- A value you set from Home Assistant is shown for at most 30 s while the robot still reports the old value; after that the reported value wins, so a command the robot ignores is visible. Settings the cloud never reports (auto-empty and resume after charging on the L11-A) keep the last value you set, and show unknown until you set one.
+- A value you set from Home Assistant is shown for at most 30 s while the robot still reports the old value; after that the reported value wins, so a command the robot ignores is visible.
 - Error information that the robot flags as not valid is ignored (the error sensor shows "none").
 
 ## Development

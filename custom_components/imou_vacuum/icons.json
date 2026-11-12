@@ -75,14 +75,8 @@
       }
     },
     "switch": {
-      "auto_empty": {
-        "default": "mdi:delete-empty"
-      },
       "carpet_boost": {
         "default": "mdi:fan-plus"
-      },
-      "resume_after_charging": {
-        "default": "mdi:play-circle-outline"
       }
     }
   }

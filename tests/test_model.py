@@ -26,8 +26,6 @@ EXPECTED_PROP_REFS = {
     "windpower": "1027",
     "water": "1028",
     "mopenable": "1029",
-    "keep_clean": "11700",
-    "auto_dust": "11800",
     "rug_press": "11900",
     "life": "12200",
     "errorinfo": "40500",
@@ -35,7 +33,7 @@ EXPECTED_PROP_REFS = {
 }
 EXPECTED_POLL_REFS = [
     "12300", "11600", "1019", "1020", "1021", "1027", "1028",
-    "1029", "11700", "11800", "11900", "12200", "40500", "11300",
+    "1029", "11900", "12200", "40500", "11300",
 ]  # fmt: skip
 DENIED_REFS = {"1022", "1023", "1025", "1026", "40100", "40400"}
 
@@ -224,10 +222,10 @@ def test_level_maps_and_unknown_values() -> None:
 
 def test_report_tracker_without_evidence_disables_nothing() -> None:
     tracker = model_mod.ReportTracker()
-    assert tracker.enabled_by_default("auto_dust") and not tracker.is_reported("auto_dust")
+    assert tracker.enabled_by_default("mopenable") and not tracker.is_reported("mopenable")
     tracker.update(False, {})  # an offline poll is no evidence either
-    tracker.update(False, {"auto_dust": 1})  # and its values are ignored
-    assert tracker.enabled_by_default("auto_dust") and not tracker.is_reported("auto_dust")
+    tracker.update(False, {"mopenable": 1})  # and its values are ignored
+    assert tracker.enabled_by_default("mopenable") and not tracker.is_reported("mopenable")
     assert not tracker.seen_online
 
 
@@ -236,21 +234,20 @@ def test_report_tracker_flags_settings_missing_from_an_online_poll() -> None:
     tracker.update(True, {"rug_press": 1})
     assert tracker.seen_online
     assert tracker.enabled_by_default("rug_press") and tracker.is_reported("rug_press")
-    assert not tracker.enabled_by_default("auto_dust") and not tracker.is_reported("auto_dust")
-    tracker.update(True, {"auto_dust": 0})  # a later report counts as reported
-    assert tracker.is_reported("auto_dust") and tracker.enabled_by_default("auto_dust")
-    assert tracker.as_diagnostics() == {"seen_online": True, "reported_identifiers": ["auto_dust", "rug_press"]}
+    assert not tracker.enabled_by_default("mopenable") and not tracker.is_reported("mopenable")
+    tracker.update(True, {"mopenable": 0})  # a later report counts as reported
+    assert tracker.is_reported("mopenable") and tracker.enabled_by_default("mopenable")
+    assert tracker.as_diagnostics() == {"seen_online": True, "reported_identifiers": ["mopenable", "rug_press"]}
 
 
-def test_l11a_fixture_reports_carpet_boost_but_not_auto_dust_or_keep_clean() -> None:
+def test_l11a_fixture_reports_carpet_boost() -> None:
     model = l11a()
     tracker = model_mod.ReportTracker()
     tracker.update(True, model.parse_values(fixture("l11a_values.json")["properties"]))
     assert tracker.enabled_by_default("rug_press")  # 11900 is reported
-    assert not tracker.enabled_by_default("auto_dust")  # 11800 never is
-    assert not tracker.enabled_by_default("keep_clean")  # 11700 never is
-    # all three switches exist in the model, so they are created either way
-    assert all(model.prop(identifier) for identifier in ("rug_press", "auto_dust", "keep_clean"))
+    assert model.prop("rug_press")
+    # 0.6.2: the unreported auto_dust and keep_clean properties are no longer polled
+    assert "auto_dust" not in const.POLL_IDENTIFIERS and "keep_clean" not in const.POLL_IDENTIFIERS
 
 
 def test_consumable_counters_are_minutes_per_identifier() -> None:
@@ -279,7 +276,7 @@ def test_parse_values_on_observed_data() -> None:
         "sensor_time": 0,
     }
     # not reported by the robot -> absent
-    assert "errorinfo" not in values and "auto_dust" not in values
+    assert "errorinfo" not in values
     assert model.parse_values(None) == {}
     # int keys and struct values keyed by ints also work
     assert model.parse_values({12300: 7, 40500: {40501: 5, 40502: True}}) == {
@@ -442,11 +439,11 @@ def test_is_charging_falls_back_to_the_battery_sign() -> None:
 
 def test_report_tracker_enabled_by_default() -> None:
     tracker = model_mod.ReportTracker()
-    assert tracker.enabled_by_default("auto_dust")  # no evidence yet
+    assert tracker.enabled_by_default("mopenable")  # no evidence yet
     tracker.update(False, {})
-    assert tracker.enabled_by_default("auto_dust") and not tracker.seen_online  # offline: no evidence
+    assert tracker.enabled_by_default("mopenable") and not tracker.seen_online  # offline: no evidence
     tracker.update(True, {"rug_press": 1})
-    assert tracker.enabled_by_default("rug_press") and not tracker.enabled_by_default("auto_dust")
+    assert tracker.enabled_by_default("rug_press") and not tracker.enabled_by_default("mopenable")
     assert not hasattr(tracker, "is_unreported")  # an unreported setting is no longer unavailable
 
 
@@ -455,8 +452,6 @@ def test_rv1lpro_model_and_values() -> None:
     values = model.parse_values(fixture("rv1lpro_values.json")["properties"])
     assert values["windpower"] == 4 and values["mop_speed"] == 2
     assert values["station_status"] == {"connected": 0, "clean_box": 0, "waste_box": 0, "dust_bag": 0}
-    # the robot never reports these, so the settings are not in the values
-    assert "auto_dust" not in values and "keep_clean" not in values
     assert model.prop("sequence").ref == "120600" and model.prop("sequence").data_type == "array"
     assert "120600" not in model.poll_refs()  # never polled
 

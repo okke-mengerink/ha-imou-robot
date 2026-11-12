@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.2
+
+Changes after the HACS review of the default-store submission.
+
+- Removed: the **Auto-empty** and **Resume after charging** switches. They wrote `auto_dust` and `keep_clean` to the robot, but no model reports these settings (not the RV-L11-A, RV1 Pro Max or RV1L Pro) and the RV1L Pro answers a write with DV1026 (not supported), so nobody could confirm that they do anything. They may come back when a model is verified to accept and report them. The integration also no longer polls these two properties.
+- If you installed an earlier version, the two removed switches stay in your entity registry. Go to Settings, Devices & services, Entities, select the two old switches and delete them.
+- Kept: the **Carpet boost** switch (every model reports it) and the message "This robot does not support that setting" for a robot that answers DV1026.
+- Docs: the empty-bin button is now in the list of verified behaviour of the RV-L11-A. The owner confirmed that the dock empties the robot's bin when you press it.
+
 ## 0.6.1
 
 Fixes from the feedback on the RV1 Pro Max (issue #1) and the first report of the Imou RV1L Pro (issue #8).

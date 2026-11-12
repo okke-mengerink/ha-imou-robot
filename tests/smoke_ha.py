@@ -212,10 +212,10 @@ def test_entities() -> None:
     coordinator = FakeCoordinator(MODEL_JSON, VALUES_JSON["properties"])
     ents = make_entities(coordinator)
     total = sum(len(v) for v in ents.values())
-    check("entity counts per platform (1/11/1/3/2/1)", [len(ents[p]) for p in ents] == [1, 11, 1, 3, 2, 1], str({p: len(v) for p, v in ents.items()}))
-    expected_ids = sorted(f"TESTDEVICE0001_{key}" for key in ('auto_empty', 'battery', 'carpet_boost', 'cleaned_area', 'cleaning_time', 'empty_bin', 'error', 'filter', 'main_brush', 'mop_fitted', 'mop_water_level', 'resume_after_charging', 'schedules', 'sensors', 'side_brush', 'status', 'suction_level', 'vacuum', 'wifi_signal'))  # main (v0.4.x) behaviour
+    check("entity counts per platform (1/11/1/1/2/1)", [len(ents[p]) for p in ents] == [1, 11, 1, 1, 2, 1], str({p: len(v) for p, v in ents.items()}))
+    expected_ids = sorted(f"TESTDEVICE0001_{key}" for key in ('battery', 'carpet_boost', 'cleaned_area', 'cleaning_time', 'empty_bin', 'error', 'filter', 'main_brush', 'mop_fitted', 'mop_water_level', 'schedules', 'sensors', 'side_brush', 'status', 'suction_level', 'vacuum', 'wifi_signal'))  # main (v0.4.x) behaviour
     check("L11-A has exactly the same unique ids as on main", sorted(e.unique_id for v in ents.values() for e in v) == expected_ids, str(sorted(e.unique_id for v in ents.values() for e in v)))
-    check("19 entities with unique ids", total == 19 and len({e.unique_id for v in ents.values() for e in v}) == 19)
+    check("17 entities with unique ids", total == 17 and len({e.unique_id for v in ents.values() for e in v}) == 17)
 
     # --- Clean <room> buttons ---------------------------------------------
     room_coordinator = FakeCoordinator(MODEL_JSON, VALUES_JSON["properties"])
@@ -427,17 +427,17 @@ def test_entities() -> None:
 
     switches = by_key(ents["switch"])
     check(
-        "only the switch whose setting the robot reports is enabled by default (11900 yes, 11700/11800 no)",
-        {k: sw.entity_registry_enabled_default for k, sw in switches.items()} == {"auto_empty": False, "carpet_boost": True, "resume_after_charging": False},
+        "only the switch whose setting the robot reports is enabled by default (11900 yes)",
+        {k: sw.entity_registry_enabled_default for k, sw in switches.items()} == {"carpet_boost": True},
         str({k: sw.entity_registry_enabled_default for k, sw in switches.items()}),
     )  # fmt: skip
     check(
         "switch attribute reported_by_device",
-        {k: sw.extra_state_attributes for k, sw in switches.items()} == {"auto_empty": {"reported_by_device": False}, "carpet_boost": {"reported_by_device": True}, "resume_after_charging": {"reported_by_device": False}},
+        {k: sw.extra_state_attributes for k, sw in switches.items()} == {"carpet_boost": {"reported_by_device": True}},
     )  # fmt: skip
-    check("a setting the robot never reported stays available (unknown state); only the default enabled state differs", all(sw.available for sw in switches.values()) and (switches["auto_empty"].is_on, switches["carpet_boost"].is_on) == (None, True), str({k: sw.available for k, sw in switches.items()}))
-    all_reported = by_key(make_entities(FakeCoordinator(MODEL_JSON, {**VALUES_JSON["properties"], "11700": 0, "11800": 1}))["switch"])
-    check("a robot that reports all three: all enabled by default, all reported", all(sw.entity_registry_enabled_default and sw.extra_state_attributes["reported_by_device"] for sw in all_reported.values()))
+    check("the switch is available and shows the reported value", all(sw.available for sw in switches.values()) and switches["carpet_boost"].is_on is True, str({k: sw.available for k, sw in switches.items()}))
+    unreported = by_key(make_entities(FakeCoordinator(MODEL_JSON, {k: v for k, v in VALUES_JSON["properties"].items() if k != "11900"}))["switch"])
+    check("a robot that does not report carpet boost: disabled by default, still available (unknown)", not unreported["carpet_boost"].entity_registry_enabled_default and unreported["carpet_boost"].available and unreported["carpet_boost"].is_on is None and unreported["carpet_boost"].extra_state_attributes == {"reported_by_device": False})
     # offline at setup: nothing is created (so nothing can be wrongly enabled) until the first online poll
     offline = FakeCoordinator(MODEL_JSON, {}, online=False)
     added: list[Any] = []
@@ -449,8 +449,8 @@ def test_entities() -> None:
     check("a listener call while the robot is still offline adds nothing", not added and len(offline.listeners) == 1)
     offline.first_online_poll(VALUES_JSON["properties"])
     late = {e.unique_id.split("_", 1)[1]: e for e in added}
-    check("the first online poll creates the switches once, and stops listening", sorted(late) == ["auto_empty", "carpet_boost", "resume_after_charging"] and not offline.listeners and len(added) == 3, str(sorted(late)))
-    check("... enabled by default from that poll: only the reported one", {k: sw.entity_registry_enabled_default for k, sw in late.items()} == {"auto_empty": False, "carpet_boost": True, "resume_after_charging": False})
+    check("the first online poll creates the switches once, and stops listening", sorted(late) == ["carpet_boost"] and not offline.listeners and len(added) == 1, str(sorted(late)))
+    check("... enabled by default from that poll: the reported one", {k: sw.entity_registry_enabled_default for k, sw in late.items()} == {"carpet_boost": True})
     for unload in unloads:
         unload()  # the unload after the listener removed itself must not fail
     check("unloading after the first poll is safe", True)
@@ -460,19 +460,16 @@ def test_entities() -> None:
     for unload in unloaded:
         unload()
     check("unloading before the robot came online removes the listener", not fresh_offline.listeners)
-    check("switches are still created for every identifier in the model", set(switches) == {"auto_empty", "carpet_boost", "resume_after_charging"})
-    check("switch states: auto_empty/resume unknown, carpet_boost on", (switches["auto_empty"].is_on, switches["resume_after_charging"].is_on, switches["carpet_boost"].is_on) == (None, None, True))
+    check("switches are still created for every identifier in the model", set(switches) == {"carpet_boost"})
 
     async def switch_calls() -> list[tuple[Any, ...]]:
         coordinator.calls.clear()
-        await switches["auto_empty"].async_turn_on()
         await switches["carpet_boost"].async_turn_off()
-        await switches["resume_after_charging"].async_turn_on()
         return list(coordinator.calls)
 
     calls = asyncio.run(switch_calls())
-    check("switches write 1/0 by identifier", calls == [("set", {"auto_dust": 1}), ("set", {"rug_press": 0}), ("set", {"keep_clean": 1})], str(calls))
-    check("commanded value is shown until the cloud reports it", switches["auto_empty"].is_on is True and switches["carpet_boost"].is_on is False and switches["resume_after_charging"].is_on is True)
+    check("switches write 1/0 by identifier", calls == [("set", {"rug_press": 0})], str(calls))
+    check("commanded value is shown until the cloud reports it", switches["carpet_boost"].is_on is False)
 
     # --- fan speed (vacuum) ---------------------------------------------------
     check("fan speed list is quiet/standard/max", vac.fan_speed_list == ["quiet", "standard", "max"], str(vac.fan_speed_list))
@@ -583,7 +580,7 @@ def test_entities() -> None:
     slim["services"] = [s for s in slim["services"] if s["identifier"] not in ("dust", "location")]
     slim_ents = make_entities(FakeCoordinator(slim, VALUES_JSON["properties"]))
     keys = {e.unique_id.split("_", 1)[1] for v in slim_ents.values() for e in v}
-    check("entities only for identifiers in the model", not keys & {"carpet_boost", "side_brush", "main_brush", "filter", "sensors", "mop_fitted", "suction_level", "wifi_signal", "error", "empty_bin"} and {"vacuum", "battery", "status", "mop_water_level", "auto_empty", "resume_after_charging"} <= keys, str(sorted(keys)))
+    check("entities only for identifiers in the model", not keys & {"carpet_boost", "side_brush", "main_brush", "filter", "sensors", "mop_fitted", "suction_level", "wifi_signal", "error", "empty_bin"} and {"vacuum", "battery", "status", "mop_water_level"} <= keys, str(sorted(keys)))
     slim_vac = slim_ents["vacuum"][0]
     check("vacuum without 'location' service has no LOCATE, without WindPower no FAN_SPEED", not slim_vac.supported_features & VacuumEntityFeature.LOCATE and not slim_vac.supported_features & VacuumEntityFeature.FAN_SPEED and bool(slim_vac.supported_features & VacuumEntityFeature.START))
 
@@ -784,7 +781,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.6.1"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.6.2"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -881,7 +878,6 @@ class FakeClient:
     model_error: Exception | None = None
     robot_id = "TESTDEVICE0001"
     initial_status = "online"
-    report_optional = False  # a firmware that also reports 11700/11800
     initial_fail_with: Exception | None = None  # the first polls fail
 
     def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
@@ -890,8 +886,6 @@ class FakeClient:
         self.status = FakeClient.initial_status
         self.props: dict[str, Any] = copy.deepcopy(VALUES_JSON["properties"])
         self.props.update(copy.deepcopy(PROBE_PROPS))  # never polled; only read by the diagnostics probe
-        if FakeClient.report_optional:
-            self.props.update({"11700": 0, "11800": 0})
         self.calls: list[tuple[Any, ...]] = []
         self.probe_service_calls: list[tuple[Any, ...]] = []
         self.poll_count = 0
@@ -1049,7 +1043,7 @@ async def full_setup_checks(config_dir: str) -> None:
 async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, config_entries: Any, dr: Any, er: Any, HomeAssistantError: type[Exception]) -> None:  # noqa: N803, C901, PLR0915
     # an upgrade from 0.1.0/0.1.1: two switches already exist (enabled) in the entity registry
     pre_registry = er.async_get(hass)
-    for key in ("auto_empty", "resume_after_charging"):
+    for key in ("carpet_boost",):
         pre_registry.async_get_or_create("switch", "imou_vacuum", f"TESTDEVICE0001_{key}", suggested_object_id=f"rv_l11_a_test_{key}")
 
     # ---- config flow: errors, success ------------------------------------
@@ -1079,7 +1073,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     runtime = entry.runtime_data
     check("only the robot got a coordinator (camera and non-robot IoT skipped)", list(runtime.coordinators) == ["TESTDEVICE0001"])
     coordinator = runtime.coordinators["TESTDEVICE0001"]
-    check("polled refs are exactly the spec list", client.last_refs == ["12300", "11600", "1019", "1020", "1021", "1027", "1028", "1029", "11700", "11800", "11900", "12200", "40500", "11300"], str(client.last_refs))
+    check("polled refs are exactly the spec list", client.last_refs == ["12300", "11600", "1019", "1020", "1021", "1027", "1028", "1029", "11900", "12200", "40500", "11300"], str(client.last_refs))
     check("never polls map/trail/zone refs", not {"1022", "1023", "1025", "1026", "40100", "40400"} & set(client.last_refs))
 
     # ---- registries -------------------------------------------------------
@@ -1090,11 +1084,11 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     entities = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
     room_button_ids = {f"TESTDEVICE0001_clean_room_{room_id}" for room_id in (2, 3, 4)}
     check("a Clean button exists for every room of the schedules", {e.unique_id for e in entities} >= room_button_ids)
-    check("L11-A entities: the 19 of main plus one Clean button per room (22), and no schedule switch", len(entities) == 22 and len({e.unique_id for e in entities} - room_button_ids) == 19 and not any("schedule_" in e.unique_id for e in entities) and not [e for e in entities if e.domain == "switch" and "schedule" in e.unique_id], str(sorted(e.unique_id for e in entities)))
+    check("L11-A entities: the 17 of main plus one Clean button per room (20), and no schedule switch", len(entities) == 20 and len({e.unique_id for e in entities} - room_button_ids) == 17 and not any("schedule_" in e.unique_id for e in entities) and not [e for e in entities if e.domain == "switch" and "schedule" in e.unique_id], str(sorted(e.unique_id for e in entities)))
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in entities}
     print("entity ids:", ", ".join(sorted(ids.values())))
     check("existing registry entries stay enabled (upgrade): switches are not disabled", all(e.disabled_by is None for e in entities if e.domain == "switch"), str({e.unique_id: e.disabled_by for e in entities if e.domain == "switch"}))
-    check("the first refresh ran before the entities were created", coordinator.reports.seen_online and "rug_press" in coordinator.reports.reported and not {"auto_dust", "keep_clean"} & coordinator.reports.reported, str(coordinator.reports.as_diagnostics()))
+    check("the first refresh ran before the entities were created", coordinator.reports.seen_online and "rug_press" in coordinator.reports.reported, str(coordinator.reports.as_diagnostics()))
 
     def state(key: str) -> Any:
         return hass.states.get(ids[key])
@@ -1107,13 +1101,13 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     expected_states = {
         "battery": "1", "status": "charging", "error": "none", "wifi_signal": "fair",
         "cleaned_area": "0", "cleaning_time": "0", "side_brush": "0.0", "main_brush": "0.0",
-        "filter": "0.0", "sensors": "0.0", "mop_fitted": "off", "auto_empty": "unknown",
-        "carpet_boost": "on", "resume_after_charging": "unknown",
+        "filter": "0.0", "sensors": "0.0", "mop_fitted": "off",
+        "carpet_boost": "on",
         "suction_level": "standard", "mop_water_level": "medium", "schedules": "2",
     }  # fmt: skip
     got = {k: state(k).state for k in expected_states}
     check("initial states from the observed values", got == expected_states, str({k: (v, expected_states[k]) for k, v in got.items() if v != expected_states[k]}))
-    check("switch attribute reported_by_device is shown for every switch", state("carpet_boost").attributes["reported_by_device"] is True and state("auto_empty").attributes["reported_by_device"] is False and state("resume_after_charging").attributes["reported_by_device"] is False)
+    check("switch attribute reported_by_device is shown for every switch", state("carpet_boost").attributes["reported_by_device"] is True)
     check("entity names are translated (en)", state("battery").name == "RV-L11-A-TEST Battery" and state("empty_bin").name == "RV-L11-A-TEST Empty bin" and state("carpet_boost").name == "RV-L11-A-TEST Carpet boost" and state("suction_level").name == "RV-L11-A-TEST Suction" and state("mop_water_level").name == "RV-L11-A-TEST Water level", f"{state('battery').name} | {state('suction_level').name}")
     check("status sensor lists options", state("status").attributes["options"][3] == "charging" and len(state("status").attributes["options"]) == 20)
     check("diagnostic entities are categorised", ent_reg.async_get(ids["wifi_signal"]).entity_category == "diagnostic" and ent_reg.async_get(ids["side_brush"]).entity_category == "diagnostic" and ent_reg.async_get(ids["battery"]).entity_category is None)
@@ -1169,17 +1163,10 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     client.props["12300"] = 3
     await coordinator.async_refresh()
 
-    check("a switch for a setting the robot never reported stays available (unknown)", state("auto_empty").state == "unknown", state("auto_empty").state)
-    client.props.update({"11800": 0, "11700": 0})  # the robot starts to report them
     await coordinator.async_refresh()
     await hass.async_block_till_done()
-    check("once the robot reports them the switches show the robot's value", (state("auto_empty").state, state("resume_after_charging").state) == ("off", "off") and state("auto_empty").attributes["reported_by_device"] is True, f"{state('auto_empty').state} {state('resume_after_charging').state}")
-    await call("switch", "turn_on", "auto_empty")
-    check("auto-empty on -> set {11800:1}", client.calls == [("set", "TESTDEVICE0001", {"11800": 1})], str(client.calls))
     await call("switch", "turn_off", "carpet_boost")
     check("carpet boost off -> set {11900:0}", client.calls == [("set", "TESTDEVICE0001", {"11900": 0})], str(client.calls))
-    await call("switch", "turn_on", "resume_after_charging")
-    check("resume after charging on -> set {11700:1}", client.calls == [("set", "TESTDEVICE0001", {"11700": 1})], str(client.calls))
     await call("select", "select_option", "suction_level", option="max")
     check("suction 'max' -> WindWater {Wind:3, Water:2 from the cloud}, no property write", client.calls == [("control", "TESTDEVICE0001", "3100", {"3103": 3, "3102": 2})], str(client.calls))
     await call("select", "select_option", "mop_water_level", option="low")
@@ -1194,7 +1181,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("pressing 'Clean Slaapkamer (3)' sends a clean of room 3 only (mode 1, partition_area [3])", client.calls == [("control", "TESTDEVICE0001", "2700", {"2701": 1, "2702": 1, "2703": 0, "2704": "[3]"})], str(client.calls))
     check("... the press is recorded as the last command", coordinator.last_command is not None and coordinator.last_command["inputs"]["partition_area"] == {"type": "json", "value": [3]}, str(coordinator.last_command))
     await hass.async_block_till_done()
-    check("switch states follow the commanded values", (state("auto_empty").state, state("carpet_boost").state, state("resume_after_charging").state) == ("on", "off", "on"))
+    check("the switch state follows the commanded value", state("carpet_boost").state == "off")
     check("select and fan speed share the commanded suction (last command wins)", (state("suction_level").state, state("vacuum").attributes["fan_speed"], state("mop_water_level").state) == ("quiet", "quiet", "low"), f"{state('suction_level').state} {state('vacuum').attributes['fan_speed']} {state('mop_water_level').state}")
 
     # ---- levels outside 1-3 (a robot with another scale) -------------------------------
@@ -1509,7 +1496,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
     client = FakeClient.instance
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)}
-    check("entities are back after reauth reload", len(ids) == 22 and state("vacuum").state == "docked")
+    check("entities are back after reauth reload", len(ids) == 20 and state("vacuum").state == "docked")
 
     # ---- diagnostics ------------------------------------------------------------------------
     diagnostics = importlib.import_module(f"{PKG}.diagnostics")
@@ -1553,7 +1540,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("diagnostics contain last_command (None before any service call)", dump["robots"][0]["last_command"] is None, str(dump["robots"][0]["last_command"]))
     check("diagnostics redact App ID/Secret", dump["entry"]["app_id"] == "**REDACTED**" and dump["entry"]["app_secret"] == "**REDACTED**")
     check("diagnostics contain no secrets, serial or name", not any(s in blob for s in ("test-app", "new-secret", "test-secret", "TESTDEVICE0001", "RV-L11-A-TEST")), "leak")
-    check("diagnostics tell which settings the robot reports", dump["robots"][0]["reports"]["seen_online"] is True and "rug_press" in dump["robots"][0]["reports"]["reported_identifiers"] and "auto_dust" not in dump["robots"][0]["reports"]["reported_identifiers"], str(dump["robots"][0]["reports"]))
+    check("diagnostics tell which settings the robot reports", dump["robots"][0]["reports"]["seen_online"] is True and "rug_press" in dump["robots"][0]["reports"]["reported_identifiers"], str(dump["robots"][0]["reports"]))
     check("diagnostics include the support report (L11-A: verified, nothing missing or unknown)", dump["robots"][0]["support_report"]["verified_model"] is True and dump["robots"][0]["support_report"]["missing_core"] == [] and dump["robots"][0]["support_report"]["unknown_enum_labels"] == {} and dump["robots"][0]["support_report"]["capabilities"]["room_cleaning"] is True, str(dump["robots"][0].get("support_report")))
     from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
 
@@ -2084,12 +2071,11 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     FakeClient.initial_fail_with = None
 
     # ---- fresh installs: which switches are enabled by default ---------------------------------------
-    switch_keys = ("auto_empty", "carpet_boost", "resume_after_charging")
+    switch_keys = ("carpet_boost",)
     for label, app_id, robot_id, flags, expected_disabled in (
-        ("the real L11-A (11700 and 11800 never reported)", "fresh-l11a", "FRESHROBOT0001", {}, {"auto_empty", "resume_after_charging"}),
-        ("a firmware that reports all three", "fresh-all", "FRESHROBOT0002", {"report_optional": True}, set()),
-        ("a robot that is offline at the first poll", "fresh-offline", "FRESHROBOT0003", {"initial_status": "offline"}, {"auto_empty", "resume_after_charging"}),
-        ("a robot that is asleep at the first poll", "fresh-sleep", "FRESHROBOT0004", {"initial_status": "sleep"}, {"auto_empty", "resume_after_charging"}),
+        ("the real L11-A", "fresh-l11a", "FRESHROBOT0001", {}, set()),
+        ("a robot that is offline at the first poll", "fresh-offline", "FRESHROBOT0003", {"initial_status": "offline"}, set()),
+        ("a robot that is asleep at the first poll", "fresh-sleep", "FRESHROBOT0004", {"initial_status": "sleep"}, set()),
     ):  # fmt: skip
         FakeClient.robot_id = robot_id
         for name, value in flags.items():
@@ -2098,21 +2084,19 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         regs = {e.unique_id.removeprefix(f"{robot_id}_"): e for e in er.async_entries_for_config_entry(ent_reg, fresh.entry_id)}
         if "initial_status" in flags:
             # no first online poll yet: the switches do not exist (so nothing is wrongly enabled), the rest does
-            check(f"fresh install, {label}: no switches yet, the other 16 entities are there", not set(switch_keys) & set(regs) and len(regs) == 16 and fresh.state is config_entries.ConfigEntryState.LOADED, f"{sorted(regs)} {fresh.state}")
+            check(f"fresh install, {label}: no switch yet, the other 16 entities are there", not set(switch_keys) & set(regs) and len(regs) == 16 and fresh.state is config_entries.ConfigEntryState.LOADED, f"{sorted(regs)} {fresh.state}")
             fresh_client = FakeClient.instance
             fresh_client.status = "online"
             await fresh.runtime_data.coordinators[robot_id].async_refresh()
             await hass.async_block_till_done()
             regs = {e.unique_id.removeprefix(f"{robot_id}_"): e for e in er.async_entries_for_config_entry(ent_reg, fresh.entry_id)}
-            check(f"fresh install, {label}: the first online poll adds the switches", set(switch_keys) <= set(regs), str(sorted(regs)))
+            check(f"fresh install, {label}: the first online poll adds the switch", set(switch_keys) <= set(regs), str(sorted(regs)))
         disabled = {k for k in switch_keys if regs[k].disabled_by is not None}
         check(f"fresh install, {label}: disabled by default = {sorted(expected_disabled)}", disabled == expected_disabled and fresh.state is config_entries.ConfigEntryState.LOADED, f"{disabled} {fresh.state}")
-        check(f"fresh install, {label}: all 22 entities are created (disabled ones in the registry only)", len(regs) == 22, str(len(regs)))
-        if expected_disabled:
-            check(f"fresh install, {label}: disabled_by is the integration, disabled switches have no state", all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION and hass.states.get(regs[k].entity_id) is None for k in expected_disabled))
-            check(f"fresh install, {label}: the reported switch is on and says so", hass.states.get(regs["carpet_boost"].entity_id).state == "on" and hass.states.get(regs["carpet_boost"].entity_id).attributes["reported_by_device"] is True)
+        check(f"fresh install, {label}: all 20 entities are created", len(regs) == 20, str(len(regs)))
+        check(f"fresh install, {label}: the reported switch is on and says so", hass.states.get(regs["carpet_boost"].entity_id).state == "on" and hass.states.get(regs["carpet_boost"].entity_id).attributes["reported_by_device"] is True)
         await hass.config_entries.async_remove(fresh.entry_id)
-        FakeClient.robot_id, FakeClient.initial_status, FakeClient.report_optional = "TESTDEVICE0001", "online", False
+        FakeClient.robot_id, FakeClient.initial_status = "TESTDEVICE0001", "online"
 
     # ---- unload ---------------------------------------------------------------------------------
     await hass.services.async_call("vacuum", "locate", {"entity_id": ids["vacuum"]}, blocking=True)
@@ -2547,7 +2531,6 @@ async def rv1lpro_checks(hass: Any, entry: Any) -> None:
     await hass.services.async_call("vacuum", "return_to_base", {"entity_id": regs["vacuum"].entity_id}, blocking=True)
     check("RV1L Pro: return_to_base writes swp_backStation {151300: 1} (start return)", client.calls == [("set", "TESTDEVICE0004", {"151300": 1})], str(client.calls))
     # 2. optional entities, decided by the first (online) poll
-    check("RV1L Pro: Auto-empty and Resume after charging are disabled by default (never reported)", all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION for k in ("auto_empty", "resume_after_charging")), str({k: regs[k].disabled_by for k in ("auto_empty", "resume_after_charging")}))
     check("RV1L Pro: Carpet boost is reported, so enabled and on", regs["carpet_boost"].disabled_by is None and state("carpet_boost").state == "on")
     check("RV1L Pro: the dock sensors are reported, so enabled and show values", all(regs[k].disabled_by is None for k in ("dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag")) and (state("dock_connected").state, state("clean_water_tank").state, state("dust_bag").state) == ("off", "normal", "normal"), str([state(k).state for k in ("dock_connected", "clean_water_tank", "dust_bag")]))
     # 4. suction and 5. water volume
@@ -2597,14 +2580,14 @@ async def rv1lpro_late_checks(hass: Any, entry: Any) -> None:
     def keys() -> dict[str, Any]:
         return {e.unique_id.split("_", 1)[1]: e for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
 
-    optional = {"auto_empty", "carpet_boost", "resume_after_charging", "dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag"}
-    check("offline at setup: the optional switches and dock sensors do not exist yet", not optional & set(keys()) and "battery" in keys(), str(sorted(keys())))
+    optional = {"carpet_boost", "dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag"}
+    check("offline at setup: the optional switch and dock sensors do not exist yet", not optional & set(keys()) and "battery" in keys(), str(sorted(keys())))
     client.status = "online"
     await coordinator.async_refresh()
     await hass.async_block_till_done()
     regs = keys()
     check("the first online poll creates them", optional <= set(regs), str(sorted(optional - set(regs))))
-    check("... decided on that poll: Auto-empty / Resume after charging disabled, the reported ones enabled", {k for k in optional if regs[k].disabled_by is not None} == {"auto_empty", "resume_after_charging"}, str({k: regs[k].disabled_by for k in optional}))
+    check("... decided on that poll: the RV1L Pro reports all of them, so they are enabled", all(regs[k].disabled_by is None for k in optional), str({k: regs[k].disabled_by for k in optional}))
     count = len(regs)
     await coordinator.async_refresh()
     await hass.async_block_till_done()
@@ -2622,14 +2605,13 @@ async def rv1_silent_checks(hass: Any, entry: Any) -> None:
     dock = ("dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag")
     check("the robot never reports station_status: the four dock entities are disabled by default", all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION for k in dock if k not in ("dust_bag", "clean_water_tank")), str({k: regs[k].disabled_by for k in dock}))
     # the entities that existed (enabled) before this version are not touched by the new default and stay available
-    for key in ("dust_bag", "clean_water_tank", "auto_empty"):
+    for key in ("dust_bag", "clean_water_tank"):
         check(f"an enabled {key} entity of the robot that never reports it is unknown, not unavailable", hass.states.get(regs[key].entity_id).state == "unknown", str(hass.states.get(regs[key].entity_id)))
     check("... the Carpet boost it does report is available", hass.states.get(regs["carpet_boost"].entity_id).state == "on")
     client.props["121100"] = {"121101": 1, "121102": 0, "121103": 0, "121104": 2}
-    client.props["118400"] = 1  # auto_dust of this model
     await coordinator.async_refresh()
     await hass.async_block_till_done()
-    check("when the robot starts to report them, the entities show the values", (hass.states.get(regs["dust_bag"].entity_id).state, hass.states.get(regs["clean_water_tank"].entity_id).state, hass.states.get(regs["auto_empty"].entity_id).state) == ("full", "normal", "on"), str([hass.states.get(regs[k].entity_id).state for k in ("dust_bag", "clean_water_tank", "auto_empty")]))
+    check("when the robot starts to report them, the entities show the values", (hass.states.get(regs["dust_bag"].entity_id).state, hass.states.get(regs["clean_water_tank"].entity_id).state) == ("full", "normal"), str([hass.states.get(regs[k].entity_id).state for k in ("dust_bag", "clean_water_tank")]))
 
 
 def test_rv1lpro_setup() -> None:
@@ -2650,7 +2632,7 @@ def test_optional_entities_of_a_silent_robot() -> None:
 
     def before(registry: Any) -> None:
         # entities of an earlier version: enabled in the registry
-        for platform, key in (("sensor", "dust_bag"), ("sensor", "clean_water_tank"), ("switch", "auto_empty")):
+        for platform, key in (("sensor", "dust_bag"), ("sensor", "clean_water_tank")):
             registry.async_get_or_create(platform, "imou_vacuum", f"TESTDEVICE0004_{key}", suggested_object_id=f"rv1l_pro_test_{key}")
 
     try:

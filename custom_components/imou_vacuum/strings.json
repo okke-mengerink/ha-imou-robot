@@ -237,14 +237,8 @@
       }
     },
     "switch": {
-      "auto_empty": {
-        "name": "Auto-empty"
-      },
       "carpet_boost": {
         "name": "Carpet boost"
-      },
-      "resume_after_charging": {
-        "name": "Resume after charging"
       }
     },
     "vacuum": {

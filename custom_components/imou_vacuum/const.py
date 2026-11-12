@@ -90,8 +90,6 @@ PROP_CLEAN_TIME: Final = "clean_time"
 PROP_WIND_POWER: Final = "windpower"
 PROP_WATER: Final = "water"
 PROP_MOP_ENABLE: Final = "mopenable"
-PROP_KEEP_CLEAN: Final = "keep_clean"
-PROP_AUTO_DUST: Final = "auto_dust"
 PROP_RUG_PRESS: Final = "rug_press"
 PROP_LIFE: Final = "life"
 PROP_ERROR_INFO: Final = "errorinfo"
@@ -129,8 +127,6 @@ POLL_IDENTIFIERS: Final[tuple[str, ...]] = (
     PROP_WATER,
     PROP_MOP_ENABLE,
     PROP_MOP_SPEED,
-    PROP_KEEP_CLEAN,
-    PROP_AUTO_DUST,
     PROP_RUG_PRESS,
     PROP_LIFE,
     PROP_ERROR_INFO,
@@ -216,8 +212,6 @@ FALLBACK_PROPERTY_REFS: Final[dict[str, str]] = {
     PROP_WIND_POWER: "1027",
     PROP_WATER: "1028",
     PROP_MOP_ENABLE: "1029",
-    PROP_KEEP_CLEAN: "11700",
-    PROP_AUTO_DUST: "11800",
     PROP_RUG_PRESS: "11900",
     PROP_LIFE: "12200",
     PROP_ERROR_INFO: "40500",
