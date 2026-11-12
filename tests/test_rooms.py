@@ -434,10 +434,79 @@ def test_one_off_schedule_keeps_epoch_start() -> None:
     assert (schedule.start + 3600) % 86400 == 12 * 3600 + 41 * 60
 
 
-def test_rv1_schedule_time_is_unchanged() -> None:
+def test_rv1_schedule_time_and_days_match_the_l11a_format() -> None:
+    # verified in the app: start_time is LOCAL seconds since midnight (7200 is 02:00,
+    # 82800 is 23:00); select_day is 1 = Monday ... 7 = Sunday
     result = rooms.parse_schedules(rv1_response(rv1_item()), None, rv1_members())
     schedule = result.schedules[0]
-    assert schedule.start is None and schedule.time_of_day is None and schedule.days == []
+    assert schedule.start is None and schedule.start_raw == 82800
+    assert schedule.time_of_day == "23:00"
+    assert schedule.days == ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+    assert schedule.period == [7, 1, 2, 3, 4, 5, 6]
+    two = rooms.parse_schedules(rv1_response(rv1_item(**{"201669": 7200, "201668": "[1,3]"})), None, rv1_members())
+    assert two.schedules[0].time_of_day == "02:00" and two.schedules[0].days == ["mon", "wed"]
+    # the same attribute values as an L11-A schedule of that time and days: strings "HH:MM", "mon"...
+    l11a = rooms.parse_schedules(response([{"period": [1, 3], "cleanAreas": [], "startTime": 7200}])).schedules[0]
+    assert (l11a.time_of_day, l11a.days) == (two.schedules[0].time_of_day, two.schedules[0].days)
+    # a list instead of text, out-of-range days are skipped, 0 is not a day
+    odd = rooms.parse_schedules(rv1_response(rv1_item(**{"201668": [0, 8, 2, True, "x", 5], "201669": 86399})), None, rv1_members())
+    assert odd.schedules[0].days == ["tue", "fri"] and odd.schedules[0].time_of_day == "23:59"
+    # no days (a one-off schedule): a time, no days
+    once = rooms.parse_schedules(rv1_response(rv1_item(**{"201668": "[]", "201669": 0})), None, rv1_members())
+    assert once.schedules[0].time_of_day == "00:00" and once.schedules[0].days == []
+    # a start_time that is no time of day gives no time
+    for start in (None, "bad", -1, 86400, 1794224460):
+        item = rv1_item(**{"201669": start})
+        if start is None:
+            del item["201669"]
+        schedule = rooms.parse_schedules(rv1_response(item), None, rv1_members()).schedules[0]
+        assert schedule.time_of_day is None, start
+
+
+def test_sequence_room_ids() -> None:
+    assert rooms.sequence_room_ids([-128, -126, -127, -124]) == [-128, -126, -127, -124]
+    assert rooms.sequence_room_ids([]) == [] and rooms.sequence_room_ids(None) == []
+    assert rooms.sequence_room_ids("[-128,-127]") == [-128, -127]
+    assert rooms.sequence_room_ids("1, -2") == [1, -2]
+    assert rooms.sequence_room_ids([1, "x", None, True, 2.0, "3", 1]) == [1, 2, 3]
+    assert rooms.sequence_room_ids({"a": 1}) == []
+    assert rooms.sequence_room_ids([-128, 0, -127, 0, 0]) == [-128, -127]  # zero padding
+    assert rooms.sequence_room_ids([0, 0]) == [] and rooms.sequence_room_ids("0,0,3") == [3]
+
+
+def test_known_rooms_include_the_cleaning_order() -> None:
+    # verified on an RV1 Pro Max: the schedule has [-128, -127], the sequence the 4 rooms
+    schedule = rooms.parse_schedules(rv1_response(rv1_item(**{"201665": 1, "201666": [{"id": -128, "name": "Kitchen"}, {"id": -127}]})), None, rv1_members())
+    assert rooms.known_rooms(schedule) == {-128: "Kitchen", -127: None}
+    both = rooms.known_rooms(schedule, [-128, -126, -127, -124])
+    assert both == {-128: "Kitchen", -127: None, -126: None, -124: None}
+    assert list(both) == [-128, -127, -126, -124]  # ascending
+    # without schedules the sequence alone gives the rooms (no names)
+    assert rooms.known_rooms(None, [-127, -128]) == {-128: None, -127: None}
+    assert rooms.known_rooms(rooms.ScheduleList(None, []), []) == {}
+    assert rooms.known_rooms(None) == {}
+    # the named rooms are added on top
+    assert rooms.remembered_rooms(rooms.known_rooms(None, [-127]), {-5: "Mine", -127: "Hall"}) == {-127: None, -5: None}
+
+
+def test_negative_room_ids_everywhere() -> None:
+    assert _default(-127) == "Room -127"
+    known = {-128: None, -127: "Kantoor", 3: None}
+    names = rooms.segment_names(known, known, {-128: "Mine"}, _default)
+    assert names == {-128: "Mine", -127: "Kantoor", 3: "Room 3"}
+    same = rooms.segment_names({-1: None, 1: None}, {-1: "Wc", 1: "Wc"}, {}, _default)
+    assert same == {-1: "Wc (-1)", 1: "Wc (1)"}
+    assert rooms.room_button_name("Room -127", "Room -127") == "room -127"
+    labels = rooms.room_area_labels({-127: None, -126: "Kantoor"}, {}, _default)
+    assert list(labels.items()) == [("Room -127", -127), ("Room -126: Kantoor", -126)]
+    assert rooms.parse_room_names("-127 = Hall\n3 = Office") == {-127: "Hall", 3: "Office"}
+    assert rooms.format_room_names({3: "Office", -127: "Hall"}) == "-127 = Hall\n3 = Office"
+    assert rooms.partition_area([-128, -127]) == "[-128,-127]"
+    assert rooms.areas_by_room({"hall": ["-127", "3"]}, [-127, 3]) == {-127: "hall", 3: "hall"}
+    new = rooms.new_area_mapping({}, {-127: "hall", -128: "hall"})
+    assert new == {"hall": ["-128", "-127"]}
+    last = rooms.new_last_seen_segments([], {-127: "Hall"})
+    assert last == [{"id": "-127", "name": "Hall", "group": None}]
 
 
 def _default(room_id: int) -> str:

@@ -1,8 +1,9 @@
 """Rooms and schedules of the robot.
 
-The robot does not report its rooms or a map. Room ids, and the room TYPE labels
-that were chosen in the Imou app, only appear in the cleaning schedules
-(``clean_list``). This module parses those schedules and works with room names.
+The robot does not report a map. Room ids, and the room TYPE labels that were chosen
+in the Imou app, appear in the cleaning schedules (``clean_list``); a model with the
+property ``sequence`` (the cleaning order) also reports its room ids there. Room ids
+can be negative. This module parses those and works with room names.
 
 This module is deliberately free of Home Assistant imports so that it can be
 unit tested with plain Python.
@@ -37,12 +38,13 @@ class Schedule:
     aligned: bool = False
     # Only for the array-of-struct format (RV1 Pro Max); None/{} otherwise.
     once: bool | None = None  # True: runs one time, False: repeats
-    start_raw: Any = None  # start_time as reported; its meaning/timezone is unknown
+    start_raw: Any = None  # start_time as reported
     timer_id: int | None = None
     map_id: int | None = None
     room_names: dict[int, str] = field(default_factory=dict)  # exact names, by room id
-    # Only for the L11-A format of a repeating schedule: the local time of day
-    # ("HH:MM") and the repeat days ("sun" ... "sat"; the robot counts 0 = Sunday)
+    # The local time of day ("HH:MM") and the repeat days ("mon" ... "sun"). L11-A: only
+    # for a repeating schedule, days counted 0 = Sunday; RV1: from start_time (local
+    # seconds since midnight) and select_day (1 = Monday ... 7 = Sunday).
     time_of_day: str | None = None
     days: list[str] = field(default_factory=list)
 
@@ -58,10 +60,17 @@ class ScheduleList:
 _DAY_SECONDS = 86400
 # period 0 = Sunday (verified on an L11-A); 1 = Monday ... 6 = Saturday is assumed
 _DAY_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+# RV1 select_day: 1 = Monday ... 7 = Sunday (verified: 7 is Sunday in the app)
+_STRUCT_DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 # start/end times outside 2000-01-01..2100-01-01 (e.g. milliseconds) are not usable
 _MIN_TIMESTAMP = 946684800
 _MAX_TIMESTAMP = 4102444800
+
+
+def _time_of_day(seconds: int) -> str:
+    """Format local seconds since midnight as ``HH:MM``."""
+    return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
 
 
 def _timestamp(value: Any) -> int | None:
@@ -130,7 +139,7 @@ def _parse_schedule(raw: Any) -> Schedule | None:
     days: list[str] = []
     if period:
         if seconds_of_day:
-            time_of_day = f"{start_time // 3600:02d}:{start_time % 3600 // 60:02d}"
+            time_of_day = _time_of_day(start_time)
         days = [
             _DAY_NAMES[day]
             for item in period
@@ -233,12 +242,17 @@ def _parse_struct_schedule(raw: Any, members: Mapping[str, PropertyDef]) -> Sche
         room_ids, room_names = _area_array(get("area_array"))
     map_id = get("map_id")
     timer_id = get("timerid")
+    period = _int_list(get("select_day"))
+    # start_time is the LOCAL time of day in seconds (verified: 7200 is 02:00 and
+    # 82800 is 23:00 in the app); select_day counts 1 = Monday ... 7 = Sunday
+    start_time = to_int(get("start_time"))
+    seconds_of_day = start_time is not None and 0 <= start_time < _DAY_SECONDS
     return Schedule(
         enabled=True if state is None else state,
         active=None,
-        start=None,  # the meaning of start_time is unknown, so it is not converted
+        start=None,  # a time of day, not a moment (see time_of_day)
         end=None,
-        period=_int_list(get("select_day")),
+        period=period,
         room_ids=room_ids,
         rooms_unknown=bool(rooms_only) and not room_ids,
         tags=[],
@@ -248,6 +262,12 @@ def _parse_struct_schedule(raw: Any, members: Mapping[str, PropertyDef]) -> Sche
         timer_id=None if timer_id is None else to_int(timer_id),
         map_id=None if map_id is None else to_int(map_id),
         room_names=room_names,
+        time_of_day=_time_of_day(start_time) if seconds_of_day else None,
+        days=[
+            _STRUCT_DAY_NAMES[day - 1]
+            for day in period
+            if 1 <= day <= len(_STRUCT_DAY_NAMES)
+        ],
     )
 
 
@@ -324,15 +344,31 @@ def parse_timer(entry: Mapping[str, Any]) -> ScheduleList:
     return ScheduleList(tz_offset=tz_offset, schedules=schedules)
 
 
-def known_rooms(schedules: ScheduleList | None) -> dict[int, str | None]:
-    """Return every room id of every schedule (ascending), with a name if known.
+def sequence_room_ids(value: Any) -> list[int]:
+    """Return the room ids of the ``sequence`` property (the cleaning order).
+
+    The value is an int array (a JSON text or a comma-separated string is tolerated);
+    ids can be negative. Entries that are not numbers are skipped, and an id that
+    shows up twice is kept once. Zeros are ignored (a fixed-size array may be padded
+    with them). A robot without rooms reports ``[]``.
+    """
+    return list(dict.fromkeys(room for room in _int_list(value) if room != 0))
+
+
+def known_rooms(
+    schedules: ScheduleList | None, sequence: Iterable[int] = ()
+) -> dict[int, str | None]:
+    """Return every room id of every schedule and of the cleaning order (ascending),
+    with a name if known.
+
+    The rooms of ``sequence`` (the ids of the ``sequence`` property) have no name.
 
     The labels are room TYPES and rooms without a label are skipped, so a name is
     only taken from a schedule whose raw ids and labels have the same length and
     are all usable (``aligned``). Exact names (``room_names``, from the area_array
     of an RV1 Pro Max schedule) are always used. The first exact name wins.
     """
-    rooms: dict[int, str | None] = {}
+    rooms: dict[int, str | None] = dict.fromkeys(sequence)
     names: dict[int, str] = {}
     for schedule in schedules.schedules if schedules is not None else []:
         for index, room_id in enumerate(schedule.room_ids):

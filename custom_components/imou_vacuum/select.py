@@ -39,7 +39,7 @@ SELECTS: tuple[ImouSelectDescription, ...] = (
     ),
     ImouSelectDescription(
         key="mop_intensity",
-        translation_key="mop_intensity",
+        translation_key="water_volume",
         identifier=PROP_MOP_SPEED,
     ),
 )
@@ -84,12 +84,17 @@ class ImouLevelSelect(ImouEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
+        # the levels the robot may report, and the ones that are offered (a robot
+        # reports suction level 0 as "off", but the app does not offer it)
         if description.identifier == PROP_WIND_POWER:
             self._levels = coordinator.model.wind_levels()
-        elif description.identifier == PROP_MOP_SPEED:
+            self._choices = coordinator.model.wind_choices()
+            return
+        if description.identifier == PROP_MOP_SPEED:
             self._levels = coordinator.model.mop_levels()
         else:
             self._levels = LEVEL_KEYS[description.identifier]
+        self._choices = self._levels
 
     def _raw(self) -> int | None:
         identifier = self.entity_description.identifier
@@ -99,11 +104,12 @@ class ImouLevelSelect(ImouEntity, SelectEntity):
     @property
     @override
     def options(self) -> list[str]:
-        """Return the known levels, plus the current value if it is not one."""
-        options = list(self._levels.values())
+        """Return the offered levels, plus the current value if it is not one of them
+        (a level that is not offered, or one that is not known)."""
+        options = list(self._choices.values())
         raw = self._raw()
-        if raw is not None and raw not in self._levels:
-            options.append(f"unknown_{raw}")
+        if raw is not None and raw not in self._choices:
+            options.append(level_key(self._levels, raw) or f"unknown_{raw}")
         return options
 
     @property
@@ -115,7 +121,7 @@ class ImouLevelSelect(ImouEntity, SelectEntity):
     @override
     async def async_select_option(self, option: str) -> None:
         """Set a level."""
-        levels = {key: level for level, key in self._levels.items()}
+        levels = {key: level for level, key in self._choices.items()}
         if (level := levels.get(option)) is None:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,

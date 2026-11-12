@@ -18,8 +18,6 @@ from .const import (
     INPUT_MODE,
     INPUT_PARTITION_AREA,
     INPUT_STATUS,
-    PROP_BACK_CHARGING,
-    PROP_BACK_STATION,
     PROP_ERROR_INFO,
     PROP_POWER,
     PROP_WIFI,
@@ -83,10 +81,7 @@ def support_report(model: ThingsModel, device_model: str | None = None) -> dict[
         "start": has_status_input,
         "pause": has_status_input,
         "stop": has_status_input,
-        "return_to_dock": (
-            model.prop(PROP_BACK_CHARGING) is not None
-            or model.prop(PROP_BACK_STATION) is not None
-        ),
+        "return_to_dock": model.return_home() is not None,
         "battery": model.prop(PROP_POWER) is not None,
         "status": model.prop(PROP_WORK_STATUS) is not None,
         "suction": model.prop(PROP_WIND_POWER) is not None,

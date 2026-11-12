@@ -44,6 +44,8 @@ MODEL_JSON = json.loads((ROOT / "tests/fixtures/l11a_model.json").read_text("utf
 VALUES_JSON = json.loads((ROOT / "tests/fixtures/l11a_values.json").read_text("utf-8"))
 RV1_MODEL_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_model.json").read_text("utf-8"))
 RV1_VALUES_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_values.json").read_text("utf-8"))
+RV1LPRO_MODEL_JSON = json.loads((ROOT / "tests/fixtures/rv1lpro_model.json").read_text("utf-8"))
+RV1LPRO_VALUES_JSON = json.loads((ROOT / "tests/fixtures/rv1lpro_values.json").read_text("utf-8"))
 RV1_CLEAN_LIST_JSON = json.loads((ROOT / "tests/fixtures/rv1promax_clean_list.json").read_text("utf-8"))
 ICONS_JSON = json.loads((PKG_DIR / "icons.json").read_text("utf-8"))
 STRINGS_JSON = json.loads((PKG_DIR / "strings.json").read_text("utf-8"))
@@ -122,7 +124,9 @@ class FakeCoordinator:
         self.calls: list[tuple[Any, ...]] = []
         self.commanded: defaultdict[str, Any] = defaultdict(mod("commanded").CommandedValue)
         self.schedules: Any = None  # no schedules read yet
+        self.sequence_rooms: Any = None
         self.rooms_cleaned: list[list[int]] = []
+        self.listeners: list[Any] = []
 
     def can_switch_schedules(self) -> bool:
         return mod("coordinator").ImouCoordinator.can_switch_schedules(self)
@@ -136,8 +140,20 @@ class FakeCoordinator:
     def set_values(self, **values: Any) -> None:
         self.data.values.update(values)
 
-    def async_add_listener(self, *args: Any, **kwargs: Any) -> Any:
-        return lambda: None
+    def async_add_listener(self, update_callback: Any, *args: Any, **kwargs: Any) -> Any:
+        self.listeners.append(update_callback)
+
+        def remove() -> None:
+            self.listeners.remove(update_callback)  # (a second call would fail, like in Home Assistant)
+
+        return remove
+
+    def first_online_poll(self, raw_values: dict[str, Any]) -> None:
+        """The robot comes online: record the poll and call the listeners."""
+        self.data = mod("coordinator").ImouRobotState(online=True, values=self.model.parse_values(raw_values))
+        self.reports.update(True, self.data.values)
+        for listener in list(self.listeners):
+            listener()
 
     async def async_refresh(self) -> None:
         return None
@@ -419,10 +435,31 @@ def test_entities() -> None:
         "switch attribute reported_by_device",
         {k: sw.extra_state_attributes for k, sw in switches.items()} == {"auto_empty": {"reported_by_device": False}, "carpet_boost": {"reported_by_device": True}, "resume_after_charging": {"reported_by_device": False}},
     )  # fmt: skip
+    check("a setting the robot never reported stays available (unknown state); only the default enabled state differs", all(sw.available for sw in switches.values()) and (switches["auto_empty"].is_on, switches["carpet_boost"].is_on) == (None, True), str({k: sw.available for k, sw in switches.items()}))
     all_reported = by_key(make_entities(FakeCoordinator(MODEL_JSON, {**VALUES_JSON["properties"], "11700": 0, "11800": 1}))["switch"])
     check("a robot that reports all three: all enabled by default, all reported", all(sw.entity_registry_enabled_default and sw.extra_state_attributes["reported_by_device"] for sw in all_reported.values()))
-    no_evidence = by_key(make_entities(FakeCoordinator(MODEL_JSON, {}, online=False))["switch"])
-    check("no evidence (offline at the first poll): nothing is disabled", all(sw.entity_registry_enabled_default and not sw.extra_state_attributes["reported_by_device"] for sw in no_evidence.values()))
+    # offline at setup: nothing is created (so nothing can be wrongly enabled) until the first online poll
+    offline = FakeCoordinator(MODEL_JSON, {}, online=False)
+    added: list[Any] = []
+    unloads: list[Any] = []
+    offline_entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinators={"x": offline}), async_on_unload=unloads.append)
+    asyncio.run(mod("switch").async_setup_entry(None, offline_entry, lambda entities, **_: added.extend(entities)))
+    check("offline at the first poll: no switches yet, waiting for the robot", not added and len(offline.listeners) == 1)
+    offline.listeners[0]()
+    check("a listener call while the robot is still offline adds nothing", not added and len(offline.listeners) == 1)
+    offline.first_online_poll(VALUES_JSON["properties"])
+    late = {e.unique_id.split("_", 1)[1]: e for e in added}
+    check("the first online poll creates the switches once, and stops listening", sorted(late) == ["auto_empty", "carpet_boost", "resume_after_charging"] and not offline.listeners and len(added) == 3, str(sorted(late)))
+    check("... enabled by default from that poll: only the reported one", {k: sw.entity_registry_enabled_default for k, sw in late.items()} == {"auto_empty": False, "carpet_boost": True, "resume_after_charging": False})
+    for unload in unloads:
+        unload()  # the unload after the listener removed itself must not fail
+    check("unloading after the first poll is safe", True)
+    unloaded: list[Any] = []
+    fresh_offline = FakeCoordinator(MODEL_JSON, {}, online=False)
+    asyncio.run(mod("switch").async_setup_entry(None, SimpleNamespace(runtime_data=SimpleNamespace(coordinators={"x": fresh_offline}), async_on_unload=unloaded.append), lambda entities, **_: None))
+    for unload in unloaded:
+        unload()
+    check("unloading before the robot came online removes the listener", not fresh_offline.listeners)
     check("switches are still created for every identifier in the model", set(switches) == {"auto_empty", "carpet_boost", "resume_after_charging"})
     check("switch states: auto_empty/resume unknown, carpet_boost on", (switches["auto_empty"].is_on, switches["resume_after_charging"].is_on, switches["carpet_boost"].is_on) == (None, None, True))
 
@@ -537,7 +574,7 @@ def test_entities() -> None:
     coordinator.last_update_success = False
     check("entities unavailable after a failed update", all(not e.available for v in ents.values() for e in v))
     coordinator.last_update_success = True
-    check("entities available again", all(e.available for v in ents.values() for e in v))
+    check("entities available again, also the settings the robot never reported (the L11-A never reports auto-empty)", all(e.available for v in ents.values() for e in v))
 
     # --- only entities whose identifiers exist -----------------------------------
     slim = copy.deepcopy(MODEL_JSON)
@@ -567,6 +604,43 @@ def test_model_adaptive_entities() -> None:
         check("Charging: off for power_status 0", charging.is_on is False)
         rv1.set_values(power_status=2)
         check("Charging: off for power_status 2 (abnormal)", charging.is_on is False)
+        no_status = {k: v for k, v in rv1_values.items() if k != "112200"}
+        rv1_bare = FakeCoordinator(RV1_MODEL_JSON, no_status)
+        bare_charging = by_key(make_entities(rv1_bare)["binary_sensor"])["charging"]
+        check("Charging without a power_status value: the battery sign decides (-38 is charging)", bare_charging.is_on is True, str(bare_charging.is_on))
+        rv1_bare.set_values(power=38)
+        check("Charging without a power_status value: a positive battery is unknown, not off", bare_charging.is_on is None)
+        rv1_bare.set_values(power=None)
+        check("Charging without power_status and battery: unknown", bare_charging.is_on is None)
+        rv1_bare.set_values(power=-38, power_status=0)
+        check("Charging: a power_status value wins over the battery sign", bare_charging.is_on is False)
+
+    # dock sensors: created once the robot was seen online; disabled by default and unavailable
+    # when it never reports station_status (RV1 Pro Max), enabled when it does
+    dock_keys = ("dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag")
+
+    def dock_entities(coordinator: Any) -> dict[str, Any]:
+        out = make_entities(coordinator)
+        return {k: e for k, e in {**by_key(out["binary_sensor"]), **by_key(out["sensor"])}.items() if k in dock_keys}
+
+    silent = dock_entities(FakeCoordinator(RV1_MODEL_JSON, RV1_VALUES_JSON["properties"]))
+    check("RV1 Pro Max (never reports station_status): the four dock entities exist but are disabled by default", sorted(silent) == sorted(dock_keys) and not any(e.entity_registry_enabled_default for e in silent.values()), str({k: e.entity_registry_enabled_default for k, e in silent.items()}))
+    check("... and they stay available (state unknown), not unavailable", all(e.available for e in silent.values()))
+    dock = {"121100": {"121101": True, "121102": 0, "121103": 0, "121104": 0}}
+    loud = dock_entities(FakeCoordinator(RV1_MODEL_JSON, {**RV1_VALUES_JSON["properties"], **dock}))
+    check("a robot that reports station_status (RV1L Pro): the dock entities are enabled and available", all(e.entity_registry_enabled_default and e.available for e in loud.values()) and len(loud) == 4)
+    waiting = FakeCoordinator(RV1_MODEL_JSON, {}, online=False)
+    waiting_added: dict[str, list[Any]] = {"sensor": [], "binary_sensor": []}
+    for platform, collected in waiting_added.items():
+        waiting_entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinators={"x": waiting}), async_on_unload=lambda unsub: None)
+        asyncio.run(mod(platform).async_setup_entry(None, waiting_entry, lambda entities, collected=collected, **_: collected.extend(entities)))
+    waiting_keys = {e.unique_id.split("_", 1)[1] for v in waiting_added.values() for e in v}
+    check("a robot that is offline at setup: no dock entities yet (the rest is there), two listeners wait", not waiting_keys & set(dock_keys) and "battery" in waiting_keys and len(waiting.listeners) == 2, str(waiting_keys))
+    waiting.first_online_poll(RV1_VALUES_JSON["properties"])
+    late_dock = {e.unique_id.split("_", 1)[1]: e for v in waiting_added.values() for e in v if e.unique_id.split("_", 1)[1] in dock_keys}
+    check("... the first online poll adds them, disabled because it lacks station_status, and the listeners are gone", sorted(late_dock) == sorted(dock_keys) and not any(e.entity_registry_enabled_default for e in late_dock.values()) and not waiting.listeners, str(sorted(late_dock)))
+    mop = by_key(make_entities(FakeCoordinator(RV1_MODEL_JSON, RV1_VALUES_JSON["properties"]))["binary_sensor"])["mop_fitted"]
+    check("Mop fitted has the translation key mop_fitted (states Fitted / Not fitted in the translations)", mop.translation_key == "mop_fitted" and EN_JSON["entity"]["binary_sensor"]["mop_fitted"]["state"] == {"on": "Fitted", "off": "Not fitted"} and STRINGS_JSON == EN_JSON)
     l11a_ents = make_entities(FakeCoordinator(MODEL_JSON, VALUES_JSON["properties"]))
     check("L11-A: no Charging binary sensor", "charging" not in by_key(l11a_ents["binary_sensor"]), str(list(by_key(l11a_ents["binary_sensor"]))))
 
@@ -697,6 +771,8 @@ def test_files() -> None:
     check("sensor name Schedules", en["entity"]["sensor"]["schedules"]["name"] == "Schedules")
     check("English suction/water labels", en["entity"]["select"]["suction_level"]["state"] == {"off": "Off", "quiet": "Quiet", "standard": "Standard", "strong": "Strong", "max": "Max"} and en["entity"]["select"]["mop_water_level"]["state"] == {"low": "Low", "medium": "Medium", "high": "High"})
     check("no number entities are left in the translations", "number" not in en["entity"])
+    check("water volume (mop_speed): named 'Water volume', a translated state for every level, the old mop_intensity key is gone", en["entity"]["select"]["water_volume"]["name"] == "Water volume" and en["entity"]["select"]["water_volume"]["state"] == {"off": "Off", "low": "Low", "medium": "Medium"} and set(en["entity"]["select"]["water_volume"]["state"]) == set(const.MOP_SPEED_KEYS.values()) == set(const.MOP_SPEED_LABEL_KEYS.values()) and "mop_intensity" not in en["entity"]["select"])
+    check("mop fitted: translated states Fitted / Not fitted", en["entity"]["binary_sensor"]["mop_fitted"]["state"] == {"on": "Fitted", "off": "Not fitted"})
 
     icons = json.loads((PKG_DIR / "icons.json").read_text("utf-8"))
     icon_keys = {(p, k) for p, d in icons["entity"].items() for k in d}
@@ -708,7 +784,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.6.0"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.6.1"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -825,6 +901,8 @@ class FakeClient:
         self.fail_set_with: Exception | None = None  # makes only property writes fail
         self.fail_control_with: Exception | None = None  # makes only service calls fail
         self.fail_schedules_with: Exception | None = None  # makes only clean_list fail
+        self.fail_sequence_with: Exception | None = None  # makes only the sequence read fail
+        self.sequence_reads = 0
         self.timer_value: Any = copy.deepcopy(SCHEDULES_VALUE)
         self.latency = False  # service calls yield to the event loop first (to interleave concurrent calls)
         self.ignore_sets = False  # simulate a cloud that accepts but does not apply writes
@@ -856,7 +934,12 @@ class FakeClient:
     async def async_get_properties(self, product_id: str, device_id: str, refs: Any) -> Any:
         api = mod("api")
         self.poll_count += 1
-        self.last_refs = list(refs)
+        if list(refs) != ["120600"]:  # (the cleaning order, read together with the schedules, is not the poll)
+            self.last_refs = list(refs)
+        if list(refs) == ["120600"]:
+            self.sequence_reads += 1
+            if self.fail_sequence_with is not None:
+                raise self.fail_sequence_with
         if self.fail_with is not None:
             raise self.fail_with
         values = {ref: self.props[ref] for ref in refs if ref in self.props} if self.status == "online" or self.report_while_not_online else {}
@@ -1030,7 +1113,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     }  # fmt: skip
     got = {k: state(k).state for k in expected_states}
     check("initial states from the observed values", got == expected_states, str({k: (v, expected_states[k]) for k, v in got.items() if v != expected_states[k]}))
-    check("switch attribute reported_by_device is shown", (state("carpet_boost").attributes["reported_by_device"], state("auto_empty").attributes["reported_by_device"], state("resume_after_charging").attributes["reported_by_device"]) == (True, False, False))
+    check("switch attribute reported_by_device is shown for every switch", state("carpet_boost").attributes["reported_by_device"] is True and state("auto_empty").attributes["reported_by_device"] is False and state("resume_after_charging").attributes["reported_by_device"] is False)
     check("entity names are translated (en)", state("battery").name == "RV-L11-A-TEST Battery" and state("empty_bin").name == "RV-L11-A-TEST Empty bin" and state("carpet_boost").name == "RV-L11-A-TEST Carpet boost" and state("suction_level").name == "RV-L11-A-TEST Suction" and state("mop_water_level").name == "RV-L11-A-TEST Water level", f"{state('battery').name} | {state('suction_level').name}")
     check("status sensor lists options", state("status").attributes["options"][3] == "charging" and len(state("status").attributes["options"]) == 20)
     check("diagnostic entities are categorised", ent_reg.async_get(ids["wifi_signal"]).entity_category == "diagnostic" and ent_reg.async_get(ids["side_brush"]).entity_category == "diagnostic" and ent_reg.async_get(ids["battery"]).entity_category is None)
@@ -1086,6 +1169,11 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     client.props["12300"] = 3
     await coordinator.async_refresh()
 
+    check("a switch for a setting the robot never reported stays available (unknown)", state("auto_empty").state == "unknown", state("auto_empty").state)
+    client.props.update({"11800": 0, "11700": 0})  # the robot starts to report them
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("once the robot reports them the switches show the robot's value", (state("auto_empty").state, state("resume_after_charging").state) == ("off", "off") and state("auto_empty").attributes["reported_by_device"] is True, f"{state('auto_empty').state} {state('resume_after_charging').state}")
     await call("switch", "turn_on", "auto_empty")
     check("auto-empty on -> set {11800:1}", client.calls == [("set", "TESTDEVICE0001", {"11800": 1})], str(client.calls))
     await call("switch", "turn_off", "carpet_boost")
@@ -2000,18 +2088,26 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     for label, app_id, robot_id, flags, expected_disabled in (
         ("the real L11-A (11700 and 11800 never reported)", "fresh-l11a", "FRESHROBOT0001", {}, {"auto_empty", "resume_after_charging"}),
         ("a firmware that reports all three", "fresh-all", "FRESHROBOT0002", {"report_optional": True}, set()),
-        ("a robot that is offline at the first poll (no evidence)", "fresh-offline", "FRESHROBOT0003", {"initial_status": "offline"}, set()),
-        ("a robot that is asleep at the first poll (no evidence)", "fresh-sleep", "FRESHROBOT0004", {"initial_status": "sleep"}, set()),
+        ("a robot that is offline at the first poll", "fresh-offline", "FRESHROBOT0003", {"initial_status": "offline"}, {"auto_empty", "resume_after_charging"}),
+        ("a robot that is asleep at the first poll", "fresh-sleep", "FRESHROBOT0004", {"initial_status": "sleep"}, {"auto_empty", "resume_after_charging"}),
     ):  # fmt: skip
         FakeClient.robot_id = robot_id
         for name, value in flags.items():
             setattr(FakeClient, name, value)
         fresh = await add_entry(app_id)
         regs = {e.unique_id.removeprefix(f"{robot_id}_"): e for e in er.async_entries_for_config_entry(ent_reg, fresh.entry_id)}
+        if "initial_status" in flags:
+            # no first online poll yet: the switches do not exist (so nothing is wrongly enabled), the rest does
+            check(f"fresh install, {label}: no switches yet, the other 16 entities are there", not set(switch_keys) & set(regs) and len(regs) == 16 and fresh.state is config_entries.ConfigEntryState.LOADED, f"{sorted(regs)} {fresh.state}")
+            fresh_client = FakeClient.instance
+            fresh_client.status = "online"
+            await fresh.runtime_data.coordinators[robot_id].async_refresh()
+            await hass.async_block_till_done()
+            regs = {e.unique_id.removeprefix(f"{robot_id}_"): e for e in er.async_entries_for_config_entry(ent_reg, fresh.entry_id)}
+            check(f"fresh install, {label}: the first online poll adds the switches", set(switch_keys) <= set(regs), str(sorted(regs)))
         disabled = {k for k in switch_keys if regs[k].disabled_by is not None}
         check(f"fresh install, {label}: disabled by default = {sorted(expected_disabled)}", disabled == expected_disabled and fresh.state is config_entries.ConfigEntryState.LOADED, f"{disabled} {fresh.state}")
-        expected_count = 19 if "initial_status" in flags else 22  # schedules (and with them the rooms) are only read from an online robot
-        check(f"fresh install, {label}: all {expected_count} entities are created (disabled ones in the registry only)", len(regs) == expected_count, str(len(regs)))
+        check(f"fresh install, {label}: all 22 entities are created (disabled ones in the registry only)", len(regs) == 22, str(len(regs)))
         if expected_disabled:
             check(f"fresh install, {label}: disabled_by is the integration, disabled switches have no state", all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION and hass.states.get(regs[k].entity_id) is None for k in expected_disabled))
             check(f"fresh install, {label}: the reported switch is on and says so", hass.states.get(regs["carpet_boost"].entity_id).state == "on" and hass.states.get(regs["carpet_boost"].entity_id).attributes["reported_by_device"] is True)
@@ -2049,11 +2145,15 @@ def test_full_setup() -> None:
 class RV1Client(FakeClient):
     """Fake client for the RV1 Pro Max (no network)."""
 
+    report_station = True
+
     def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
         super().__init__(session, app_id, app_secret, host)
         self.props = copy.deepcopy(RV1_VALUES_JSON["properties"])
         # room/map properties: never polled, only read by the diagnostics probe
         self.props.update({"126200": [3, 4], "122300": ["Map one"], "120600": [], "121600": []})
+        if RV1Client.report_station:  # (the real RV1 Pro Max never reports it; see rv1_dock_checks)
+            self.props["121100"] = {"121101": True, "121102": 0, "121103": 0, "121104": 0}
         # clean_list: the real response of the user's robot (one whole-house schedule)
         self.clean_list_output: Any = copy.deepcopy(RV1_CLEAN_LIST_JSON["content"]["outputData"])
 
@@ -2066,11 +2166,15 @@ class RV1Client(FakeClient):
 
     async def async_set_properties(self, product_id: str, device_id: str, properties: dict[str, Any]) -> None:
         self.calls.append(("set", device_id, dict(properties)))
+        if self.fail_set_with is not None:
+            raise self.fail_set_with
         self.props.update(properties)
 
     async def async_control(self, product_id: str, device_id: str, ref: str, content: dict[str, Any] | None = None) -> dict[str, Any]:
         if ref == "201600":  # clean_list (read-only): kept out of self.calls
             self.probe_service_calls.append((ref, dict(content or {})))
+            if self.fail_schedules_with is not None:
+                raise self.fail_schedules_with
             return {"content": {"outputData": copy.deepcopy(self.clean_list_output), "service": ref}}
         self.calls.append(("control", device_id, ref, dict(content or {})))
         return {"content": {"outputData": {"200921": 0}, "service": ref}}
@@ -2104,7 +2208,8 @@ async def rv1_setup_checks(config_dir: str) -> None:
         check("RV1 Pro Max: entry is loaded", entry.state is config_entries.ConfigEntryState.LOADED, str(entry.state))
         client = FakeClient.instance
         coordinator = entry.runtime_data.coordinators["TESTDEVICE0002"]
-        ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)}
+        ent_registry = er.async_get(hass)
+        ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in er.async_entries_for_config_entry(ent_registry, entry.entry_id)}
 
         def state(key: str) -> Any:
             return hass.states.get(ids[key])
@@ -2119,13 +2224,20 @@ async def rv1_setup_checks(config_dir: str) -> None:
         check("RV1 Pro Max: polled refs include windpower 118900 and not back_charging/water", "118900" in client.last_refs and "1019" not in client.last_refs and "1028" not in client.last_refs, str(client.last_refs))
         check("RV1 Pro Max: battery -38 shows 38 %", state("battery").state == "38", str(state("battery")))
         check("RV1 Pro Max: power_status 112200 is polled", "112200" in client.last_refs, str(client.last_refs))
-        check("RV1 Pro Max: Charging binary sensor exists (no power_status reported yet -> unknown)", "charging" in ids and state("charging").state == "unknown", str(state("charging")))
+        check("RV1 Pro Max: Charging binary sensor exists; no power_status reported yet, so the battery sign decides (-38 is charging)", "charging" in ids and state("charging").state == "on", str(state("charging")))
         client.props["112200"] = 1
         await coordinator.async_refresh()
         check("RV1 Pro Max: Charging is on for power_status 1 (battery_charging)", state("charging").state == "on" and state("charging").attributes["device_class"] == "battery_charging" and state("charging").name == "RV1-PRO-MAX-TEST Charging", f"{state('charging').state} {dict(state('charging').attributes)}")
         client.props["112200"] = 0
         await coordinator.async_refresh()
         check("RV1 Pro Max: Charging is off for power_status 0", state("charging").state == "off", str(state("charging").state))
+        del client.props["112200"]
+        client.props["11600"] = 38
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: no power_status and a positive battery: Charging is unknown", state("charging").state == "unknown", str(state("charging").state))
+        client.props["11600"] = -38
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: no power_status and a negative battery: Charging is on again", state("charging").state == "on", str(state("charging").state))
         from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
 
         check("RV1 Pro Max: no model support repair issue", ir.async_get(hass).async_get_issue("imou_vacuum", "model_support_TESTDEVICE0002") is None)
@@ -2133,8 +2245,21 @@ async def rv1_setup_checks(config_dir: str) -> None:
         check("RV1 Pro Max: RETURN_HOME is supported (back_station)", bool(features & int(VacuumEntityFeature.RETURN_HOME)), str(features))
         await call("vacuum", "return_to_base", "vacuum")
         check("RV1 Pro Max: return_to_base writes back_station {119300: 1}", client.calls == [("set", "TESTDEVICE0002", {"119300": 1})], str(client.calls))
-        check("RV1 Pro Max: fan_speed_list is off/quiet/standard/strong/max, current 2 -> standard", list(state("vacuum").attributes["fan_speed_list"]) == ["off", "quiet", "standard", "strong", "max"] and state("vacuum").attributes["fan_speed"] == "standard", str(dict(state("vacuum").attributes)))
-        check("RV1 Pro Max: suction select has the same options", state("suction_level").attributes["options"] == ["off", "quiet", "standard", "strong", "max"] and state("suction_level").state == "standard", str(dict(state("suction_level").attributes)))
+        check("RV1 Pro Max: fan_speed_list is quiet/standard/strong/max (no off), current 2 -> standard", list(state("vacuum").attributes["fan_speed_list"]) == ["quiet", "standard", "strong", "max"] and state("vacuum").attributes["fan_speed"] == "standard", str(dict(state("vacuum").attributes)))
+        check("RV1 Pro Max: suction select has the same options", state("suction_level").attributes["options"] == ["quiet", "standard", "strong", "max"] and state("suction_level").state == "standard", str(dict(state("suction_level").attributes)))
+        client.props["118900"] = 0
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: a robot that reports suction 0 shows 'off' (vacuum and select), which is still not offered", state("vacuum").attributes["fan_speed"] == "off" and state("suction_level").state == "off" and "off" not in state("vacuum").attributes["fan_speed_list"] and state("suction_level").attributes["options"] == ["quiet", "standard", "strong", "max", "off"], str(dict(state("suction_level").attributes)))
+        for domain, service, entity, field in (("vacuum", "set_fan_speed", "vacuum", "fan_speed"), ("select", "select_option", "suction_level", "option")):
+            try:
+                await call(domain, service, entity, **{field: "off"})
+            except Exception as err:  # noqa: BLE001
+                check(f"RV1 Pro Max: setting suction 'off' from {domain} is rejected and nothing is written", client.calls == [], f"{type(err).__name__} {client.calls}")
+            else:
+                check(f"RV1 Pro Max: setting suction 'off' from {domain} is rejected and nothing is written", False)
+        client.props["118900"] = 2
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: back to standard, the select offers the four levels again", state("suction_level").state == "standard" and state("suction_level").attributes["options"] == ["quiet", "standard", "strong", "max"], str(dict(state("suction_level").attributes)))
         check("RV1 Pro Max: no water level select", "mop_water_level" not in ids)
         await call("vacuum", "set_fan_speed", "vacuum", fan_speed="max")
         check("RV1 Pro Max: fan speed max writes WindPower 4 as a property write (no WindWater)", client.calls == [("set", "TESTDEVICE0002", {"118900": 4})], str(client.calls))
@@ -2177,21 +2302,24 @@ async def rv1_setup_checks(config_dir: str) -> None:
         await coordinator.async_refresh()
         check("RV1 Pro Max: no schedule switches", not any(k.startswith("schedule_") for k in ids), str(sorted(ids)))
         check("RV1 Pro Max: polled refs include mop_speed 119100 and station_status 121100", {"119100", "121100"} <= set(client.last_refs), str(client.last_refs))
-        check("RV1 Pro Max: mop intensity options gentle/standard/strong, unknown while not reported", state("mop_intensity").attributes["options"] == ["gentle", "standard", "strong"] and state("mop_intensity").state == "unknown", str(dict(state("mop_intensity").attributes)))
-        client.props["119100"] = 1
-        await coordinator.async_refresh()
-        check("RV1 Pro Max: mop_speed 1 -> standard", state("mop_intensity").state == "standard", state("mop_intensity").state)
-        await call("select", "select_option", "mop_intensity", option="strong")
-        check("RV1 Pro Max: mop intensity strong is a property write {119100: 2}", client.calls == [("set", "TESTDEVICE0002", {"119100": 2})], str(client.calls))
-        check("RV1 Pro Max: the commanded value shows at once", state("mop_intensity").state == "strong", state("mop_intensity").state)
-        await call("select", "select_option", "mop_intensity", option="gentle")
-        check("RV1 Pro Max: mop intensity gentle writes {119100: 0}", client.calls == [("set", "TESTDEVICE0002", {"119100": 0})], str(client.calls))
-        try:
-            await call("select", "select_option", "mop_intensity", option="turbo")
-        except Exception as err:  # noqa: BLE001
-            check("RV1 Pro Max: unknown mop intensity option is rejected and nothing is written", client.calls == [], f"{type(err).__name__} {client.calls}")
-        else:
-            check("RV1 Pro Max: unknown mop intensity option is rejected and nothing is written", False)
+        check("RV1 Pro Max: water volume select is named 'Water volume', options off/low/medium, unknown while not reported", state("mop_intensity").name == "RV1-PRO-MAX-TEST Water volume" and state("mop_intensity").attributes["options"] == ["off", "low", "medium"] and state("mop_intensity").state == "unknown", str(dict(state("mop_intensity").attributes)))
+        check("RV1 Pro Max: water volume keeps its unique id (key mop_intensity) and uses the translation key water_volume", ent_registry.async_get(ids["mop_intensity"]).unique_id == "TESTDEVICE0002_mop_intensity" and ent_registry.async_get(ids["mop_intensity"]).translation_key == "water_volume")
+        for raw, key in ((0, "off"), (1, "low"), (2, "medium")):
+            client.props["119100"] = raw
+            await coordinator.async_refresh()
+            check(f"RV1 Pro Max: mop_speed {raw} -> water volume {key}", state("mop_intensity").state == key, state("mop_intensity").state)
+        await call("select", "select_option", "mop_intensity", option="medium")
+        check("RV1 Pro Max: water volume medium is a property write {119100: 2}", client.calls == [("set", "TESTDEVICE0002", {"119100": 2})], str(client.calls))
+        check("RV1 Pro Max: the commanded value shows at once", state("mop_intensity").state == "medium", state("mop_intensity").state)
+        await call("select", "select_option", "mop_intensity", option="off")
+        check("RV1 Pro Max: water volume off writes {119100: 0}", client.calls == [("set", "TESTDEVICE0002", {"119100": 0})], str(client.calls))
+        for bad in ("turbo", "high", "gentle"):
+            try:
+                await call("select", "select_option", "mop_intensity", option=bad)
+            except Exception as err:  # noqa: BLE001
+                check(f"RV1 Pro Max: water volume option '{bad}' is rejected and nothing is written (the app's High has no value in the model)", client.calls == [], f"{type(err).__name__} {client.calls}")
+            else:
+                check(f"RV1 Pro Max: water volume option '{bad}' is rejected and nothing is written", False)
         client.props["121100"] = {"121101": True, "121102": 0, "121103": 0, "121104": 0}
         await coordinator.async_refresh()
         check("RV1 Pro Max: dock connected is on (connectivity)", state("dock_connected").state == "on" and state("dock_connected").attributes["device_class"] == "connectivity" and state("dock_connected").name == "RV1-PRO-MAX-TEST Dock connected", f"{state('dock_connected').state} {dict(state('dock_connected').attributes)}")
@@ -2210,8 +2338,8 @@ async def rv1_setup_checks(config_dir: str) -> None:
         schedules = state("schedules")
         check("RV1 Pro Max: Schedules sensor counts the one enabled schedule", schedules.state == "1", str(schedules))
         check(
-            "RV1 Pro Max: schedule attributes: raw start, repeat days, whole house, start null",
-            schedules.attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "time": None, "days": [], "repeat": [7, 1, 2, 3, 4, 5, 6], "rooms": "whole_house", "start_raw": 82800, "once": False}],
+            "RV1 Pro Max: schedule attributes: local time 23:00, the days as names (7 = Sunday), whole house, start null, raw start kept",
+            schedules.attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "time": "23:00", "days": ["sun", "mon", "tue", "wed", "thu", "fri", "sat"], "repeat": [7, 1, 2, 3, 4, 5, 6], "rooms": "whole_house", "start_raw": 82800, "once": False}],
             str(schedules.attributes["schedules"]),
         )
         check("RV1 Pro Max: a whole-house schedule gives no rooms", coordinator.room_names() == {}, str(coordinator.room_names()))
@@ -2221,8 +2349,8 @@ async def rv1_setup_checks(config_dir: str) -> None:
         check("RV1 Pro Max: schedules are refreshed", await coordinator.async_refresh_schedules() is True)
         check("RV1 Pro Max: room names from the room schedule (exact name, else default)", coordinator.room_names() == {3: "Kitchen", 5: "Room 5"}, str(coordinator.room_names()))
         check(
-            "RV1 Pro Max: room schedule attributes (once, rooms by name)",
-            state("schedules").attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "time": None, "days": [], "repeat": [], "rooms": ["Kitchen", "Room 5"], "start_raw": 3600, "once": True}],
+            "RV1 Pro Max: room schedule attributes (once, 01:00, rooms by name)",
+            state("schedules").attributes["schedules"] == [{"enabled": True, "active": None, "start": None, "time": "01:00", "days": [], "repeat": [], "rooms": ["Kitchen", "Room 5"], "start_raw": 3600, "once": True}],
             str(state("schedules").attributes["schedules"]),
         )
         if ha_clean_area() is not None:
@@ -2238,6 +2366,85 @@ async def rv1_setup_checks(config_dir: str) -> None:
             [a["rooms"] for a in state("schedules").attributes["schedules"]] == ["unknown"],
             str(state("schedules").attributes["schedules"]),
         )
+
+        # --- 0.6.1: rooms from the cleaning order (sequence), with negative ids ----------------
+        # verified on an RV1 Pro Max: schedule rooms [-128, -127], sequence [-128, -126, -127, -124]
+        client.clean_list_output = {"201621": [{**room_item, "201666": [{"id": -128}, {"id": -127}]}]}
+        client.props["120600"] = [-128, -126, -127, -124]
+        coordinator._schedules_fetched_at = None
+        polls_before = client.poll_count
+        check("RV1 Pro Max: schedules and cleaning order are read in one refresh (one service call, one property call)", await coordinator.async_refresh_schedules() is True and client.poll_count == polls_before + 1)
+        check("RV1 Pro Max: the cleaning order is kept", coordinator.sequence_rooms == [-128, -126, -127, -124], str(coordinator.sequence_rooms))
+        check("RV1 Pro Max: rooms are the union of the schedule and the cleaning order; rooms only in the order have default names", coordinator.room_names() == {-128: "Room -128", -127: "Room -127", -126: "Room -126", -124: "Room -124"}, str(coordinator.room_names()))
+        await hass.async_block_till_done()
+        reads = client.poll_count
+        check("RV1 Pro Max: a second read within a minute is served from the cache", await coordinator.async_refresh_schedules() is True and client.poll_count == reads)
+        registry = er.async_get(hass)
+        room_buttons = {rid: registry.async_get_entity_id("button", "imou_vacuum", f"TESTDEVICE0002_clean_room_{rid}") for rid in (-128, -127, -126, -124)}
+        check("RV1 Pro Max: a Clean button exists for each room, unique id <device id>_clean_room_<negative id>", all(room_buttons.values()), str(room_buttons))
+        check("RV1 Pro Max: the button of room -127 reads 'Clean room -127'", hass.states.get(room_buttons[-127]).name == "RV1-PRO-MAX-TEST Clean room -127", hass.states.get(room_buttons[-127]).name)
+        client.calls.clear()
+        await hass.services.async_call("button", "press", {"entity_id": room_buttons[-127]}, blocking=True)
+        check("RV1 Pro Max: pressing the button of room -127 cleans only that room (partition_area [-127] as a list)", client.calls == [("control", "TESTDEVICE0002", "200900", {"200901": 1, "200902": 1, "200903": [-127]})], str(client.calls))
+        if ha_clean_area() is not None:
+            vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(ids["vacuum"])
+            segments = await vac_entity.async_get_segments()
+            wanted = {("-128", "Room -128"), ("-127", "Room -127"), ("-126", "Room -126"), ("-124", "Room -124")}
+            check("RV1 Pro Max: segments include the rooms of the cleaning order, ids as text of the negative number, ascending", wanted <= {(seg.id, seg.name) for seg in segments} and [s.id for s in segments if s.id.startswith("-")] == ["-128", "-127", "-126", "-124"], str([(seg.id, seg.name) for seg in segments]))
+            client.calls.clear()
+            await vac_entity.async_clean_segments(["-128", "-124"])
+            check("RV1 Pro Max: clean_segments with negative segment ids", client.calls == [("control", "TESTDEVICE0002", "200900", {"200901": 1, "200902": 1, "200903": [-128, -124]})], str(client.calls))
+        client.props["120600"] = []
+        client.clean_list_output = {"201621": []}
+        coordinator._schedules_fetched_at = None
+        check("RV1 Pro Max: a robot without rooms reports [] and has no rooms", await coordinator.async_refresh_schedules() is True and coordinator.sequence_rooms == [] and coordinator.room_names() == {}, str(coordinator.room_names()))
+        await hass.async_block_till_done()
+        check("RV1 Pro Max: the buttons of rooms that are gone are unavailable", hass.states.get(room_buttons[-127]).state == "unavailable")
+
+        # --- review fixes: zero padding, quota, cache -------------------------------------------
+        import time  # noqa: PLC0415
+
+        api_mod = mod("api")
+        client.props["120600"] = [-128, 0, -127, 0, 0]
+        coordinator._schedules_fetched_at = None
+        await coordinator.async_refresh_schedules()
+        check("RV1 Pro Max: zeros of a padded sequence are ignored", coordinator.sequence_rooms == [-128, -127], str(coordinator.sequence_rooms))
+        del client.props["120600"]
+        coordinator._schedules_fetched_at = None
+        coordinator.sequence_rooms = None
+        check("RV1 Pro Max: a response without sequence is 'read, empty', not a failure", await coordinator.async_refresh_schedules() is True and coordinator.sequence_rooms == [] and not coordinator._failed_parts and 3500 < coordinator._schedules_due - time.monotonic() <= 3600, f"{coordinator.sequence_rooms} {coordinator._failed_parts}")
+        # a failing sequence read: only it is retried, clean_list is not called again
+        client.props["120600"] = [-128]
+        client.fail_sequence_with = api_mod.ImouConnectionError("TIMEOUT", "getIotDeviceProperties")
+        coordinator._schedules_due = 0.0
+        client.probe_service_calls.clear()
+        client.sequence_reads = 0
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: sequence fails: clean_list was read once, retry in about 15 minutes", len(client.probe_service_calls) == 1 and client.sequence_reads == 1 and coordinator._failed_parts == {"sequence"} and 800 < coordinator._schedules_due - time.monotonic() <= 900, f"{client.probe_service_calls} {client.sequence_reads} {coordinator._failed_parts}")
+        client.fail_sequence_with = None
+        coordinator._schedules_due = 0.0
+        client.probe_service_calls.clear()
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: the retry reads only sequence (no clean_list call), then waits an hour", client.probe_service_calls == [] and client.sequence_reads == 2 and coordinator.sequence_rooms == [-128] and not coordinator._failed_parts and 3500 < coordinator._schedules_due - time.monotonic() <= 3600, f"{client.probe_service_calls} {client.sequence_reads} {coordinator.sequence_rooms}")
+        # the reverse: clean_list fails, sequence is not read again by the retry
+        client.fail_schedules_with = api_mod.ImouConnectionError("TIMEOUT", "iotDeviceControl")
+        coordinator._schedules_due = 0.0
+        client.probe_service_calls.clear()
+        client.sequence_reads = 0
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: clean_list fails: sequence read once, retry soon", len(client.probe_service_calls) == 1 and client.sequence_reads == 1 and coordinator._failed_parts == {"clean_list"}, f"{client.probe_service_calls} {client.sequence_reads} {coordinator._failed_parts}")
+        coordinator._schedules_due = 0.0
+        await coordinator.async_refresh()
+        check("RV1 Pro Max: the retry reads only clean_list (sequence is not read again)", len(client.probe_service_calls) == 2 and client.sequence_reads == 1 and coordinator._failed_parts == {"clean_list"}, f"{client.probe_service_calls} {client.sequence_reads}")
+        # a partial read (sequence ok, schedules failed, none known) is not cached as fresh
+        coordinator.schedules = None
+        coordinator._schedules_fetched_at = None
+        client.probe_service_calls.clear()
+        first = await coordinator.async_refresh_schedules()
+        second = await coordinator.async_refresh_schedules()
+        check("RV1 Pro Max: a partial read with schedules still unknown is not cached for 60 s (clean_list is tried again)", first is True and second is True and len(client.probe_service_calls) == 2 and coordinator.schedules is None, f"{first} {second} {client.probe_service_calls}")
+        client.fail_schedules_with = None
+        client.fail_with = None
     finally:
         await hass.async_stop()
 
@@ -2250,6 +2457,206 @@ def test_rv1_setup() -> None:
         worker = threading.Thread(target=shutil.rmtree, args=(config_dir,), kwargs={"ignore_errors": True})
         worker.start()
         worker.join()
+
+
+# ---------------------------------------------------------------------------
+# 6b. RV1L Pro (productId AC8ZW8Y9) and the optional entities of a robot that never reports them
+# ---------------------------------------------------------------------------
+class RV1LProClient(RV1Client):
+    """Fake client for the RV1L Pro: its own model (swp_backStation, no back_station) and values."""
+
+    initial_props: dict[str, Any] | None = None
+    drop_station = False
+
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
+        super().__init__(session, app_id, app_secret, host)
+        self.props = copy.deepcopy(RV1LPRO_VALUES_JSON["properties"])
+        self.props.update({"126200": [], "122300": [{"122302": "Map", "122301": 1}], "120600": [], "121600": []})
+        self.clean_list_output = {"201621": []}  # no schedules (the user's real response)
+        if RV1LProClient.drop_station:  # like an RV1 Pro Max: the dock is never reported
+            del self.props["121100"]
+
+    async def async_list_devices(self) -> list[Any]:
+        api = mod("api")
+        return [api.ImouDevice(device_id="TESTDEVICE0004", product_id="PRODUCT_ID_RV1LPRO", name="RV1L-PRO-TEST", model="RV1L Pro", status="online", version="1.0.0", brand="lechange")]
+
+    async def async_get_product_model(self, product_id: str) -> dict[str, Any]:
+        return copy.deepcopy(RV1LPRO_MODEL_JSON)
+
+
+async def with_fresh_hass(config_dir: str, client_cls: Any, body: Any, before: Any = None) -> None:
+    """Start a bare Home Assistant with ``client_cls``, add one entry and run ``body``."""
+    from homeassistant import bootstrap, config_entries, loader  # noqa: PLC0415
+    from homeassistant.core import HomeAssistant  # noqa: PLC0415
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    package = importlib.import_module(PKG)
+    package.ImouClient = client_cls
+    package.async_get_clientsession = lambda hass: None
+    hass = HomeAssistant(config_dir)
+    loader.async_setup(hass)
+    hass.config.skip_pip = True
+    hass.config.language = "en"
+    hass.config_entries = config_entries.ConfigEntries(hass, {})
+    await loader.async_get_custom_components(hass)
+    await bootstrap.async_load_base_functionality(hass)
+    await hass.async_start()
+    try:
+        if before is not None:
+            before(er.async_get(hass))
+        entry = config_entries.ConfigEntry(
+            data={"app_id": "fresh-app", "app_secret": "s", "region": "eu"}, discovery_keys={},
+            domain="imou_vacuum", entry_id="fresh-app", minor_version=1, options={}, source="user",
+            subentries_data=None, title="t", unique_id="fresh-app", version=1,
+        )  # fmt: skip
+        await hass.config_entries.async_add(entry)
+        await hass.async_block_till_done()
+        await body(hass, entry)
+    finally:
+        await hass.async_stop()
+
+
+def run_fresh(client_cls: Any, body: Any, before: Any = None) -> None:
+    config_dir = tempfile.mkdtemp(prefix="imou-fresh-")
+    try:
+        asyncio.run(with_fresh_hass(config_dir, client_cls, body, before))
+    finally:
+        worker = threading.Thread(target=shutil.rmtree, args=(config_dir,), kwargs={"ignore_errors": True})
+        worker.start()
+        worker.join()
+
+
+async def rv1lpro_checks(hass: Any, entry: Any) -> None:
+    from homeassistant.components.vacuum import VacuumEntityFeature  # noqa: PLC0415
+    from homeassistant.helpers import entity_registry as er, issue_registry as ir  # noqa: PLC0415
+
+    check("RV1L Pro: entry is loaded", entry.state.value == "loaded", str(entry.state))
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    registry = er.async_get(hass)
+    regs = {e.unique_id.split("_", 1)[1]: e for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+
+    def state(key: str) -> Any:
+        return hass.states.get(regs[key].entity_id)
+
+    # 1. return to dock through swp_backStation
+    features = int(state("vacuum").attributes["supported_features"])
+    check("RV1L Pro: RETURN_HOME is supported through swp_backStation", bool(features & int(VacuumEntityFeature.RETURN_HOME)), str(features))
+    check("RV1L Pro: no model support repair issue (return to dock is no longer missing)", ir.async_get(hass).async_get_issue("imou_vacuum", "model_support_TESTDEVICE0004") is None and not [i for d, i in ir.async_get(hass).issues if d == "imou_vacuum"], str(list(ir.async_get(hass).issues)))
+    client.calls.clear()
+    await hass.services.async_call("vacuum", "return_to_base", {"entity_id": regs["vacuum"].entity_id}, blocking=True)
+    check("RV1L Pro: return_to_base writes swp_backStation {151300: 1} (start return)", client.calls == [("set", "TESTDEVICE0004", {"151300": 1})], str(client.calls))
+    # 2. optional entities, decided by the first (online) poll
+    check("RV1L Pro: Auto-empty and Resume after charging are disabled by default (never reported)", all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION for k in ("auto_empty", "resume_after_charging")), str({k: regs[k].disabled_by for k in ("auto_empty", "resume_after_charging")}))
+    check("RV1L Pro: Carpet boost is reported, so enabled and on", regs["carpet_boost"].disabled_by is None and state("carpet_boost").state == "on")
+    check("RV1L Pro: the dock sensors are reported, so enabled and show values", all(regs[k].disabled_by is None for k in ("dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag")) and (state("dock_connected").state, state("clean_water_tank").state, state("dust_bag").state) == ("off", "normal", "normal"), str([state(k).state for k in ("dock_connected", "clean_water_tank", "dust_bag")]))
+    # 4. suction and 5. water volume
+    check("RV1L Pro: suction reports 4 (max); the offered levels are quiet/standard/strong/max", state("vacuum").attributes["fan_speed"] == "max" and list(state("vacuum").attributes["fan_speed_list"]) == ["quiet", "standard", "strong", "max"] and state("suction_level").attributes["options"] == ["quiet", "standard", "strong", "max"])
+    check("RV1L Pro: water volume 2 is medium", state("mop_intensity").state == "medium" and state("mop_intensity").attributes["options"] == ["off", "low", "medium"], str(state("mop_intensity")))
+    # 8. charging: power_status 1; and the fallback to the battery sign
+    check("RV1L Pro: charging is on (power_status 1, battery -67 shows 67 %)", state("charging").state == "on" and state("battery").state == "67", f"{state('charging').state} {state('battery').state}")
+    # 7. mop fitted (0 = off = 'Not fitted')
+    check("RV1L Pro: mop fitted is off (shown as 'Not fitted')", state("mop_fitted").state == "off")
+    # 3. the rooms of a robot without rooms: none
+    check("RV1L Pro: no rooms (sequence [] and no schedules)", coordinator.sequence_rooms == [] and coordinator.room_names() == {}, str(coordinator.sequence_rooms))
+    check("RV1L Pro: Schedules sensor counts 0 schedules", state("schedules").state == "0")
+    # a write answered with DV1026 makes the switch unavailable and gives a translated error
+    from homeassistant.exceptions import HomeAssistantError  # noqa: PLC0415
+
+    client.fail_set_with = mod("api").ImouApiError("OP1001", "param error")
+    try:
+        await hass.services.async_call("switch", "turn_on", {"entity_id": regs["carpet_boost"].entity_id}, blocking=True)
+    except HomeAssistantError:
+        pass
+    client.fail_set_with = None
+    await hass.async_block_till_done()
+    check("RV1L Pro: another error code does not make a switch unavailable", state("carpet_boost").state != "unavailable", state("carpet_boost").state)
+    client.fail_set_with = mod("api").ImouApiError("DV1026", "device does not support this function")
+    try:
+        await hass.services.async_call("switch", "turn_on", {"entity_id": regs["carpet_boost"].entity_id}, blocking=True)
+    except HomeAssistantError as err:
+        check("RV1L Pro: DV1026 gives the translated error 'setting_not_supported'", getattr(err, "translation_key", None) == "setting_not_supported" and "does not support that setting" in str(err), f"{type(err).__name__} {err}")
+    else:
+        check("RV1L Pro: DV1026 gives the translated error 'setting_not_supported'", False)
+    client.fail_set_with = None
+    await hass.async_block_till_done()
+    check("RV1L Pro: ... and the switch is unavailable", state("carpet_boost").state == "unavailable", state("carpet_boost").state)
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("RV1L Pro: ... also after a poll, until the integration reloads", state("carpet_boost").state == "unavailable")
+
+
+async def rv1lpro_late_checks(hass: Any, entry: Any) -> None:
+    """The robot is offline at setup: the optional entities appear with the first online poll."""
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    registry = er.async_get(hass)
+
+    def keys() -> dict[str, Any]:
+        return {e.unique_id.split("_", 1)[1]: e for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+
+    optional = {"auto_empty", "carpet_boost", "resume_after_charging", "dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag"}
+    check("offline at setup: the optional switches and dock sensors do not exist yet", not optional & set(keys()) and "battery" in keys(), str(sorted(keys())))
+    client.status = "online"
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    regs = keys()
+    check("the first online poll creates them", optional <= set(regs), str(sorted(optional - set(regs))))
+    check("... decided on that poll: Auto-empty / Resume after charging disabled, the reported ones enabled", {k for k in optional if regs[k].disabled_by is not None} == {"auto_empty", "resume_after_charging"}, str({k: regs[k].disabled_by for k in optional}))
+    count = len(regs)
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("a later poll does not create them again", len(keys()) == count)
+
+
+async def rv1_silent_checks(hass: Any, entry: Any) -> None:
+    """An RV1 Pro Max never reports station_status; enabled entities of old installs stay available."""
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    registry = er.async_get(hass)
+    regs = {e.unique_id.split("_", 1)[1]: e for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+    dock = ("dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag")
+    check("the robot never reports station_status: the four dock entities are disabled by default", all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION for k in dock if k not in ("dust_bag", "clean_water_tank")), str({k: regs[k].disabled_by for k in dock}))
+    # the entities that existed (enabled) before this version are not touched by the new default and stay available
+    for key in ("dust_bag", "clean_water_tank", "auto_empty"):
+        check(f"an enabled {key} entity of the robot that never reports it is unknown, not unavailable", hass.states.get(regs[key].entity_id).state == "unknown", str(hass.states.get(regs[key].entity_id)))
+    check("... the Carpet boost it does report is available", hass.states.get(regs["carpet_boost"].entity_id).state == "on")
+    client.props["121100"] = {"121101": 1, "121102": 0, "121103": 0, "121104": 2}
+    client.props["118400"] = 1  # auto_dust of this model
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("when the robot starts to report them, the entities show the values", (hass.states.get(regs["dust_bag"].entity_id).state, hass.states.get(regs["clean_water_tank"].entity_id).state, hass.states.get(regs["auto_empty"].entity_id).state) == ("full", "normal", "on"), str([hass.states.get(regs[k].entity_id).state for k in ("dust_bag", "clean_water_tank", "auto_empty")]))
+
+
+def test_rv1lpro_setup() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1LProClient, rv1lpro_checks)
+
+
+def test_optional_entities_of_a_late_robot() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "offline", False
+    try:
+        run_fresh(RV1LProClient, rv1lpro_late_checks)
+    finally:
+        FakeClient.initial_status = "online"
+
+
+def test_optional_entities_of_a_silent_robot() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", True
+
+    def before(registry: Any) -> None:
+        # entities of an earlier version: enabled in the registry
+        for platform, key in (("sensor", "dust_bag"), ("sensor", "clean_water_tank"), ("switch", "auto_empty")):
+            registry.async_get_or_create(platform, "imou_vacuum", f"TESTDEVICE0004_{key}", suggested_object_id=f"rv1l_pro_test_{key}")
+
+    try:
+        run_fresh(RV1LProClient, rv1_silent_checks, before)
+    finally:
+        RV1LProClient.drop_station = False
 
 
 # ---------------------------------------------------------------------------
@@ -2390,7 +2797,7 @@ def test_issue_translations() -> None:
 
 
 def main() -> int:
-    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_unknown_model, test_issue_translations):
+    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
         print(f"\n=== {func.__name__} ===")
         try:
             func()

@@ -35,8 +35,8 @@
           "high": "mdi:water-plus"
         }
       },
-      "mop_intensity": {
-        "default": "mdi:rotate-right"
+      "water_volume": {
+        "default": "mdi:water-percent"
       }
     },
     "sensor": {

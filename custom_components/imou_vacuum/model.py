@@ -34,9 +34,13 @@ from .const import (
     PROP_WIFI,
     PROP_WIND_POWER,
     PROP_WORK_STATUS,
+    RETURN_HOME_IDENTIFIERS,
+    RETURN_START_LABEL,
+    RETURN_START_VALUE,
     WIFI_KEYS,
     WIFI_LABEL_KEYS,
     WIND_ENUM_LABEL_KEYS,
+    WIND_UNOFFERED_KEYS,
     WORK_STATUS_KEYS,
     WORK_STATUS_LABEL_KEYS,
 )
@@ -381,6 +385,18 @@ class ThingsModel:
             return _unique_level_keys(prop.enum_labels, WIND_ENUM_LABEL_KEYS)
         return dict(LEVEL_KEYS[PROP_WIND_POWER])
 
+    def wind_choices(self) -> dict[int, str]:
+        """Return the suction levels that are offered for selection.
+
+        These are the levels of ``wind_levels`` without the "off" level: the app
+        does not offer it either. A robot that reports it still shows as "off".
+        """
+        return {
+            value: key
+            for value, key in self.wind_levels().items()
+            if key not in WIND_UNOFFERED_KEYS
+        }
+
     def mop_levels(self) -> dict[int, str]:
         """Return the mop intensity levels (raw value -> translation key).
 
@@ -443,15 +459,19 @@ class ThingsModel:
         """Return wifi_rssi_sdj value -> key (see ``enum_keys``)."""
         return self.enum_keys(PROP_WIFI, None, WIFI_LABEL_KEYS, WIFI_KEYS)
 
-    def is_charging(self, raw: Any) -> bool | None:
+    def is_charging(self, raw: Any, power: Any = None) -> bool | None:
         """Return whether a ``power_status`` value means "charging" (None: unknown).
 
         With labels in the model the label (充电中) decides, otherwise (no labels, or
-        none of them is the charging label) the value 1.
+        none of them is the charging label) the value 1. Without any value, the
+        sign of the battery ``power`` decides: negative means charging (RV1 models),
+        anything else is unknown, not "not charging".
         """
         value = to_int(raw)
         if value is None:
-            return None
+            battery = to_int(power)
+            # a negative battery means charging; anything else proves nothing
+            return True if battery is not None and battery < 0 else None
         prop = self.prop(PROP_POWER_STATUS)
         if prop is not None and CHARGING_LABEL in {
             label.strip() for label in prop.enum_labels.values()
@@ -459,6 +479,22 @@ class ThingsModel:
             label = prop.enum_labels.get(value)
             return None if label is None else label.strip() == CHARGING_LABEL
         return value == CHARGING_VALUE
+
+    def return_home(self) -> tuple[str, int] | None:
+        """Return the property and value that send the robot to its dock.
+
+        The first property of ``RETURN_HOME_IDENTIFIERS`` that the model has; the
+        value is the one labelled "start return" when the property is an enum with
+        that label (RV1L Pro ``swp_backstation``), else 1. ``None`` without any.
+        """
+        for identifier in RETURN_HOME_IDENTIFIERS:
+            if (prop := self.prop(identifier)) is None:
+                continue
+            for value, label in sorted(prop.enum_labels.items()):
+                if label.strip() == RETURN_START_LABEL:
+                    return identifier, value
+            return identifier, RETURN_START_VALUE
+        return None
 
     def has_service(self, identifier: str) -> bool:
         """Return whether the model has a service with this identifier."""

@@ -74,6 +74,17 @@ STATION_WASTE_BOX: Final = "waste_box"
 STATION_DUST_BAG: Final = "dust_bag"
 PROP_BACK_CHARGING: Final = "back_charging"
 PROP_BACK_STATION: Final = "back_station"  # RV1 Pro Max: return to base station
+PROP_SWP_BACK_STATION: Final = "swp_backstation"  # RV1L Pro: return to base (enum)
+# The properties that send the robot back to its dock, in the order they are tried.
+RETURN_HOME_IDENTIFIERS: Final[tuple[str, ...]] = (
+    PROP_BACK_CHARGING,
+    PROP_BACK_STATION,
+    PROP_SWP_BACK_STATION,
+)
+# swp_backstation is an enum (0 pause, 1 start, 2 continue, 3 stop the return): the
+# value labelled "start" is written; a property without that label gets the value 1.
+RETURN_START_LABEL: Final = "开始返回"
+RETURN_START_VALUE: Final = 1
 PROP_CLEAN_AREA: Final = "clean_area"
 PROP_CLEAN_TIME: Final = "clean_time"
 PROP_WIND_POWER: Final = "windpower"
@@ -179,9 +190,11 @@ CLEAN_MODE_WHOLE_HOUSE: Final = 0
 CLEAN_MODE_ROOMS: Final = 1
 CLEAN_PLAN_GENERAL: Final = 0
 
-# Rooms and schedules. The robot reports no rooms or map; room ids and the room
-# type labels only appear in the schedules (clean_list). They are refreshed this
-# often (seconds); a failed fetch is retried sooner.
+# Rooms and schedules. The robot reports no map. Room ids appear in the schedules
+# (clean_list, with the room type labels) and, on models that have the property
+# ``sequence`` (the cleaning order), in that list. Room ids can be negative. Both
+# are read together and refreshed this often (seconds); a failed fetch is retried
+# sooner.
 CONF_ROOM_NAMES: Final = "room_names"  # config entry option: {device id: {room id: name}}
 SCHEDULE_REFRESH_SECONDS: Final = 3600
 SCHEDULE_RETRY_SECONDS: Final = 900
@@ -313,15 +326,19 @@ WIND_ENUM_LABEL_KEYS: Final[dict[str, str]] = {
     "大": "strong",
     "最大": "max",
 }
-# Mop intensity levels of a model whose mop_speed is an enum (RV1 Pro Max: 0 gentle,
-# 1 standard, 2 strong): the model's labels (Chinese) -> translation keys. Unknown
-# labels become "unknown_<n>"; a model without labels uses the numbers.
+# Suction keys that are shown when the robot reports them but never offered: the
+# Imou app does not offer "off" either, and setting it deselects every level there.
+WIND_UNOFFERED_KEYS: Final = frozenset({"off"})
+# Water volume of a model whose mop_speed is an enum (RV1 Pro Max): the app's "Water
+# volume" (0 off, 1 low, 2 medium; the app also has "high", the model has no value
+# for it). The model's labels (Chinese: gentle, standard, strong) -> translation
+# keys. Unknown labels become "unknown_<n>"; a model without labels uses the numbers.
 MOP_SPEED_LABEL_KEYS: Final[dict[str, str]] = {
-    "轻柔": "gentle",
-    "标准": "standard",
-    "强劲": "strong",
+    "轻柔": "off",
+    "标准": "low",
+    "强劲": "medium",
 }
-MOP_SPEED_KEYS: Final[dict[int, str]] = {0: "gentle", 1: "standard", 2: "strong"}
+MOP_SPEED_KEYS: Final[dict[int, str]] = {0: "off", 1: "low", 2: "medium"}
 # Dock status (station_status members): label -> key, and the numbers for a model
 # without labels. Unknown labels become "unknown_<n>".
 CLEAN_BOX_LABEL_KEYS: Final[dict[str, str]] = {

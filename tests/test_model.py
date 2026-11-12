@@ -352,14 +352,14 @@ def test_new_work_statuses() -> None:
 
 def test_rv1_mop_levels_and_poll_refs() -> None:
     model = rv1()
-    assert model.mop_levels() == {0: "gentle", 1: "standard", 2: "strong"}
+    assert model.mop_levels() == {0: "off", 1: "low", 2: "medium"}
     refs = model.poll_refs()
     assert "119100" in refs and "121100" in refs
     # a label that is not known becomes unknown_<n>; no labels use the numbers
     odd = model_mod.ThingsModel.from_api({"properties": [{"identifier": "mop_speed", "ref": "1", "dataType": {"type": "enum", "specs": {"list": [{"value": "0", "desc": "x"}, {"value": "1", "desc": "标准"}]}}}]})
-    assert odd.mop_levels() == {0: "unknown_0", 1: "standard"}
+    assert odd.mop_levels() == {0: "unknown_0", 1: "low"}
     bare = model_mod.ThingsModel.from_api({"properties": [{"identifier": "mop_speed", "ref": "1", "dataType": {"type": "enum", "specs": {}}}]})
-    assert bare.mop_levels() == {0: "gentle", 1: "standard", 2: "strong"}
+    assert bare.mop_levels() == {0: "off", 1: "low", 2: "medium"}
     # the L11-A has neither
     l11a = model_mod.ThingsModel.from_api(fixture("l11a_model.json"))
     assert l11a.prop("mop_speed") is None and l11a.prop("station_status") is None
@@ -377,10 +377,88 @@ def test_duplicate_level_labels_are_not_offered_twice() -> None:
 
     mop = enum("mop_speed", [(0, "标准"), (1, "标准"), (2, "强劲"), (3, "标准")])
     levels = mop.mop_levels()
-    assert levels == {0: "standard", 1: "unknown_1", 2: "strong", 3: "unknown_3"}
+    assert levels == {0: "low", 1: "unknown_1", 2: "medium", 3: "unknown_3"}
     assert len(set(levels.values())) == len(levels)
     wind = enum("windpower", [(0, "中"), (1, "中")])
     assert wind.wind_levels() == {0: "standard", 1: "unknown_1"}
+
+
+def rv1lpro() -> Any:
+    return model_mod.ThingsModel.from_api(fixture("rv1lpro_model.json"))
+
+
+def test_water_volume_labels() -> None:
+    # the model's labels (gentle, standard, strong) are the app's Off, Low and Medium;
+    # the app's "High" has no value in the model, so it is not offered
+    assert const.MOP_SPEED_LABEL_KEYS == {"轻柔": "off", "标准": "low", "强劲": "medium"}
+    assert rv1lpro().mop_levels() == {0: "off", 1: "low", 2: "medium"}
+    assert "high" not in rv1().mop_levels().values()
+
+
+def test_wind_choices_leave_out_off() -> None:
+    for model in (rv1(), rv1lpro()):
+        assert model.wind_levels() == {0: "off", 1: "quiet", 2: "standard", 3: "strong", 4: "max"}
+        assert model.wind_choices() == {1: "quiet", 2: "standard", 3: "strong", 4: "max"}
+    # a model without an enum keeps its levels
+    assert l11a().wind_choices() == l11a().wind_levels() == {1: "quiet", 2: "standard", 3: "max"}
+
+
+def test_return_home_property() -> None:
+    assert l11a().return_home() == ("back_charging", 1)
+    assert rv1().return_home() == ("back_station", 1)
+    # the RV1L Pro only has swp_backStation: the value labelled "start return" (1)
+    pro = rv1lpro()
+    assert pro.prop("back_charging") is None and pro.prop("back_station") is None
+    assert pro.prop("swp_backstation").ref == "151300"
+    assert pro.prop("swp_backstation").enum_labels == {0: "暂停返回", 1: "开始返回", 2: "继续返回", 3: "停止返回"}
+    assert pro.return_home() == ("swp_backstation", 1)
+    # the label decides the value; without labels the value is 1
+    def with_swp(specs: dict[str, Any], *others: str) -> Any:
+        props = [{"identifier": name, "ref": str(n), "dataType": {"type": "bool", "specs": {}}} for n, name in enumerate(others, 1)]
+        props.append({"identifier": "swp_backStation", "ref": "9", "dataType": {"type": "enum", "specs": specs}})
+        return model_mod.ThingsModel.from_api({"properties": props})
+
+    renumbered = {"list": [{"value": "0", "desc": "开始返回"}, {"value": "1", "desc": "暂停返回"}]}
+    assert with_swp(renumbered).return_home() == ("swp_backstation", 0)
+    assert with_swp({}).return_home() == ("swp_backstation", 1)
+    # the order is back_charging, back_station, swp_backStation
+    assert with_swp(renumbered, "back_station").return_home() == ("back_station", 1)
+    assert with_swp(renumbered, "back_station", "back_charging").return_home() == ("back_charging", 1)
+    assert with_swp({}, "back_charging").return_home() == ("back_charging", 1)
+    assert model_mod.ThingsModel.from_api({"properties": []}).return_home() is None
+
+
+def test_is_charging_falls_back_to_the_battery_sign() -> None:
+    model = rv1lpro()
+    # the label logic stays first
+    assert model.is_charging(1, 50) is True and model.is_charging(0, -50) is False
+    assert model.is_charging(7, -50) is None
+    # without a power_status value the sign of the battery decides
+    assert model.is_charging(None, -67) is True
+    assert model.is_charging(None, 67) is None and model.is_charging(None, 0) is None
+    assert model.is_charging(None, "-5") is True
+    assert model.is_charging(None, None) is None and model.is_charging(None) is None
+
+
+def test_report_tracker_enabled_by_default() -> None:
+    tracker = model_mod.ReportTracker()
+    assert tracker.enabled_by_default("auto_dust")  # no evidence yet
+    tracker.update(False, {})
+    assert tracker.enabled_by_default("auto_dust") and not tracker.seen_online  # offline: no evidence
+    tracker.update(True, {"rug_press": 1})
+    assert tracker.enabled_by_default("rug_press") and not tracker.enabled_by_default("auto_dust")
+    assert not hasattr(tracker, "is_unreported")  # an unreported setting is no longer unavailable
+
+
+def test_rv1lpro_model_and_values() -> None:
+    model = rv1lpro()
+    values = model.parse_values(fixture("rv1lpro_values.json")["properties"])
+    assert values["windpower"] == 4 and values["mop_speed"] == 2
+    assert values["station_status"] == {"connected": 0, "clean_box": 0, "waste_box": 0, "dust_bag": 0}
+    # the robot never reports these, so the settings are not in the values
+    assert "auto_dust" not in values and "keep_clean" not in values
+    assert model.prop("sequence").ref == "120600" and model.prop("sequence").data_type == "array"
+    assert "120600" not in model.poll_refs()  # never polled
 
 
 if __name__ == "__main__":

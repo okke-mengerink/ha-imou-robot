@@ -16,12 +16,13 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
     PROP_MOP_ENABLE,
+    PROP_POWER,
     PROP_POWER_STATUS,
     PROP_STATION_STATUS,
     STATION_CONNECTED,
 )
 from .coordinator import ImouConfigEntry, ImouCoordinator
-from .entity import ImouEntity
+from .entity import ImouEntity, async_add_after_first_poll
 from .model import ThingsModel, to_bool
 
 PARALLEL_UPDATES = 0
@@ -33,8 +34,14 @@ class ImouBinarySensorDescription(BinarySensorEntityDescription):
 
     identifier: str
     child: str | None = None  # a member of a struct property
-    # (model, raw value) -> state; a plain boolean unless the model says otherwise
-    is_on_fn: Callable[[ThingsModel, Any], bool | None] = lambda _model, raw: to_bool(raw)
+    # (model, raw value, all values) -> state; a plain boolean unless the model says
+    # otherwise
+    is_on_fn: Callable[[ThingsModel, Any, Mapping[str, Any]], bool | None] = (
+        lambda _model, raw, _values: to_bool(raw)
+    )
+    # a dock sensor: created after the first online poll, disabled by default when
+    # the robot does not report it (see ``ImouEntity``)
+    optional: bool = False
 
 
 BINARY_SENSORS: tuple[ImouBinarySensorDescription, ...] = (
@@ -48,7 +55,9 @@ BINARY_SENSORS: tuple[ImouBinarySensorDescription, ...] = (
         translation_key="charging",
         identifier=PROP_POWER_STATUS,
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
-        is_on_fn=lambda model, raw: model.is_charging(raw),
+        is_on_fn=lambda model, raw, values: model.is_charging(
+            raw, values.get(PROP_POWER)
+        ),
     ),
     ImouBinarySensorDescription(
         key="dock_connected",
@@ -56,6 +65,7 @@ BINARY_SENSORS: tuple[ImouBinarySensorDescription, ...] = (
         identifier=PROP_STATION_STATUS,
         child=STATION_CONNECTED,
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        optional=True,
     ),
 )
 
@@ -65,13 +75,32 @@ async def async_setup_entry(
     entry: ImouConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Create binary sensors for every identifier the robot's model has."""
-    async_add_entities(
-        ImouBinarySensor(coordinator, description)
-        for coordinator in entry.runtime_data.coordinators.values()
-        for description in BINARY_SENSORS
-        if coordinator.model.member(description.identifier, description.child) is not None
-    )
+    """Create binary sensors for every identifier the robot's model has.
+
+    The dock sensors are created after the robot's first online poll.
+    """
+    for coordinator in entry.runtime_data.coordinators.values():
+        supported = [
+            description
+            for description in BINARY_SENSORS
+            if coordinator.model.member(description.identifier, description.child)
+            is not None
+        ]
+        async_add_entities(
+            ImouBinarySensor(coordinator, description)
+            for description in supported
+            if not description.optional
+        )
+        async_add_after_first_poll(
+            entry,
+            coordinator,
+            async_add_entities,
+            lambda coordinator=coordinator, supported=supported: [
+                ImouBinarySensor(coordinator, description)
+                for description in supported
+                if description.optional
+            ],
+        )
 
 
 class ImouBinarySensor(ImouEntity, BinarySensorEntity):
@@ -83,7 +112,11 @@ class ImouBinarySensor(ImouEntity, BinarySensorEntity):
         self, coordinator: ImouCoordinator, description: ImouBinarySensorDescription
     ) -> None:
         """Initialize the binary sensor."""
-        super().__init__(coordinator, description.key)
+        super().__init__(
+            coordinator,
+            description.key,
+            description.identifier if description.optional else None,
+        )
         self.entity_description = description
 
     @property
@@ -94,4 +127,4 @@ class ImouBinarySensor(ImouEntity, BinarySensorEntity):
         raw = self.robot_values.get(description.identifier)
         if description.child is not None:
             raw = raw.get(description.child) if isinstance(raw, Mapping) else None
-        return description.is_on_fn(self.coordinator.model, raw)
+        return description.is_on_fn(self.coordinator.model, raw, self.robot_values)

@@ -211,6 +211,20 @@ def test_missing_core_functions_are_listed() -> None:
     assert not report["verified_model"] and support.needs_notice(report)
 
 
+def test_rv1lpro_return_to_dock_counts_swp_backstation() -> None:
+    model = build("rv1lpro_model.json")
+    report = support.support_report(model, "RV1L Pro")
+    assert report["capabilities"]["return_to_dock"] is True
+    assert report["missing_core"] == [] and report["unknown_enum_labels"] == {}
+    assert not support.needs_notice(report)
+    # without any of the three properties the function is missing again
+    def edit(data: dict[str, Any]) -> None:
+        data["properties"] = [p for p in data["properties"] if p["identifier"] != "swp_backStation"]
+
+    gone = support.support_report(build("rv1lpro_model.json", edit), "RV1L Pro")
+    assert gone["missing_core"] == ["return_to_dock"] and support.needs_notice(gone)
+
+
 def test_is_charging() -> None:
     model = rv1()
     assert model.prop("power_status") is not None and l11a().prop("power_status") is None

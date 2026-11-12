@@ -1,0 +1,3541 @@
+{
+  "properties": [
+    {
+      "identifier": "swp_curLocation",
+      "ref": "147200",
+      "defaultData": "0",
+      "encrypt": "",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "不在桩（基站）"
+            },
+            {
+              "value": "1",
+              "desc": "在桩（基站）"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "机器人当前位置",
+      "description": "扫地机器人当前位置",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "voice",
+      "ref": "120900",
+      "dataType": {
+        "specs": [
+          {
+            "identifier": "language",
+            "ref": "120901",
+            "dataType": {
+              "specs": {},
+              "type": "text"
+            },
+            "name": "语音包地址",
+            "desc": ""
+          },
+          {
+            "identifier": "id",
+            "ref": "120902",
+            "dataType": {
+              "specs": {},
+              "type": "text"
+            },
+            "name": "语音包id",
+            "desc": ""
+          },
+          {
+            "identifier": "code",
+            "ref": "120903",
+            "dataType": {
+              "specs": {
+                "list": [
+                  {
+                    "value": "0",
+                    "desc": "切换成功"
+                  },
+                  {
+                    "value": "1",
+                    "desc": "切换中"
+                  },
+                  {
+                    "value": "2",
+                    "desc": "切换失败"
+                  }
+                ]
+              },
+              "type": "enum"
+            },
+            "name": "状态（上报）",
+            "desc": ""
+          },
+          {
+            "identifier": "percent",
+            "ref": "120904",
+            "dataType": {
+              "specs": {
+                "unit": "%",
+                "range": [
+                  "0",
+                  "100"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "进度",
+            "desc": ""
+          },
+          {
+            "identifier": "version",
+            "ref": "120905",
+            "dataType": {
+              "specs": {},
+              "type": "text"
+            },
+            "name": "语音版本号",
+            "desc": ""
+          }
+        ],
+        "type": "struct"
+      },
+      "name": "语音设置",
+      "description": "扫地机专用",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "swp_allareaConfig",
+      "ref": "147400",
+      "encrypt": "",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "mapId",
+                "ref": "147401",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "id",
+                "ref": "147402",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "区域id",
+                "desc": ""
+              },
+              {
+                "identifier": "clean_direction",
+                "ref": "147403",
+                "defaultData": "0",
+                "dataType": {
+                  "specs": {
+                    "list": [
+                      {
+                        "value": "0",
+                        "desc": "自动判断"
+                      },
+                      {
+                        "value": "1",
+                        "desc": "横着（对应界面）"
+                      },
+                      {
+                        "value": "2",
+                        "desc": "竖着（对应界面）"
+                      }
+                    ]
+                  },
+                  "type": "enum"
+                },
+                "name": "清扫方向",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "全量区域配置参数",
+      "description": "扫地机区域配置参数上报保存，可以解决切换地图时，参数不一致的问题",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "curpath_data",
+      "ref": "121300",
+      "dataType": {
+        "specs": [
+          {
+            "identifier": "version",
+            "ref": "121301",
+            "dataType": {
+              "specs": {},
+              "type": "text"
+            },
+            "name": "版本号",
+            "desc": ""
+          },
+          {
+            "identifier": "pathId",
+            "ref": "121302",
+            "dataType": {
+              "specs": {
+                "range": [
+                  "0",
+                  "999999"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "历史路径ID",
+            "desc": ""
+          },
+          {
+            "identifier": "startPos",
+            "ref": "121303",
+            "dataType": {
+              "specs": {
+                "unit": "",
+                "range": [
+                  "0",
+                  "999999"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "起始点",
+            "desc": ""
+          },
+          {
+            "identifier": "pathLength",
+            "ref": "121304",
+            "dataType": {
+              "specs": {
+                "unit": "",
+                "range": [
+                  "0",
+                  "9999"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "坐标数",
+            "desc": ""
+          },
+          {
+            "identifier": "pathData",
+            "ref": "121305",
+            "dataType": {
+              "specs": {},
+              "type": "text"
+            },
+            "name": "路径数据",
+            "desc": ""
+          },
+          {
+            "identifier": "mapId",
+            "ref": "121306",
+            "dataType": {
+              "specs": {
+                "unit": "",
+                "range": [
+                  "-100",
+                  "100"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "地图id",
+            "desc": ""
+          }
+        ],
+        "type": "struct"
+      },
+      "name": "当前路径",
+      "description": "",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "virtual_area",
+      "ref": "121400",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "mapId",
+                "ref": "121401",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "id",
+                "ref": "121402",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "区域id",
+                "desc": ""
+              },
+              {
+                "identifier": "name",
+                "ref": "121403",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "名称",
+                "desc": ""
+              },
+              {
+                "identifier": "type",
+                "ref": "121404",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-1000",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "类型",
+                "desc": ""
+              },
+              {
+                "identifier": "vertices",
+                "ref": "121405",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "坐标二维数组列表",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "禁区虚拟墙设置",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "custom_switch",
+      "ref": "120100",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "定制方案",
+      "accessMode": "rw",
+      "desc": "定制|通用"
+    },
+    {
+      "identifier": "DNDST",
+      "ref": "120800",
+      "dataType": {
+        "specs": [
+          {
+            "identifier": "enable",
+            "ref": "120801",
+            "dataType": {
+              "specs": {},
+              "type": "bool"
+            },
+            "name": "使能开关",
+            "desc": "开|关"
+          },
+          {
+            "identifier": "start_time",
+            "ref": "120802",
+            "dataType": {
+              "specs": {
+                "unit": "s",
+                "range": [
+                  "0",
+                  "999999"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "开始时间（时间与0点差值，单位秒）",
+            "desc": ""
+          },
+          {
+            "identifier": "end_time",
+            "ref": "120803",
+            "dataType": {
+              "specs": {
+                "unit": "s",
+                "range": [
+                  "0",
+                  "999999"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "结束时间（时间与0点差值，单位秒）",
+            "desc": ""
+          }
+        ],
+        "type": "struct"
+      },
+      "name": "勿扰模式",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "dust_freq",
+      "ref": "119900",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "1",
+              "desc": "每次集尘"
+            },
+            {
+              "value": "2",
+              "desc": "清扫两次集尘"
+            },
+            {
+              "value": "3",
+              "desc": "清扫三次集尘"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "自动集尘频率",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "dust_status",
+      "ref": "120200",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "集尘控制",
+      "accessMode": "rw",
+      "desc": "开始集尘|结束集尘"
+    },
+    {
+      "identifier": "map_name",
+      "ref": "122300",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "map_id",
+                "ref": "122301",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "name",
+                "ref": "122302",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "地图名称",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "地图名称",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "remote_state",
+      "ref": "120500",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "遥控状态",
+      "accessMode": "rw",
+      "desc": "开始遥控|结束遥控"
+    },
+    {
+      "identifier": "sequence",
+      "ref": "120600",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "256"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "清扫顺序",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "star_list",
+      "ref": "122000",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "9999"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "收藏地图ID列表",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "update_flag",
+      "ref": "122100",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "地图更新标志",
+      "accessMode": "rw",
+      "desc": "更新|不更新"
+    },
+    {
+      "identifier": "partition_area",
+      "ref": "126200",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "1000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "分区清扫信息",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "blocks_area",
+      "ref": "126300",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "id",
+                "ref": "126301",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "区域id",
+                "desc": ""
+              },
+              {
+                "identifier": "name",
+                "ref": "126302",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "名称",
+                "desc": ""
+              },
+              {
+                "identifier": "type",
+                "ref": "126303",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-1000",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "类型",
+                "desc": ""
+              },
+              {
+                "identifier": "vertices",
+                "ref": "126304",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "坐标二维数组列表",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "划区清扫信息",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "point_area",
+      "ref": "126400",
+      "dataType": {
+        "specs": [
+          {
+            "identifier": "x",
+            "ref": "126401",
+            "dataType": {
+              "specs": {
+                "unit": "",
+                "range": [
+                  "-1000",
+                  "1000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "x坐标",
+            "desc": ""
+          },
+          {
+            "identifier": "y",
+            "ref": "126402",
+            "dataType": {
+              "specs": {
+                "unit": "",
+                "range": [
+                  "-1000",
+                  "1000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "y坐标",
+            "desc": ""
+          }
+        ],
+        "type": "struct"
+      },
+      "name": "定点清扫信息",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "home_switch",
+      "ref": "11500",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "首页清扫开关",
+      "accessMode": "rw",
+      "desc": "开始|暂停"
+    },
+    {
+      "identifier": "power",
+      "ref": "11600",
+      "defaultData": "15",
+      "dataType": {
+        "specs": {
+          "unit": "%",
+          "range": [
+            "-100",
+            "100"
+          ],
+          "step": "1"
+        },
+        "type": "int"
+      },
+      "name": "电量",
+      "description": "",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "keep_clean",
+      "ref": "11700",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "断点续扫开关",
+      "accessMode": "rw",
+      "desc": "开|关"
+    },
+    {
+      "identifier": "volume",
+      "ref": "12000",
+      "dataType": {
+        "specs": {
+          "unit": "%",
+          "range": [
+            "0",
+            "100"
+          ],
+          "step": "1"
+        },
+        "type": "int"
+      },
+      "name": "音量",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "wifi_rssi_sdj",
+      "ref": "11300",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "异常"
+            },
+            {
+              "value": "1",
+              "desc": "无网络"
+            },
+            {
+              "value": "2",
+              "desc": "较差"
+            },
+            {
+              "value": "3",
+              "desc": "一般"
+            },
+            {
+              "value": "4",
+              "desc": "较好"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "WIFI信号-扫地机",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "device_volume_enum",
+      "ref": "15400",
+      "defaultData": "2",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "-1",
+              "desc": "静音"
+            },
+            {
+              "value": "0",
+              "desc": "低"
+            },
+            {
+              "value": "1",
+              "desc": "中"
+            },
+            {
+              "value": "2",
+              "desc": "高"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "设备音量(枚举)",
+      "description": "",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "deviceLockVol",
+      "ref": "106900",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "静音"
+            },
+            {
+              "value": "1",
+              "desc": "低"
+            },
+            {
+              "value": "2",
+              "desc": "较低"
+            },
+            {
+              "value": "3",
+              "desc": "一般"
+            },
+            {
+              "value": "4",
+              "desc": "较高"
+            },
+            {
+              "value": "5",
+              "desc": "高"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "提示音音量",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "sharedLink",
+      "ref": "114000",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "共享链路",
+      "accessMode": "r",
+      "desc": "共享|独享"
+    },
+    {
+      "identifier": "auto_dust",
+      "ref": "118400",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "自动集尘开关",
+      "accessMode": "rw",
+      "desc": "开|关"
+    },
+    {
+      "identifier": "rug_press",
+      "ref": "118500",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "地毯增压开关",
+      "accessMode": "rw",
+      "desc": "开|关"
+    },
+    {
+      "identifier": "clean_area",
+      "ref": "118700",
+      "dataType": {
+        "specs": {
+          "unit": "平方米",
+          "range": [
+            "0",
+            "10000"
+          ],
+          "step": "1"
+        },
+        "type": "int"
+      },
+      "name": "清扫面积",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "clean_time",
+      "ref": "118800",
+      "dataType": {
+        "specs": {
+          "unit": "min",
+          "range": [
+            "0",
+            "10000"
+          ],
+          "step": "1"
+        },
+        "type": "int"
+      },
+      "name": "清扫用时",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "WindPower",
+      "ref": "118900",
+      "defaultData": "0",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "关闭"
+            },
+            {
+              "value": "1",
+              "desc": "小"
+            },
+            {
+              "value": "2",
+              "desc": "中"
+            },
+            {
+              "value": "3",
+              "desc": "大"
+            },
+            {
+              "value": "4",
+              "desc": "最大"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "风机吸力",
+      "description": "",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "carpet_area",
+      "ref": "121500",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "mapId",
+                "ref": "121501",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "id",
+                "ref": "121502",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-1000",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "区域id",
+                "desc": ""
+              },
+              {
+                "identifier": "name",
+                "ref": "121503",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "名称",
+                "desc": ""
+              },
+              {
+                "identifier": "type",
+                "ref": "121504",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-1000",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "类型",
+                "desc": ""
+              },
+              {
+                "identifier": "carpetType",
+                "ref": "121505",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-1000",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地毯类型",
+                "desc": ""
+              },
+              {
+                "identifier": "vertices",
+                "ref": "121506",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "坐标二维数组列表",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "地毯区域",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "child_lock",
+      "ref": "120000",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "童锁开关",
+      "accessMode": "rw",
+      "desc": "开|关"
+    },
+    {
+      "identifier": "swp_allVirtualArea",
+      "ref": "145700",
+      "encrypt": "",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "mapId",
+                "ref": "145701",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "id",
+                "ref": "145702",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "区域id",
+                "desc": ""
+              },
+              {
+                "identifier": "name",
+                "ref": "145703",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "名称",
+                "desc": ""
+              },
+              {
+                "identifier": "type",
+                "ref": "145704",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-1000",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "类型",
+                "desc": ""
+              },
+              {
+                "identifier": "vertices",
+                "ref": "145705",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "坐标二维数组列表",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "全量禁区虚拟墙数据",
+      "description": "扫地机全量禁区、虚拟墙数据上报保存，可以解决切换地图时，数据不同步的问题",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "std_lanIPInfo",
+      "ref": "140400",
+      "encrypt": "",
+      "dataType": {
+        "specs": [
+          {
+            "identifier": "ip",
+            "ref": "140401",
+            "dataType": {
+              "specs": {},
+              "type": "text"
+            },
+            "name": "IP地址",
+            "desc": ""
+          },
+          {
+            "identifier": "netmask",
+            "ref": "140402",
+            "dataType": {
+              "specs": {},
+              "type": "text"
+            },
+            "name": "掩码",
+            "desc": ""
+          },
+          {
+            "identifier": "gateway",
+            "ref": "140403",
+            "dataType": {
+              "specs": {},
+              "type": "text"
+            },
+            "name": "网关",
+            "desc": ""
+          }
+        ],
+        "type": "struct"
+      },
+      "name": "设备局域网IP信息",
+      "description": "用于展示设备的局域网信息",
+      "accessMode": "r",
+      "desc": ""
+    },
+    {
+      "identifier": "swp_cleanSequence",
+      "ref": "146000",
+      "encrypt": "",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "mapId",
+                "ref": "146001",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "list",
+                "ref": "146002",
+                "dataType": {
+                  "specs": {},
+                  "type": "text"
+                },
+                "name": "区域顺序列表(按照原json列表转字符串)",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "全量清扫顺序",
+      "description": "全量清扫顺序，解决多地图切换数据同步的问题",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "swp_allCustomEnable",
+      "ref": "146100",
+      "encrypt": "",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "mapId",
+                "ref": "146101",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "enable",
+                "ref": "146102",
+                "defaultData": 0,
+                "dataType": {
+                  "specs": {},
+                  "type": "bool"
+                },
+                "name": "使能开关",
+                "desc": "开|关"
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "全量自定义方案使能",
+      "description": "全量自定义方案使能，解决切换地图，数据同步问题",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "swp_backStation",
+      "ref": "151300",
+      "defaultData": "0",
+      "encrypt": "",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "暂停返回"
+            },
+            {
+              "value": "1",
+              "desc": "开始返回"
+            },
+            {
+              "value": "2",
+              "desc": "继续返回"
+            },
+            {
+              "value": "3",
+              "desc": "停止返回"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "返回基站",
+      "description": "返回基站过程中的状态，后续扫地机都使用该物模型标记返回基站过程状态；\n0-暂停返回，1-开始返回 2-继续返回 3-停止返回",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "swp_areaConfig",
+      "ref": "147300",
+      "encrypt": "",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "mapId",
+                "ref": "147301",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "id",
+                "ref": "147302",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-1000",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "区域id",
+                "desc": ""
+              },
+              {
+                "identifier": "clean_direction",
+                "ref": "147303",
+                "defaultData": "0",
+                "dataType": {
+                  "specs": {
+                    "list": [
+                      {
+                        "value": "0",
+                        "desc": "自动判断"
+                      },
+                      {
+                        "value": "1",
+                        "desc": "横（对应界面）"
+                      },
+                      {
+                        "value": "2",
+                        "desc": "竖（对应界面）"
+                      }
+                    ]
+                  },
+                  "type": "enum"
+                },
+                "name": "清扫方向",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "10"
+        },
+        "type": "array"
+      },
+      "name": "区域配置参数",
+      "description": "扫地机每个区域所有配置参数",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "clean_status",
+      "ref": "121700",
+      "defaultData": "0",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "全屋"
+            },
+            {
+              "value": "1",
+              "desc": "选区"
+            },
+            {
+              "value": "2",
+              "desc": "划区"
+            },
+            {
+              "value": "3",
+              "desc": "定点"
+            },
+            {
+              "value": "4",
+              "desc": "指哪到哪"
+            },
+            {
+              "value": "5",
+              "desc": "其他"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "清扫模式状态",
+      "description": "",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "station_status",
+      "ref": "121100",
+      "dataType": {
+        "specs": [
+          {
+            "identifier": "connected",
+            "ref": "121101",
+            "dataType": {
+              "specs": {},
+              "type": "bool"
+            },
+            "name": "连接状态",
+            "desc": "已连接|未连接"
+          },
+          {
+            "identifier": "clean_box",
+            "ref": "121102",
+            "dataType": {
+              "specs": {
+                "list": [
+                  {
+                    "value": "0",
+                    "desc": "正常"
+                  },
+                  {
+                    "value": "1",
+                    "desc": "未安装"
+                  },
+                  {
+                    "value": "2",
+                    "desc": "水量不足"
+                  }
+                ]
+              },
+              "type": "enum"
+            },
+            "name": "清水箱状态",
+            "desc": ""
+          },
+          {
+            "identifier": "waste_box",
+            "ref": "121103",
+            "dataType": {
+              "specs": {
+                "list": [
+                  {
+                    "value": "0",
+                    "desc": "正常"
+                  },
+                  {
+                    "value": "1",
+                    "desc": "未安装"
+                  },
+                  {
+                    "value": "2",
+                    "desc": "水量已满"
+                  }
+                ]
+              },
+              "type": "enum"
+            },
+            "name": "污水箱状态",
+            "desc": ""
+          },
+          {
+            "identifier": "dust_bag",
+            "ref": "121104",
+            "dataType": {
+              "specs": {
+                "list": [
+                  {
+                    "value": "0",
+                    "desc": "正常"
+                  },
+                  {
+                    "value": "1",
+                    "desc": "未安装"
+                  },
+                  {
+                    "value": "2",
+                    "desc": "尘袋已满"
+                  }
+                ]
+              },
+              "type": "enum"
+            },
+            "name": "尘袋状态",
+            "desc": ""
+          }
+        ],
+        "type": "struct"
+      },
+      "name": "基站状态",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "area_clean_plan",
+      "ref": "121600",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "mapId",
+                "ref": "121601",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "id",
+                "ref": "121602",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-1000",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "区域id",
+                "desc": ""
+              },
+              {
+                "identifier": "cleanTimes",
+                "ref": "121603",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "0",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "清扫次数",
+                "desc": ""
+              },
+              {
+                "identifier": "fanLevel",
+                "ref": "121604",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "0",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "风量",
+                "desc": ""
+              },
+              {
+                "identifier": "mopSpeed",
+                "ref": "121605",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "0",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "风速",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "定制化清扫方案",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "power_status",
+      "ref": "112200",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "正常"
+            },
+            {
+              "value": "1",
+              "desc": "充电中"
+            },
+            {
+              "value": "2",
+              "desc": "异常"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "电量状态",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "life",
+      "ref": "12200",
+      "dataType": {
+        "specs": [
+          {
+            "identifier": "brush_time",
+            "ref": "12202",
+            "dataType": {
+              "specs": {
+                "unit": "h",
+                "range": [
+                  "0",
+                  "10000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "边刷时长",
+            "desc": ""
+          },
+          {
+            "identifier": "main_brush_time",
+            "ref": "12204",
+            "dataType": {
+              "specs": {
+                "unit": "h",
+                "range": [
+                  "0",
+                  "10000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "滚刷时间",
+            "desc": ""
+          },
+          {
+            "identifier": "rosebox_time",
+            "ref": "12206",
+            "dataType": {
+              "specs": {
+                "unit": "h",
+                "range": [
+                  "0",
+                  "10000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "滤芯时间",
+            "desc": ""
+          },
+          {
+            "identifier": "sensor_time",
+            "ref": "12208",
+            "dataType": {
+              "specs": {
+                "unit": "h",
+                "range": [
+                  "0",
+                  "10000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "传感器时间",
+            "desc": ""
+          },
+          {
+            "identifier": "mop_time",
+            "ref": "12210",
+            "dataType": {
+              "specs": {
+                "unit": "h",
+                "range": [
+                  "0",
+                  "10000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "拖布时间",
+            "desc": ""
+          },
+          {
+            "identifier": "dust_status",
+            "ref": "12212",
+            "dataType": {
+              "specs": {
+                "unit": "h",
+                "range": [
+                  "0",
+                  "10000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "集尘袋时间",
+            "desc": ""
+          },
+          {
+            "identifier": "clean_fluids_time",
+            "ref": "12214",
+            "dataType": {
+              "specs": {
+                "unit": "h",
+                "range": [
+                  "0",
+                  "10000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "清洗液时间",
+            "desc": ""
+          },
+          {
+            "identifier": "cover_time",
+            "ref": "12215",
+            "dataType": {
+              "specs": {
+                "unit": "h",
+                "range": [
+                  "0",
+                  "10000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "主刷盖板时间",
+            "desc": ""
+          },
+          {
+            "identifier": "battery_time",
+            "ref": "12216",
+            "dataType": {
+              "specs": {
+                "unit": "h",
+                "range": [
+                  "0",
+                  "10000"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "电池时间",
+            "desc": ""
+          }
+        ],
+        "type": "struct"
+      },
+      "name": "耗材寿命",
+      "description": "",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "work_status",
+      "ref": "12300",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "待机中"
+            },
+            {
+              "value": "1",
+              "desc": "暂停中"
+            },
+            {
+              "value": "2",
+              "desc": "回充中"
+            },
+            {
+              "value": "3",
+              "desc": "充电中"
+            },
+            {
+              "value": "4",
+              "desc": "定位中"
+            },
+            {
+              "value": "5",
+              "desc": "遥控中"
+            },
+            {
+              "value": "6",
+              "desc": "异常中"
+            },
+            {
+              "value": "7",
+              "desc": "选区清扫中"
+            },
+            {
+              "value": "8",
+              "desc": "划区清扫中"
+            },
+            {
+              "value": "9",
+              "desc": "定点清扫中"
+            },
+            {
+              "value": "10",
+              "desc": "指哪到哪"
+            },
+            {
+              "value": "11",
+              "desc": "集尘中"
+            },
+            {
+              "value": "12",
+              "desc": "全屋清扫中"
+            },
+            {
+              "value": "13",
+              "desc": "回充暂停中"
+            },
+            {
+              "value": "14",
+              "desc": "回洗拖布中"
+            },
+            {
+              "value": "15",
+              "desc": "拖布清洗中"
+            },
+            {
+              "value": "16",
+              "desc": "烘干中"
+            },
+            {
+              "value": "17",
+              "desc": "建图中"
+            },
+            {
+              "value": "18",
+              "desc": "建图暂停中"
+            },
+            {
+              "value": "19",
+              "desc": "回洗暂停中"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "状态-扫地机",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "breathingLight",
+      "ref": "12700",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "设备指示灯",
+      "accessMode": "rw",
+      "desc": "开|关"
+    },
+    {
+      "identifier": "volume5",
+      "ref": "103000",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "1",
+              "desc": "1"
+            },
+            {
+              "value": "2",
+              "desc": "2"
+            },
+            {
+              "value": "3",
+              "desc": "3"
+            },
+            {
+              "value": "4",
+              "desc": "4"
+            },
+            {
+              "value": "5",
+              "desc": "5"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "音量-5档",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "light",
+      "ref": "11400",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": " 指示灯",
+      "accessMode": "rw",
+      "desc": "开|关"
+    },
+    {
+      "identifier": "remote",
+      "ref": "118600",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "前进"
+            },
+            {
+              "value": "1",
+              "desc": "左旋"
+            },
+            {
+              "value": "2",
+              "desc": "右旋"
+            },
+            {
+              "value": "3",
+              "desc": "后退"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "遥控控制",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "mopEnable",
+      "ref": "119000",
+      "dataType": {
+        "specs": {},
+        "type": "bool"
+      },
+      "name": "拖布状态",
+      "accessMode": "rw",
+      "desc": "有拖布|无拖布"
+    },
+    {
+      "identifier": "mop_speed",
+      "ref": "119100",
+      "dataType": {
+        "specs": {
+          "list": [
+            {
+              "value": "0",
+              "desc": "轻柔"
+            },
+            {
+              "value": "1",
+              "desc": "标准"
+            },
+            {
+              "value": "2",
+              "desc": "强劲"
+            }
+          ]
+        },
+        "type": "enum"
+      },
+      "name": "拖布转速",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "swp_allCleanPlan",
+      "ref": "145800",
+      "encrypt": "",
+      "dataType": {
+        "specs": {
+          "item": {
+            "specs": [
+              {
+                "identifier": "mapId",
+                "ref": "145801",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "地图id",
+                "desc": ""
+              },
+              {
+                "identifier": "id",
+                "ref": "145802",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "-100",
+                      "100"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "区域id",
+                "desc": ""
+              },
+              {
+                "identifier": "cleanTimes",
+                "ref": "145803",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "0",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "清扫次数",
+                "desc": ""
+              },
+              {
+                "identifier": "fanLevel",
+                "ref": "145804",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "0",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "风量",
+                "desc": ""
+              },
+              {
+                "identifier": "mopSpeed",
+                "ref": "145805",
+                "dataType": {
+                  "specs": {
+                    "unit": "",
+                    "range": [
+                      "0",
+                      "1000"
+                    ],
+                    "step": "1"
+                  },
+                  "type": "int"
+                },
+                "name": "风速",
+                "desc": ""
+              }
+            ],
+            "type": "struct"
+          },
+          "size": "100"
+        },
+        "type": "array"
+      },
+      "name": "全量定制清扫方案",
+      "description": "扫地机全量定制清扫方案上报保存，可以解决切换地图时，方案不一致的问题",
+      "accessMode": "rw",
+      "desc": ""
+    },
+    {
+      "identifier": "sweeper_sequence",
+      "ref": "160700",
+      "encrypt": "",
+      "dataType": {
+        "specs": [
+          {
+            "identifier": "mapId",
+            "ref": "160701",
+            "dataType": {
+              "specs": {
+                "unit": "",
+                "range": [
+                  "0",
+                  "9999"
+                ],
+                "step": "1"
+              },
+              "type": "int"
+            },
+            "name": "地图ID",
+            "desc": ""
+          },
+          {
+            "identifier": "list",
+            "ref": "160702",
+            "dataType": {
+              "specs": {},
+              "type": "text"
+            },
+            "name": "区域顺序列表(按照原json列表转字符串)",
+            "desc": ""
+          }
+        ],
+        "type": "struct"
+      },
+      "name": "清扫顺序（单地图）",
+      "description": "清扫顺序，绑定单个地图的ID",
+      "accessMode": "rw",
+      "desc": ""
+    }
+  ],
+  "services": [
+    {
+      "outputData": [
+        {
+          "identifier": "list",
+          "ref": "201621",
+          "dataType": {
+            "specs": {
+              "item": {
+                "specs": [
+                  {
+                    "identifier": "map_id",
+                    "ref": "201661",
+                    "dataType": {
+                      "specs": {
+                        "unit": "",
+                        "range": [
+                          "-1000",
+                          "1000"
+                        ],
+                        "step": "1"
+                      },
+                      "type": "int"
+                    },
+                    "name": "地图id",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "timerId",
+                    "ref": "201662",
+                    "dataType": {
+                      "specs": {
+                        "unit": "",
+                        "range": [
+                          "-1000",
+                          "1000"
+                        ],
+                        "step": "1"
+                      },
+                      "type": "int"
+                    },
+                    "name": "预约记录ID",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "state",
+                    "ref": "201663",
+                    "dataType": {
+                      "specs": {
+                        "list": [
+                          {
+                            "value": "0",
+                            "desc": "失效"
+                          },
+                          {
+                            "value": "1",
+                            "desc": "开启"
+                          },
+                          {
+                            "value": "2",
+                            "desc": "关闭"
+                          }
+                        ]
+                      },
+                      "type": "enum"
+                    },
+                    "name": "是否有效",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "control",
+                    "ref": "201664",
+                    "dataType": {
+                      "specs": {
+                        "list": [
+                          {
+                            "value": "0",
+                            "desc": "增加"
+                          },
+                          {
+                            "value": "1",
+                            "desc": "删除"
+                          },
+                          {
+                            "value": "2",
+                            "desc": "修改"
+                          }
+                        ]
+                      },
+                      "type": "enum"
+                    },
+                    "name": "操作类型",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "clean_type",
+                    "ref": "201665",
+                    "dataType": {
+                      "specs": {
+                        "list": [
+                          {
+                            "value": "0",
+                            "desc": "全屋清扫"
+                          },
+                          {
+                            "value": "1",
+                            "desc": "选区清扫"
+                          }
+                        ]
+                      },
+                      "type": "enum"
+                    },
+                    "name": "清扫类型",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "area_array",
+                    "ref": "201666",
+                    "dataType": {
+                      "specs": {},
+                      "type": "text"
+                    },
+                    "name": "区域数组列表",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "cleaning_times",
+                    "ref": "201667",
+                    "dataType": {
+                      "specs": {
+                        "list": [
+                          {
+                            "value": "0",
+                            "desc": "仅一次"
+                          },
+                          {
+                            "value": "1",
+                            "desc": "重复"
+                          }
+                        ]
+                      },
+                      "type": "enum"
+                    },
+                    "name": "清扫次数",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "select_day",
+                    "ref": "201668",
+                    "dataType": {
+                      "specs": {},
+                      "type": "text"
+                    },
+                    "name": "周循环数组列表",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "start_time",
+                    "ref": "201669",
+                    "dataType": {
+                      "specs": {
+                        "unit": "",
+                        "range": [
+                          "-10",
+                          "999999"
+                        ],
+                        "step": "1"
+                      },
+                      "type": "int"
+                    },
+                    "name": "开始时间",
+                    "desc": ""
+                  }
+                ],
+                "type": "struct"
+              },
+              "size": "100"
+            },
+            "type": "array"
+          },
+          "name": "列表",
+          "desc": ""
+        }
+      ],
+      "identifier": "clean_list",
+      "inputData": [],
+      "ref": "201600",
+      "name": "预约清扫查询",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "code",
+          "ref": "201221",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "-1",
+                "10000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "错误码",
+          "desc": ""
+        }
+      ],
+      "identifier": "area_edit",
+      "inputData": [
+        {
+          "identifier": "mapId",
+          "ref": "201201",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "999999"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "编辑区域对应map的ID",
+          "desc": ""
+        },
+        {
+          "identifier": "operate",
+          "ref": "201202",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "区域划分"
+                },
+                {
+                  "value": "1",
+                  "desc": "区域合并"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "操作指令",
+          "desc": ""
+        },
+        {
+          "identifier": "region_array",
+          "ref": "201203",
+          "dataType": {
+            "specs": {
+              "item": {
+                "specs": {
+                  "unit": "",
+                  "range": [
+                    "0",
+                    "999999"
+                  ],
+                  "step": "1"
+                },
+                "type": "int"
+              },
+              "size": "16"
+            },
+            "type": "array"
+          },
+          "name": "设置参数",
+          "desc": ""
+        },
+        {
+          "identifier": "vertices",
+          "ref": "201204",
+          "dataType": {
+            "specs": {},
+            "type": "text"
+          },
+          "name": "坐标二维数组列表",
+          "desc": ""
+        }
+      ],
+      "ref": "201200",
+      "name": "区域编辑",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "code",
+          "ref": "201121",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "-1",
+                "10000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "错误码",
+          "desc": ""
+        }
+      ],
+      "identifier": "carpet_editor",
+      "inputData": [
+        {
+          "identifier": "carpet_id",
+          "ref": "201101",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "9999"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "地毯区域id",
+          "desc": ""
+        },
+        {
+          "identifier": "carpet_type",
+          "ref": "201102",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "删除地毯"
+                },
+                {
+                  "value": "1",
+                  "desc": "避开地毯"
+                },
+                {
+                  "value": "2",
+                  "desc": "无视地毯"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "编辑类型",
+          "desc": ""
+        }
+      ],
+      "ref": "201100",
+      "name": "地毯编辑",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "code",
+          "ref": "200921",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "-1",
+                "10000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "错误码",
+          "desc": ""
+        }
+      ],
+      "identifier": "clean_control",
+      "inputData": [
+        {
+          "identifier": "status",
+          "ref": "200901",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "暂停"
+                },
+                {
+                  "value": "1",
+                  "desc": "开始"
+                },
+                {
+                  "value": "2",
+                  "desc": "继续"
+                },
+                {
+                  "value": "3",
+                  "desc": "结束"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "状态",
+          "desc": ""
+        },
+        {
+          "identifier": "mode",
+          "ref": "200902",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "全屋"
+                },
+                {
+                  "value": "1",
+                  "desc": "选区"
+                },
+                {
+                  "value": "2",
+                  "desc": "划区"
+                },
+                {
+                  "value": "3",
+                  "desc": "定点"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "模式",
+          "desc": ""
+        },
+        {
+          "identifier": "partition_area",
+          "ref": "200903",
+          "dataType": {
+            "specs": {
+              "item": {
+                "specs": {
+                  "unit": "",
+                  "range": [
+                    "-1000",
+                    "1000"
+                  ],
+                  "step": "1"
+                },
+                "type": "int"
+              },
+              "size": "100"
+            },
+            "type": "array"
+          },
+          "name": "分区区域信息",
+          "desc": ""
+        },
+        {
+          "identifier": "blocks_area",
+          "ref": "200904",
+          "dataType": {
+            "specs": {
+              "item": {
+                "specs": [
+                  {
+                    "identifier": "id",
+                    "ref": "200941",
+                    "dataType": {
+                      "specs": {
+                        "unit": "",
+                        "range": [
+                          "-1000",
+                          "1000"
+                        ],
+                        "step": "1"
+                      },
+                      "type": "int"
+                    },
+                    "name": "区域id",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "name",
+                    "ref": "200942",
+                    "dataType": {
+                      "specs": {},
+                      "type": "text"
+                    },
+                    "name": "名称",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "type",
+                    "ref": "200943",
+                    "dataType": {
+                      "specs": {
+                        "unit": "",
+                        "range": [
+                          "-1000",
+                          "1000"
+                        ],
+                        "step": "1"
+                      },
+                      "type": "int"
+                    },
+                    "name": "类型",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "vertices",
+                    "ref": "200944",
+                    "dataType": {
+                      "specs": {},
+                      "type": "text"
+                    },
+                    "name": "坐标二维数组列表",
+                    "desc": ""
+                  }
+                ],
+                "type": "struct"
+              },
+              "size": "100"
+            },
+            "type": "array"
+          },
+          "name": "划区区域信息",
+          "desc": ""
+        }
+      ],
+      "ref": "200900",
+      "name": "清扫控制",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "code",
+          "ref": "201021",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "-1",
+                "10000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "错误码",
+          "desc": ""
+        }
+      ],
+      "identifier": "map_control",
+      "inputData": [
+        {
+          "identifier": "cmd",
+          "ref": "201001",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "删除地图"
+                },
+                {
+                  "value": "1",
+                  "desc": "替换地图"
+                },
+                {
+                  "value": "2",
+                  "desc": "使用地图"
+                },
+                {
+                  "value": "3",
+                  "desc": "保存地图"
+                },
+                {
+                  "value": "4",
+                  "desc": "备份地图"
+                },
+                {
+                  "value": "5",
+                  "desc": "恢复地图"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "操作",
+          "desc": ""
+        },
+        {
+          "identifier": "id",
+          "ref": "201002",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "999999"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "地图ID",
+          "desc": ""
+        }
+      ],
+      "ref": "201000",
+      "name": "地图管理（操作地图）",
+      "description": "",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "code",
+          "ref": "201321",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "-1",
+                "10000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "错误码",
+          "desc": ""
+        }
+      ],
+      "identifier": "map_rename",
+      "inputData": [
+        {
+          "identifier": "mapId",
+          "ref": "201301",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "999999"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "地图数据",
+          "desc": ""
+        },
+        {
+          "identifier": "map_name",
+          "ref": "201302",
+          "dataType": {
+            "specs": {},
+            "type": "text"
+          },
+          "name": "地图名",
+          "desc": ""
+        }
+      ],
+      "ref": "201300",
+      "name": "地图重命名",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "code",
+          "ref": "201421",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "-1",
+                "10000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "错误码",
+          "desc": ""
+        }
+      ],
+      "identifier": "region_rename",
+      "inputData": [
+        {
+          "identifier": "regionId",
+          "ref": "201401",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "9999"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "区域Id",
+          "desc": ""
+        },
+        {
+          "identifier": "region_name",
+          "ref": "201402",
+          "dataType": {
+            "specs": {},
+            "type": "text"
+          },
+          "name": "区域名",
+          "desc": ""
+        }
+      ],
+      "ref": "201400",
+      "name": "区域重命名",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "code",
+          "ref": "201521",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "-1",
+                "10000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "错误码",
+          "desc": ""
+        }
+      ],
+      "identifier": "timer_clean",
+      "inputData": [
+        {
+          "identifier": "mapId",
+          "ref": "201501",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "9999"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "地图ID",
+          "desc": ""
+        },
+        {
+          "identifier": "timerId",
+          "ref": "201502",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "9999"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "预约记录ID",
+          "desc": ""
+        },
+        {
+          "identifier": "state",
+          "ref": "201503",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "失效"
+                },
+                {
+                  "value": "1",
+                  "desc": "开启"
+                },
+                {
+                  "value": "2",
+                  "desc": "关闭"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "是否有效",
+          "desc": ""
+        },
+        {
+          "identifier": "control",
+          "ref": "201504",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "增加"
+                },
+                {
+                  "value": "1",
+                  "desc": "删除"
+                },
+                {
+                  "value": "2",
+                  "desc": "修改"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "操作类型",
+          "desc": ""
+        },
+        {
+          "identifier": "clean_type",
+          "ref": "201505",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "全屋清扫"
+                },
+                {
+                  "value": "1",
+                  "desc": "选区清扫"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "清扫类型",
+          "desc": ""
+        },
+        {
+          "identifier": "areaId",
+          "ref": "201506",
+          "dataType": {
+            "specs": {
+              "item": {
+                "specs": {
+                  "unit": "",
+                  "range": [
+                    "0",
+                    "9999"
+                  ],
+                  "step": "1"
+                },
+                "type": "int"
+              },
+              "size": "100"
+            },
+            "type": "array"
+          },
+          "name": "区域数组列表",
+          "desc": ""
+        },
+        {
+          "identifier": "cleaning_times",
+          "ref": "201507",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "仅一次"
+                },
+                {
+                  "value": "1",
+                  "desc": "重复"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "清扫次数",
+          "desc": ""
+        },
+        {
+          "identifier": "select_day",
+          "ref": "201508",
+          "dataType": {
+            "specs": {
+              "item": {
+                "specs": {
+                  "unit": "",
+                  "range": [
+                    "0",
+                    "6"
+                  ],
+                  "step": "1"
+                },
+                "type": "int"
+              },
+              "size": "100"
+            },
+            "type": "array"
+          },
+          "name": "周循环数组列表",
+          "desc": ""
+        },
+        {
+          "identifier": "start_time",
+          "ref": "201509",
+          "dataType": {
+            "specs": {
+              "range": [
+                "0",
+                "999999"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "开始时间（时间戳）",
+          "desc": ""
+        }
+      ],
+      "ref": "201500",
+      "name": "预约清洁设置",
+      "desc": ""
+    },
+    {
+      "outputData": [],
+      "identifier": "location",
+      "inputData": [],
+      "ref": "20400",
+      "name": "定位机器人",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "code",
+          "ref": "20521",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "-1",
+                "10000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "错误码",
+          "desc": ""
+        }
+      ],
+      "identifier": "reset_parts",
+      "inputData": [
+        {
+          "identifier": "type",
+          "ref": "20501",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "边刷"
+                },
+                {
+                  "value": "1",
+                  "desc": "滚刷"
+                },
+                {
+                  "value": "2",
+                  "desc": "滤芯"
+                },
+                {
+                  "value": "3",
+                  "desc": "传感器"
+                },
+                {
+                  "value": "4",
+                  "desc": "拖布"
+                },
+                {
+                  "value": "5",
+                  "desc": "集尘袋"
+                },
+                {
+                  "value": "6",
+                  "desc": "清洗液"
+                },
+                {
+                  "value": "7",
+                  "desc": "主刷盖板"
+                },
+                {
+                  "value": "8",
+                  "desc": "电池"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "类型",
+          "desc": ""
+        }
+      ],
+      "ref": "20500",
+      "name": "复位耗材",
+      "description": "",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "result",
+          "ref": "200821",
+          "dataType": {
+            "specs": {},
+            "type": "bool"
+          },
+          "name": "结果",
+          "desc": "成功|失败"
+        }
+      ],
+      "identifier": "RestoreDefault",
+      "inputData": [],
+      "ref": "200800",
+      "name": "恢复默认",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "list",
+          "ref": "215922",
+          "dataType": {
+            "specs": {
+              "item": {
+                "specs": [
+                  {
+                    "identifier": "id",
+                    "ref": "215965",
+                    "dataType": {
+                      "specs": {
+                        "unit": "",
+                        "range": [
+                          "0",
+                          "100"
+                        ],
+                        "step": "1"
+                      },
+                      "type": "int"
+                    },
+                    "name": "序号",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "ssid",
+                    "ref": "215966",
+                    "dataType": {
+                      "specs": {},
+                      "type": "text"
+                    },
+                    "name": "ssid",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "wifiLevel",
+                    "ref": "215967",
+                    "defaultData": "0",
+                    "dataType": {
+                      "specs": {
+                        "list": [
+                          {
+                            "value": "0",
+                            "desc": "未知"
+                          },
+                          {
+                            "value": "1",
+                            "desc": "很弱"
+                          },
+                          {
+                            "value": "2",
+                            "desc": "弱"
+                          },
+                          {
+                            "value": "3",
+                            "desc": "一般"
+                          },
+                          {
+                            "value": "4",
+                            "desc": "强"
+                          },
+                          {
+                            "value": "5",
+                            "desc": "很强"
+                          }
+                        ]
+                      },
+                      "type": "enum"
+                    },
+                    "name": "信号强度",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "wifiType",
+                    "ref": "215968",
+                    "defaultData": "0",
+                    "dataType": {
+                      "specs": {
+                        "list": [
+                          {
+                            "value": "0",
+                            "desc": "2.4G"
+                          },
+                          {
+                            "value": "1",
+                            "desc": "5G"
+                          },
+                          {
+                            "value": "2",
+                            "desc": "2.4-5G混合"
+                          }
+                        ]
+                      },
+                      "type": "enum"
+                    },
+                    "name": "wifi类型",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "connType",
+                    "ref": "215969",
+                    "defaultData": "0",
+                    "dataType": {
+                      "specs": {
+                        "list": [
+                          {
+                            "value": "0",
+                            "desc": "当前连接"
+                          },
+                          {
+                            "value": "1",
+                            "desc": "备用"
+                          }
+                        ]
+                      },
+                      "type": "enum"
+                    },
+                    "name": "连接类型",
+                    "desc": ""
+                  },
+                  {
+                    "identifier": "code",
+                    "ref": "215970",
+                    "defaultData": "0",
+                    "dataType": {
+                      "specs": {
+                        "list": [
+                          {
+                            "value": "0",
+                            "desc": "正常"
+                          },
+                          {
+                            "value": "1",
+                            "desc": "密码错误"
+                          }
+                        ]
+                      },
+                      "type": "enum"
+                    },
+                    "name": "状态码",
+                    "desc": ""
+                  }
+                ],
+                "type": "struct"
+              },
+              "size": "100"
+            },
+            "type": "array"
+          },
+          "name": "备选列表",
+          "desc": ""
+        }
+      ],
+      "identifier": "swp_netInfoGet",
+      "inputData": [],
+      "ref": "215900",
+      "encrypt": "",
+      "name": "网络信息获取",
+      "description": "扫地机获取wifi网络列表信息",
+      "desc": ""
+    },
+    {
+      "outputData": [
+        {
+          "identifier": "code",
+          "ref": "216021",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "-1000",
+                "1000"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "错误码",
+          "desc": ""
+        }
+      ],
+      "identifier": "swp_netConfig",
+      "inputData": [
+        {
+          "identifier": "cmd",
+          "ref": "216001",
+          "defaultData": "0",
+          "dataType": {
+            "specs": {
+              "list": [
+                {
+                  "value": "0",
+                  "desc": "删除"
+                }
+              ]
+            },
+            "type": "enum"
+          },
+          "name": "操作命令",
+          "desc": ""
+        },
+        {
+          "identifier": "id",
+          "ref": "216002",
+          "dataType": {
+            "specs": {
+              "unit": "",
+              "range": [
+                "0",
+                "100"
+              ],
+              "step": "1"
+            },
+            "type": "int"
+          },
+          "name": "序号",
+          "desc": ""
+        }
+      ],
+      "ref": "216000",
+      "encrypt": "",
+      "name": "网络信息设置",
+      "description": "扫地机网络信息设置",
+      "desc": ""
+    }
+  ]
+}

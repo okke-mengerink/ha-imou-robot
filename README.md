@@ -31,10 +31,11 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 | Robot | Status | Notes |
 |---|---|---|
 | Imou RV-L11-A (L11 series, with auto-empty dock) | Tested | Imou cloud `deviceModel` `L11-A`, Home Assistant 2026.10 |
-| Imou RV1 Pro Max | Reported by a user (issue #1), partly verified | Confirmed by the user: battery, return to dock and the 5 suction levels (off, quiet, standard, strong, max). New in 0.5.0 and not yet confirmed: mop intensity, dock status and schedules. Room cleaning needs a room schedule in the Imou app, because the robot reports no rooms. |
+| Imou RV1 Pro Max | Reported by a user (issue #1), partly verified | Confirmed by the user: battery, return to dock, the suction levels (quiet, standard, strong, max), the water volume (off, low, medium), the schedule start time and room cleaning of the two rooms from the user's schedule. Not yet verified: room cleaning with the rooms of the cleaning order (`sequence`); one robot's diagnostics list all of its rooms there, but that this holds for every robot and that those rooms can be cleaned is not confirmed. Not yet confirmed: dock status. The robot does not report the dock status, so those entities are disabled by default. |
+| Imou RV1L Pro | Reported by a user (issue #8), partly verified | Mapped from the user's diagnostics. Return to dock through `swp_backStation` is new in 0.6.1 and not yet confirmed. The robot does not report auto-empty or resume after charging, so those switches are disabled by default. |
 | Any other Imou robot vacuum | unverified — please share diagnostics | Might work if its things model uses the same identifiers. See [Help us map other models](#help-us-map-other-models). |
 
-Other Imou robots are mapped from their things model: the robot's own refs, the labels of its statuses, error codes and suction levels (so a model that numbers them differently still maps correctly) and alternative identifiers such as `back_station` for return to dock. When a core function is missing (start and stop, return to dock, battery or status) or a value is not recognised, Home Assistant shows a repair notice that says what is missing or unknown and links to a GitHub issue that is already filled in with your model. Attach the diagnostics download to it and the model can be added.
+Other Imou robots are mapped from their things model: the robot's own refs, the labels of its statuses, error codes and suction levels (so a model that numbers them differently still maps correctly) and alternative identifiers such as `back_station` or `swp_backStation` for return to dock. When a core function is missing (start and stop, return to dock, battery or status) or a value is not recognised, Home Assistant shows a repair notice that says what is missing or unknown and links to a GitHub issue that is already filled in with your model. Attach the diagnostics download to it and the model can be added.
 
 Verified on a real RV-L11-A:
 
@@ -106,7 +107,9 @@ Sign-in sends a verification code by email. The user did not receive that code o
 
 The **Clean <room>** buttons work on every Home Assistant version. The `vacuum.clean_area` action and the link to areas need Home Assistant 2026.3 or newer, which added room cleaning for vacuums. On older versions everything else works as before.
 
-The Imou Open Platform API does not report the robot's map or room list, not even while it cleans. The room ids do appear in the robot's schedules, so the integration reads the rooms from there:
+The Imou Open Platform API does not report the robot's map or room list, not even while it cleans. The room ids do appear in the robot's schedules, and a model with the property `sequence` (the cleaning order, for example the RV1 Pro Max) also reports the ids of its rooms there. The integration reads the rooms from both, together with the schedules once an hour. A room that is only in the cleaning order has no name from the Imou app and is called, for example, "Room -127" (room ids can be negative). That `sequence` lists all rooms was seen in the diagnostics of one robot and is not verified for others, so do not rely on it: if a room is missing, use a schedule as described below. Zeros in the cleaning order are ignored.
+
+To get your rooms:
 
 1. **Put your rooms in a schedule.** In the Imou Life app, create a schedule and select the rooms one by one (not "whole house": the app stores that as an empty list). You may switch the schedule off; the integration only reads it. A room that you gave a name or linked to an area stays available, even if you delete the schedule later.
 2. **Find out which number is which room.** The Imou app does not show room numbers. The integration creates a button **Clean <room>** for every room it found (a room without a name is called, for example, "Clean room 3"). Press one and see where the robot goes. A button is unavailable when its room is no longer known.
@@ -135,7 +138,7 @@ When a new room id appears in your schedules, Home Assistant shows a repair noti
 The schedules of the Imou app are read once an hour and shown in the Schedules sensor.
 
 - **L11-A format (RV-L11-A):** a repeating schedule shows its local time of day in `time` (for example `14:00`) and its days in `days` (`sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`). The robot counts 0 as Sunday; the days 1 to 6 are assumed to be Monday to Saturday. A one-off schedule has a `start` (local date and time) and a `time`, and no `days`. Other attributes are `enabled`, `active`, `repeat` (the raw days), `rooms` (names, or `whole_house`).
-- **RV1 Pro Max:** the format is different and the meaning of its start time is unknown, so the raw `start_raw` and `once` are shown and `time` stays empty.
+- **RV1 models (RV1 Pro Max, RV1L Pro):** the format is different, but `time` and `days` have the same format as above. The start time is the local time of day, and the days count 1 as Monday to 7 as Sunday. The raw start time (`start_raw`) and `once` are also shown.
 
 **Schedules are read-only.** Home Assistant cannot switch a schedule on or off, create it or change it, because writing a schedule back through the cloud API loses its room/whole-house setting (a room schedule became a whole-house schedule in a live test). Change schedules in the Imou app.
 
@@ -242,14 +245,14 @@ Entities are created per robot, and only when the robot's model supports them.
 - Cleaning time (min)
 - Consumable usage in hours: side brush, main brush, filter and sensors (diagnostic). The robot reports minutes used; the sensors show hours (minutes / 60, one decimal).
 - Wi-Fi signal (enum, diagnostic)
-- Schedules: the number of enabled schedules in the Imou app. The attribute `schedules` lists each schedule with `enabled`, `active` (raw), `start` (local date and time of a one-off schedule, `null` for a weekly schedule), `time` (local time of day, for example `14:00`), `days` (for a weekly schedule, for example `["sun"]`), `repeat` (raw, as the robot reports it) and `rooms` (names, or `whole_house`). Read once an hour. On an RV1 Pro Max each schedule also has `start_raw` (the robot's `start_time`, not converted: its meaning is unknown, so `start` stays `null`), `once` (runs one time) and `repeat` (the days, as a list of numbers).
-- Dock status (only for a robot whose model has `station_status`, such as the RV1 Pro Max): Clean water tank (normal / not installed / water low), Dirty water tank (normal / not installed / full) and Dust bag (normal / not installed / full).
+- Schedules: the number of enabled schedules in the Imou app. The attribute `schedules` lists each schedule with `enabled`, `active` (raw), `start` (local date and time of a one-off schedule, `null` for a weekly schedule), `time` (local time of day, for example `14:00`), `days` (for a weekly schedule, for example `["sun"]`), `repeat` (raw, as the robot reports it) and `rooms` (names, or `whole_house`). Read once an hour. On an RV1 model `time` and `days` come from the robot's `start_time` (local seconds since midnight) and `select_day` (1 = Monday to 7 = Sunday); each schedule also has `start_raw` (the raw `start_time`), `once` (runs one time) and `repeat` (the days, as a list of numbers), and `start` stays `null`.
+- Dock status (only for a robot whose model has `station_status`): Clean water tank (normal / not installed / water low), Dirty water tank (normal / not installed / full) and Dust bag (normal / not installed / full). A robot that does not report `station_status` (the RV1 Pro Max) gets these sensors disabled by default; they are created after the robot's first online poll. A dock sensor whose value the robot never reported simply stays unknown.
 
 ### Other entities
 
-- Binary sensors: mop fitted; charging (only for a robot whose model has `power_status`, such as the RV1 Pro Max; on while the robot reports "charging"); dock connected (only for a robot whose model has `station_status`)
+- Binary sensors: mop fitted ("Fitted" / "Not fitted"); charging (only for a robot whose model has `power_status`, such as the RV1 models; on while the robot reports "charging", and without a `power_status` value on a negative battery value; otherwise it is unknown); dock connected (only for a robot whose model has `station_status`, disabled by default when the robot does not report it)
 - Switches: auto-empty, carpet boost, resume after charging
-- Selects: suction (quiet / standard / max) and water level (low / medium / high); mop intensity (gentle / standard / strong, only for a robot whose model has `mop_speed`, such as the RV1 Pro Max; set with a plain property write).
+- Selects: suction (quiet / standard / max; quiet / standard / strong / max for an RV1 model, which does not offer "off" like the Imou app, but shows it when the robot reports it) and water level (low / medium / high); water volume (off / low / medium, only for a robot whose model has `mop_speed`, such as the RV1 models; set with a plain property write; the Imou app also has "high", which the things model has no value for).
 - Button: empty bin (empties the bin into the dock)
 
 ### Suction and water levels
@@ -279,7 +282,7 @@ The integration makes one API call per robot per poll. The poll interval depends
 
 Pressing start polls the robot once first, so that it can tell "start" from "resume".
 
-The schedules (for the rooms and the Schedules sensor) are read once an hour, and again when you open the room mapping: about 720 extra calls per month. After a failed read the next try comes after 15 minutes.
+The schedules (for the rooms and the Schedules sensor) are read once an hour, and again when you open the room mapping: about 720 extra calls per month. After a failed read the next try comes after 15 minutes, and only the part that failed (the schedules or the cleaning order) is read again.
 
 Typical use is about 13,000 API calls per month. Imou's free tier allows 30,000 calls per month per App ID.
 
@@ -315,15 +318,15 @@ Contributions of identifier and enum mappings are welcome.
 
 - Suction, water level and fan speed are set through the `WindWater` service, verified on an L11-A. Plain property writes for these are ignored by the L11-A. Models without a `WindWater` service get property writes instead (unverified). Other models may use another scale; those values show as `unknown_<n>` and can be added to `LEVEL_KEYS`.
 - Property writes work on an L11-A for carpet boost (the cloud confirms the new value) and for return to dock. The L11-A never reports auto-empty or resume after charging, before or after a write, and the Imou app has no such settings, so its firmware probably does not implement them although the shared things model lists them. Whether such a write has any effect cannot be verified.
-- A switch whose setting the robot did not report in its first poll is created but disabled by default (the poll must be of an online robot; otherwise nothing is disabled). Enable it in the entity settings if your model supports it. Every switch has the attribute `reported_by_device`. Entities created by an earlier version keep their state: disable or delete those two switches by hand.
+- The switches (and the dock sensors) are created after the robot's first online poll, so a robot that was offline when Home Assistant started gets them later. One whose setting the robot did not report in that poll is disabled by default (writing it fails on the RV1L Pro). Enable it in the entity settings if your model supports it. A switch is not made unavailable because the robot never reported its setting (a robot may accept a write without ever reporting it); it shows unknown. When the robot answers a write with the Imou error DV1026 ("device does not support this function"), Home Assistant shows the error "This robot does not support that setting" and the switch is unavailable until the integration is reloaded. Every switch has the attribute `reported_by_device`. Entities created by an earlier version keep their enabled state: disable or delete them by hand.
 - The battery range in the things model is -100 to 100. The value is clamped to 0-100. (A real L11-A reported 41 while charging.) The RV1 Pro Max reports a negative battery value while charging (-38 for 38 %); the integration shows the absolute value.
 - Consumable usage: the L11-A reports minutes used, although its things model says hours (after a 34-minute run all four counters read 34). The sensors therefore show hours (minutes / 60, displayed with one decimal). The conversion is the constant `LIFE_RAW_PER_HOUR` in `const.py`; a model that really reports hours would need 1 there.
 - There is no map and no zone cleaning. On an L11-A the room, map and cleaning-parameter properties stay empty in the cloud, even while the robot cleans a room, so the rooms are read from the schedules.
-- The RV1 Pro Max reports its consumable counters (brushes, filter, sensors) as 0, so those sensors stay at 0.
-- The meaning of the schedule start time of the RV1 Pro Max is unknown (the Imou app shows 02:00 for a schedule whose `start_time` is 82800), so it is shown raw as `start_raw`. The format of `area_array` for a room schedule is also unverified; several formats are accepted.
+- Consumables on the RV1 Pro Max differ per robot: one of the reported robots shows all counters as 0, another reports them (for example 180 h) except the sensors counter, which stays at 0.
+- RV1 schedules: `start_time` is the local time of day (7200 is 02:00 and 82800 is 23:00 in the app) and `select_day` counts 1 as Monday to 7 as Sunday. The format of `area_array` for a room schedule is unverified; several formats are accepted.
 - Only the Europe region has been verified. Singapore and North America use the same calls on other Imou hosts.
 - Commands are fire-and-forget: the cloud output code is not interpreted.
-- A value you set from Home Assistant is shown for at most 30 s while the robot still reports the old value; after that the reported value wins, so a command the robot ignores is visible. Only for settings the cloud never reports (auto-empty and resume after charging on the L11-A) the last value you set stays.
+- A value you set from Home Assistant is shown for at most 30 s while the robot still reports the old value; after that the reported value wins, so a command the robot ignores is visible. Settings the cloud never reports (auto-empty and resume after charging on the L11-A) keep the last value you set, and show unknown until you set one.
 - Error information that the robot flags as not valid is ignored (the error sensor shows "none").
 
 ## Development
@@ -346,7 +349,7 @@ The smoke test sets the integration up in a bare Home Assistant core with a fake
 uv run --python 3.14 --with "homeassistant==2026.10.2" python -I tests/smoke_ha.py
 ```
 
-Test fixtures contain anonymised copies of the product-level L11-A and RV1 Pro Max things models. Never commit serial numbers, tokens or App IDs.
+Test fixtures contain anonymised copies of the product-level L11-A, RV1 Pro Max and RV1L Pro things models. Never commit serial numbers, tokens or App IDs.
 
 Releases: HACS installs the integration from the release asset `imou_vacuum.zip` (`zip_release` in `hacs.json`). The workflow `release.yml` builds that zip and attaches it when a release is published, after checking that the tag matches the version in `manifest.json`. GitHub counts the downloads of the zip, which shows roughly how often the integration is installed or updated through HACS.
 

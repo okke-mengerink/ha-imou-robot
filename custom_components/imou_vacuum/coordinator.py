@@ -43,6 +43,7 @@ from .const import (
     INPUT_WIND,
     OUTPUT_TIMER,
     PROP_ERROR_INFO,
+    PROP_SEQUENCE,
     PROP_WATER,
     PROP_WIND_POWER,
     PROP_WORK_STATUS,
@@ -66,11 +67,13 @@ from .rooms import (
     parse_schedules,
     partition_area,
     segment_names,
+    sequence_room_ids,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 ASLEEP_CODE = "DV1030"  # the device is asleep (an error code, not a failure)
+UNSUPPORTED_CODE = "DV1026"  # "device does not support this function"
 
 
 @dataclass
@@ -133,6 +136,10 @@ def _command_failed(err: ImouError) -> HomeAssistantError:
     )
 
 
+class SettingNotSupportedError(HomeAssistantError):
+    """The robot answered a write with DV1026: its firmware lacks this function."""
+
+
 class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
     """Poll one robot and run its commands."""
 
@@ -170,10 +177,15 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         # the last service call (redacted inputs, summarized output or error code),
         # for diagnostics
         self.last_command: dict[str, Any] | None = None
-        # the robot's cleaning schedules (the only place with room ids), or None
-        # while unknown; refreshed about once an hour
+        # the robot's cleaning schedules, or None while unknown; and the room ids of
+        # its cleaning order (``sequence``), or None while unknown. Both are read
+        # together, about once an hour.
         self.schedules: ScheduleList | None = None
+        self.sequence_rooms: list[int] | None = None
         self._schedules_due = 0.0  # time.monotonic() of the next fetch
+        # the parts (``clean_list``, ``sequence``) whose last read failed: only
+        # those are retried, so one part's failure does not repeat the other's call
+        self._failed_parts: set[str] = set()
         self._schedules_fetched_at: float | None = None  # monotonic, last success
         self._boost_until = 0.0
         self._command_refresh_cancel: CALLBACK_TYPE | None = None
@@ -226,7 +238,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             )
         self._update_polling_interval(state)
         if status == "online" and time.monotonic() >= self._schedules_due:
-            await self._async_fetch_schedules()
+            await self._async_fetch_schedules(self._failed_parts or None)
         return state
 
     def _poll_failed(self, reason: str, err: ImouError | None = None) -> ImouRobotState:
@@ -355,44 +367,79 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         )
 
     # -- rooms and schedules -------------------------------------------------
-    async def _async_fetch_schedules(self) -> bool:
-        """Read the schedules; on any failure keep the previous ones.
+    async def _async_fetch_schedules(self, parts: set[str] | None = None) -> bool:
+        """Read the schedules and the cleaning order; on a failure keep the previous ones.
 
-        Never raises ``ImouError``, so it cannot make a poll fail. Returns whether
-        new schedules were read.
+        ``parts`` limits the read to ``clean_list`` and/or ``sequence`` (a retry of
+        what failed); ``None`` reads both. Never raises ``ImouError``, so it cannot
+        make a poll fail. Returns whether anything new was read. A part that fails
+        is retried sooner than the hour, and alone.
         """
-        if (service := self.model.service(SERVICE_CLEAN_LIST)) is None:
-            return False
-        try:
-            response = await self.async_query_service(SERVICE_CLEAN_LIST)
-        except ImouError as err:
-            _LOGGER.debug("Could not read the schedules of %s: %s", self.device.name, err)
-            self._schedules_due = time.monotonic() + SCHEDULE_RETRY_SECONDS
-            return False
-        parsed = parse_schedules(
-            response,
-            service.output_ref(OUTPUT_TIMER),
-            service.output_members,
-            service.output_members_ref,
+        read = False
+        if (
+            parts is None or SERVICE_CLEAN_LIST in parts
+        ) and (service := self.model.service(SERVICE_CLEAN_LIST)) is not None:
+            self._failed_parts.add(SERVICE_CLEAN_LIST)
+            try:
+                response = await self.async_query_service(SERVICE_CLEAN_LIST)
+            except ImouError as err:
+                _LOGGER.debug(
+                    "Could not read the schedules of %s: %s", self.device.name, err
+                )
+            else:
+                parsed = parse_schedules(
+                    response,
+                    service.output_ref(OUTPUT_TIMER),
+                    service.output_members,
+                    service.output_members_ref,
+                )
+                if parsed is None:
+                    _LOGGER.debug(
+                        "The schedules of %s have an unknown format", self.device.name
+                    )
+                else:
+                    self.schedules = parsed
+                    self._failed_parts.discard(SERVICE_CLEAN_LIST)
+                    read = True
+        if (
+            parts is None or PROP_SEQUENCE in parts
+        ) and self.model.prop(PROP_SEQUENCE) is not None:
+            self._failed_parts.add(PROP_SEQUENCE)
+            try:
+                values = await self.async_read_identifiers([PROP_SEQUENCE])
+            except ImouError as err:
+                _LOGGER.debug(
+                    "Could not read the cleaning order of %s: %s", self.device.name, err
+                )
+            else:
+                # a response without ``sequence`` is "read, empty", not a failure
+                self.sequence_rooms = sequence_room_ids(values.get(PROP_SEQUENCE))
+                self._failed_parts.discard(PROP_SEQUENCE)
+                read = True
+        now = time.monotonic()
+        if read:
+            self._schedules_fetched_at = now
+        self._schedules_due = now + (
+            SCHEDULE_RETRY_SECONDS
+            if self._failed_parts or not read
+            else SCHEDULE_REFRESH_SECONDS
         )
-        if parsed is None:
-            _LOGGER.debug("The schedules of %s have an unknown format", self.device.name)
-            self._schedules_due = time.monotonic() + SCHEDULE_RETRY_SECONDS
-            return False
-        self.schedules = parsed
-        self._schedules_fetched_at = time.monotonic()
-        self._schedules_due = time.monotonic() + SCHEDULE_REFRESH_SECONDS
-        return True
+        return read
 
     async def async_refresh_schedules(self) -> bool:
-        """Read the schedules now and update the entities; False if that failed.
+        """Read the schedules and cleaning order now and update the entities; False if
+        that failed.
 
-        Schedules read less than ``SCHEDULE_MIN_REFRESH_SECONDS`` ago are reused.
+        What was read less than ``SCHEDULE_MIN_REFRESH_SECONDS`` ago is reused.
         """
         fetched_at = self._schedules_fetched_at
+        # a partial read (one part worked, the other failed) is no "fresh" cache
+        complete = (
+            self.model.service(SERVICE_CLEAN_LIST) is None or self.schedules is not None
+        ) and (self.model.prop(PROP_SEQUENCE) is None or self.sequence_rooms is not None)
         if (
-            self.schedules is not None
-            and fetched_at is not None
+            fetched_at is not None
+            and complete
             and time.monotonic() - fetched_at < SCHEDULE_MIN_REFRESH_SECONDS
         ):
             return True
@@ -423,22 +470,26 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
     def known_room_tags(self) -> dict[int, str | None]:
         """Return every room (ascending) with its label from the Imou app, if any.
 
-        These are the rooms of the schedules plus the rooms the user named, so a
-        named room stays when no schedule lists it any more.
+        These are the rooms of the schedules, the rooms of the cleaning order
+        (``sequence``, without a label) and the rooms the user named, so a named
+        room stays when no schedule lists it any more.
         """
-        return remembered_rooms(known_rooms(self.schedules), self.room_overrides())
+        return remembered_rooms(
+            known_rooms(self.schedules, self.sequence_rooms or ()), self.room_overrides()
+        )
 
     def room_names(self) -> dict[int, str]:
         """Return the name of every known room, by room id.
 
-        The rooms are those of the schedules and those the user named. The user's name,
-        else the room type label from the Imou app, else ``Room <id>``; rooms with the same name get their id appended.
+        The rooms are those of the schedules, of the cleaning order and those the user
+        named. The user's name, else the room type label from the Imou app, else
+        ``Room <id>``; rooms with the same name get their id appended.
         """
         known = self.known_room_tags()
         return segment_names(known, known, self.room_overrides(), default_room_name)
 
     async def async_clean_rooms(self, room_ids: list[int]) -> None:
-        """Clean these rooms (ids as found in the schedules)."""
+        """Clean these rooms (ids as found in the schedules or the cleaning order)."""
         control = self.model.service(SERVICE_CLEAN_CONTROL)
         # the RV1 Pro Max takes an array of ints, the L11-A a JSON text
         as_array = (
@@ -497,6 +548,11 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         try:
             return await call
         except ImouError as err:
+            if err.code.upper() == UNSUPPORTED_CODE:
+                raise SettingNotSupportedError(
+                    translation_domain=DOMAIN,
+                    translation_key="setting_not_supported",
+                ) from err
             raise _command_failed(err) from err
         finally:
             self._async_after_command()

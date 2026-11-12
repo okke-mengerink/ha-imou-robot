@@ -50,7 +50,7 @@ from .coordinator import (
     ImouRobotState,
     default_room_name,
 )
-from .entity import ImouEntity, local_start, local_time
+from .entity import ImouEntity, async_add_after_first_poll, local_start, local_time
 from .model import ThingsModel, to_int
 from .rooms import Schedule
 
@@ -87,6 +87,9 @@ class ImouEnumSensorDescription(SensorEntityDescription):
     # the model's raw value -> key (label based, see ThingsModel.enum_keys)
     keys_fn: Callable[[ThingsModel], Mapping[int, str]]
     raw_fn: Callable[[ImouRobotState], int | None]
+    # a dock sensor: created after the first online poll, disabled by default when
+    # the robot does not report it (see ``ImouEntity``)
+    optional: bool = False
 
 
 def _hours(child: str) -> Callable[[Any], float | None]:
@@ -201,6 +204,7 @@ def _station_sensor(
             PROP_STATION_STATUS, child, label_keys, numeric
         ),
         raw_fn=_station_value(child),
+        optional=True,
     )
 
 
@@ -216,10 +220,14 @@ async def async_setup_entry(
     entry: ImouConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Create sensors for every identifier the robot's model actually has."""
+    """Create sensors for every identifier the robot's model actually has.
+
+    The dock sensors are created after the robot's first online poll.
+    """
     entities: list[SensorEntity] = []
     for coordinator in entry.runtime_data.coordinators.values():
         model = coordinator.model
+        optional: list[ImouEnumSensorDescription] = []
         entities.extend(
             ImouSensor(coordinator, description)
             for description in SENSORS
@@ -227,10 +235,23 @@ async def async_setup_entry(
         )
         for enum_description in ENUM_SENSORS:
             definition = model.member(enum_description.identifier, enum_description.child)
-            if definition is not None:
+            if definition is None:
+                continue
+            if enum_description.optional:
+                optional.append(enum_description)
+            else:
                 entities.append(ImouEnumSensor(coordinator, enum_description))
         if model.has_service(SERVICE_CLEAN_LIST):
             entities.append(ImouSchedulesSensor(coordinator))
+        if optional:
+            async_add_after_first_poll(
+                entry,
+                coordinator,
+                async_add_entities,
+                lambda coordinator=coordinator, optional=optional: [
+                    ImouEnumSensor(coordinator, description) for description in optional
+                ],
+            )
     async_add_entities(entities)
 
 
@@ -269,7 +290,11 @@ class ImouEnumSensor(ImouEntity, SensorEntity):
         description: ImouEnumSensorDescription,
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator, description.key)
+        super().__init__(
+            coordinator,
+            description.key,
+            description.identifier if description.optional else None,
+        )
         self.entity_description = description
         definition = coordinator.model.member(description.identifier, description.child)
         self._model_labels = definition.enum_labels if definition is not None else {}

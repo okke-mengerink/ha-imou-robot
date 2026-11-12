@@ -10,8 +10,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import PROP_AUTO_DUST, PROP_KEEP_CLEAN, PROP_RUG_PRESS
-from .coordinator import ImouConfigEntry, ImouCoordinator
-from .entity import ImouEntity
+from .coordinator import ImouConfigEntry, ImouCoordinator, SettingNotSupportedError
+from .entity import ImouEntity, async_add_after_first_poll
 from .model import to_bool
 
 PARALLEL_UPDATES = 1
@@ -48,13 +48,22 @@ async def async_setup_entry(
     entry: ImouConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Create switches for every identifier the robot's model has."""
-    async_add_entities(
-        ImouSwitch(coordinator, description)
-        for coordinator in entry.runtime_data.coordinators.values()
-        for description in SWITCHES
-        if coordinator.model.prop(description.identifier) is not None
-    )
+    """Create switches for every identifier the robot's model has.
+
+    They are created after the robot's first online poll, so that a setting the
+    robot does not report (writing it fails) is disabled by default.
+    """
+    for coordinator in entry.runtime_data.coordinators.values():
+        async_add_after_first_poll(
+            entry,
+            coordinator,
+            async_add_entities,
+            lambda coordinator=coordinator: [
+                ImouSwitch(coordinator, description)
+                for description in SWITCHES
+                if coordinator.model.prop(description.identifier) is not None
+            ],
+        )
 
 
 class ImouSwitch(ImouEntity, SwitchEntity):
@@ -66,16 +75,22 @@ class ImouSwitch(ImouEntity, SwitchEntity):
         self, coordinator: ImouCoordinator, description: ImouSwitchDescription
     ) -> None:
         """Initialize the switch."""
-        super().__init__(coordinator, description.key)
-        self.entity_description = description
         # A setting that the robot did not report in its first online poll is
-        # probably not implemented by its firmware (the L11-A never reports
-        # auto-empty or resume-after-charging). The switch is still created, so
-        # that users of a model that does support it can enable it, but it is
-        # disabled by default. Existing registry entries are not changed.
-        self._attr_entity_registry_enabled_default = (
-            coordinator.reports.enabled_by_default(description.identifier)
-        )
+        # probably not implemented by its firmware (the L11-A and RV1L Pro never
+        # report auto-empty or resume-after-charging, and writing them fails). The
+        # switch is still created, so that users of a model that does support it
+        # can enable it, but it is disabled by default. When the robot answers a
+        # write with DV1026 ("does not support this function") the switch becomes
+        # unavailable until the integration is reloaded.
+        super().__init__(coordinator, description.key, description.identifier)
+        self.entity_description = description
+        self._not_supported = False
+
+    @property
+    @override
+    def available(self) -> bool:
+        """Return whether the switch can be used (the robot supports the setting)."""
+        return super().available and not self._not_supported
 
     @property
     @override
@@ -97,9 +112,15 @@ class ImouSwitch(ImouEntity, SwitchEntity):
         )
 
     async def _async_set(self, value: bool) -> None:
-        await self.coordinator.async_set_properties(
-            {self.entity_description.identifier: int(value)}
-        )
+        try:
+            await self.coordinator.async_set_properties(
+                {self.entity_description.identifier: int(value)}
+            )
+        except SettingNotSupportedError:
+            self._not_supported = True
+            if self.hass is not None:
+                self.async_write_ha_state()
+            raise
         self.coordinator.commanded[self.entity_description.identifier].set(value)
         # every entity showing this setting (e.g. select and fan speed) updates now
         self.coordinator.async_update_listeners()

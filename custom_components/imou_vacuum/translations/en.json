@@ -54,7 +54,7 @@
       },
       "menu": {
         "title": "Rooms of {robot}",
-        "description": "The robot does not report its rooms. They are read from the cleaning schedules in the Imou app.",
+        "description": "The robot does not report a map. Its rooms are read from the cleaning schedules in the Imou app and, on some models, from the cleaning order.",
         "menu_options": {
           "room_areas": "Link rooms to areas",
           "rooms": "Rename rooms (advanced)"
@@ -66,7 +66,7 @@
       },
       "rooms": {
         "title": "Room names of {robot}",
-        "description": "The robot does not report its rooms. The rooms below come from the cleaning schedules in the Imou app. Write one room per line as `id = name`. These names are used for room cleaning and in the schedules sensor.",
+        "description": "The robot does not report a map. The rooms below come from the cleaning schedules in the Imou app and, on some models, from the cleaning order. Write one room per line as `id = name`. These names are used for room cleaning and in the schedules sensor.",
         "data": {
           "room_names": "Room names"
         },
@@ -79,13 +79,17 @@
       "invalid_room_names": "Every line must look like `3 = Blue room`: a room number, an equals sign and a name."
     },
     "abort": {
-      "no_rooms": "No rooms are known yet. The robot only reveals its rooms in the cleaning schedules. Create a schedule in the Imou app that selects the rooms (you may switch it off afterwards), then try again."
+      "no_rooms": "No rooms are known yet. The robot reveals its rooms in the cleaning schedules (and on some models in its cleaning order). Create a schedule in the Imou app that selects the rooms (you may switch it off afterwards), then try again."
     }
   },
   "entity": {
     "binary_sensor": {
       "mop_fitted": {
-        "name": "Mop fitted"
+        "name": "Mop fitted",
+        "state": {
+          "on": "Fitted",
+          "off": "Not fitted"
+        }
       },
       "charging": {
         "name": "Charging"
@@ -121,12 +125,12 @@
           "high": "High"
         }
       },
-      "mop_intensity": {
-        "name": "Mop intensity",
+      "water_volume": {
+        "name": "Water volume",
         "state": {
-          "gentle": "Gentle",
-          "standard": "Standard",
-          "strong": "Strong"
+          "off": "Off",
+          "low": "Low",
+          "medium": "Medium"
         }
       }
     },
@@ -283,6 +287,9 @@
     },
     "unsupported": {
       "message": "This robot does not support {feature}."
+    },
+    "setting_not_supported": {
+      "message": "This robot does not support that setting."
     },
     "invalid_fan_speed": {
       "message": "{fan_speed} is not a valid fan speed for this robot. Use one of the levels the robot offers, for example standard."
