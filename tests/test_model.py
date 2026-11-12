@@ -456,5 +456,44 @@ def test_rv1lpro_model_and_values() -> None:
     assert "120600" not in model.poll_refs()  # never polled
 
 
+def test_reset_parts_map_by_label() -> None:
+    parts = {"side_brush": 0, "main_brush": 1, "filter": 2, "sensors": 3}
+    assert const.RESET_PART_LABEL_KEYS == {
+        "边刷": "side_brush", "滚刷": "main_brush", "滤芯": "filter", "传感器": "sensors",
+    }  # fmt: skip
+    # the L11-A has four labels; the RV1 models have more (mop, dust bag, ...) that get no button
+    for model in (l11a(), rv1(), rv1lpro()):
+        assert model.reset_parts() == parts
+    assert l11a().service("reset_parts").input_enums["type"][3] == "传感器"
+    assert rv1().service("reset_parts").input_enums["type"][8] == "电池"
+
+
+def test_reset_parts_follow_the_label_not_the_number() -> None:
+    def renumber(data: dict[str, Any]) -> None:
+        service = next(s for s in data["services"] if s["identifier"] == "reset_parts")
+        service["inputData"][0]["dataType"]["specs"]["list"] = [
+            {"value": "7", "desc": "传感器"}, {"value": "5", "desc": "边刷"}, {"value": "9", "desc": "拖布"},
+        ]  # fmt: skip
+
+    def drop_service(data: dict[str, Any]) -> None:
+        data["services"] = [s for s in data["services"] if s["identifier"] != "reset_parts"]
+
+    def unknown_labels(data: dict[str, Any]) -> None:
+        service = next(s for s in data["services"] if s["identifier"] == "reset_parts")
+        service["inputData"][0]["dataType"]["specs"]["list"] = [{"value": "0", "desc": "Side brush"}]
+
+    import copy  # noqa: PLC0415
+
+    def build(edit: Any) -> Any:
+        data = copy.deepcopy(fixture("l11a_model.json"))
+        edit(data)
+        return model_mod.ThingsModel.from_api(data)
+
+    assert build(renumber).reset_parts() == {"sensors": 7, "side_brush": 5}
+    assert build(drop_service).reset_parts() == {}
+    assert not build(drop_service).has_service("reset_parts")
+    assert build(unknown_labels).reset_parts() == {}  # no label match, no numeric fallback
+
+
 if __name__ == "__main__":
     raise SystemExit(run_all(globals()))

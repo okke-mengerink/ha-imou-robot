@@ -23,6 +23,7 @@ from .const import (
     FALLBACK_OUTPUT_REFS,
     FALLBACK_PROPERTY_REFS,
     FALLBACK_SERVICE_REFS,
+    INPUT_TYPE,
     LEVEL_KEYS,
     MOP_SPEED_KEYS,
     MOP_SPEED_LABEL_KEYS,
@@ -34,9 +35,11 @@ from .const import (
     PROP_WIFI,
     PROP_WIND_POWER,
     PROP_WORK_STATUS,
+    RESET_PART_LABEL_KEYS,
     RETURN_HOME_IDENTIFIERS,
     RETURN_START_LABEL,
     RETURN_START_VALUE,
+    SERVICE_RESET_PARTS,
     WIFI_KEYS,
     WIFI_LABEL_KEYS,
     WIND_ENUM_LABEL_KEYS,
@@ -143,6 +146,8 @@ class ServiceDef:
     inputs: Mapping[str, str] = field(default_factory=dict)  # identifier -> ref
     outputs: Mapping[str, str] = field(default_factory=dict)  # identifier -> ref
     input_types: Mapping[str, str] = field(default_factory=dict)  # identifier -> lower-case type
+    # enum value -> raw label, per input that is an enum
+    input_enums: Mapping[str, Mapping[int, str]] = field(default_factory=dict)
     # members (by lower-case identifier, with ref and enum labels) of the item struct
     # of an output that is an array of structs (RV1 Pro Max clean_list); else empty
     output_members: Mapping[str, PropertyDef] = field(default_factory=dict)
@@ -224,11 +229,21 @@ def _parse_service(raw: Any) -> ServiceDef | None:
         ci_get(raw, "outputData"), FALLBACK_OUTPUT_REFS.get(identifier, {})
     )
     input_types: dict[str, str] = {}
+    input_enums: dict[str, dict[int, str]] = {}
     for item in ci_get(raw, "inputData") or []:
         name = ci_get(item, "identifier")
         if isinstance(name, str) and name.strip().lower() in inputs:
-            type_name = str(ci_get(ci_get(item, "dataType"), "type") or "").lower()
-            input_types.setdefault(name.strip().lower(), type_name)
+            name = name.strip().lower()
+            data_type = ci_get(item, "dataType")
+            type_name = str(ci_get(data_type, "type") or "").lower()
+            input_types.setdefault(name, type_name)
+            if type_name == "enum" and name not in input_enums:
+                specs = ci_get(data_type, "specs")
+                input_enums[name] = {
+                    number: str(ci_get(entry, "desc") or "")
+                    for entry in (ci_get(specs, "list") or [])
+                    if (number := to_int(ci_get(entry, "value"))) is not None
+                }
     members_ref, members = _parse_output_members(ci_get(raw, "outputData"))
     return ServiceDef(
         identifier=identifier,
@@ -236,6 +251,7 @@ def _parse_service(raw: Any) -> ServiceDef | None:
         inputs=inputs,
         outputs=outputs,
         input_types=input_types,
+        input_enums=input_enums,
         output_members=members,
         output_members_ref=members_ref,
     )
@@ -495,6 +511,21 @@ class ThingsModel:
                     return identifier, value
             return identifier, RETURN_START_VALUE
         return None
+
+    def reset_parts(self) -> dict[str, int]:
+        """Return ``{part: enum value}`` for the consumables ``reset_parts`` can reset.
+
+        A part is listed when the ``type`` enum of the service has its label (see
+        ``RESET_PART_LABEL_KEYS``); there is no fallback to a number. Without the
+        service, the input or a known label the result is empty.
+        """
+        service = self.service(SERVICE_RESET_PARTS)
+        labels = service.input_enums.get(INPUT_TYPE, {}) if service is not None else {}
+        parts: dict[str, int] = {}
+        for value, label in sorted(labels.items()):
+            if (part := RESET_PART_LABEL_KEYS.get(label.strip())) is not None:
+                parts.setdefault(part, value)
+        return parts
 
     def has_service(self, identifier: str) -> bool:
         """Return whether the model has a service with this identifier."""

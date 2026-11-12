@@ -54,12 +54,14 @@ SERVICE_CLEAN_CONTROL: Final = "clean_control"
 SERVICE_LOCATION: Final = "location"
 SERVICE_DUST: Final = "dust"
 SERVICE_WIND_WATER: Final = "windwater"  # sets suction and water together (the way to set levels)
+SERVICE_RESET_PARTS: Final = "reset_parts"  # resets the usage counter of one consumable
 
 INPUT_STATUS: Final = "status"
 INPUT_MODE: Final = "mode"
 INPUT_PLAN: Final = "plan"
 INPUT_WIND: Final = "wind"
 INPUT_WATER: Final = "water"
+INPUT_TYPE: Final = "type"  # reset_parts: which consumable (an enum)
 INPUT_PARTITION_AREA: Final = "partition_area"  # clean_control: JSON text list of room ids
 OUTPUT_TIMER: Final = "timer"  # clean_list: the schedules
 
@@ -109,6 +111,15 @@ LIFE_RAW_PER_HOUR: Final[dict[str, int]] = {
     LIFE_MAIN_BRUSH: 60,
     LIFE_FILTER: 60,
     LIFE_SENSORS: 60,
+}
+
+# reset_parts "type" enum labels (as the things model words them) -> the consumable.
+# Only these four have a usage sensor; a label that is not listed gets no button.
+RESET_PART_LABEL_KEYS: Final[dict[str, str]] = {
+    "边刷": "side_brush",
+    "滚刷": "main_brush",
+    "滤芯": "filter",
+    "传感器": "sensors",
 }
 
 ERROR_CODE: Final = "errcode"

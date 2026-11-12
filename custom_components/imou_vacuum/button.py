@@ -6,13 +6,15 @@ from dataclasses import dataclass
 from typing import override
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import SERVICE_DUST
+from .const import INPUT_TYPE, SERVICE_DUST, SERVICE_RESET_PARTS
 from .coordinator import ImouConfigEntry, ImouCoordinator, default_room_name
 from .entity import ImouEntity
 from .rooms import room_button_name
+from .support import VERIFIED_MODELS, model_in
 
 PARALLEL_UPDATES = 1
 
@@ -33,6 +35,15 @@ BUTTONS: tuple[ImouButtonDescription, ...] = (
 )
 
 
+def _reset_description(part: str) -> ImouButtonDescription:
+    return ImouButtonDescription(
+        key=f"reset_{part}",
+        translation_key=f"reset_{part}",
+        service=SERVICE_RESET_PARTS,
+        entity_category=EntityCategory.CONFIG,
+    )
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ImouConfigEntry,
@@ -44,6 +55,11 @@ async def async_setup_entry(
         for coordinator in entry.runtime_data.coordinators.values()
         for description in BUTTONS
         if coordinator.model.has_service(description.service)
+    )
+    async_add_entities(
+        ImouResetButton(coordinator, _reset_description(part), value)
+        for coordinator in entry.runtime_data.coordinators.values()
+        for part, value in coordinator.model.reset_parts().items()
     )
     for coordinator in entry.runtime_data.coordinators.values():
         if coordinator.can_clean_rooms():
@@ -89,6 +105,34 @@ class ImouButton(ImouEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Call the service."""
         await self.coordinator.async_control(self.entity_description.service)
+
+
+class ImouResetButton(ImouButton):
+    """Resets the usage counter of one consumable.
+
+    Enabled by default only on a verified robot model: nobody has confirmed that the
+    reset works on the others.
+    """
+
+    def __init__(
+        self,
+        coordinator: ImouCoordinator,
+        description: ImouButtonDescription,
+        value: int,
+    ) -> None:
+        """Initialize the button with the enum value of its part."""
+        super().__init__(coordinator, description)
+        self._value = value
+        self._attr_entity_registry_enabled_default = model_in(
+            coordinator.device.model, VERIFIED_MODELS
+        )
+
+    @override
+    async def async_press(self) -> None:
+        """Reset the part; the coordinator refreshes shortly after every command."""
+        await self.coordinator.async_control(
+            self.entity_description.service, {INPUT_TYPE: self._value}
+        )
 
 
 class ImouRoomButton(ImouEntity, ButtonEntity):

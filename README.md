@@ -43,6 +43,7 @@ Verified on a real RV-L11-A:
 - Suction levels quiet, standard and max (set through the `WindWater` service).
 - Carpet boost.
 - The empty-bin button: the dock empties the robot's bin (confirmed by the owner).
+- The reset buttons: **Reset sensors** set the robot's sensor counter to 0 (tested by the owner); the other three use the same command.
 - Battery and status, including "emptying bin" after a run.
 - Cleaned area (m²) and cleaning time (min). A first real run of 31 m² in 34 min was tracked correctly.
 - Room cleaning of one room and of two rooms in one command (`clean_control` in room mode), and reading the schedules (`clean_list`).
@@ -51,7 +52,7 @@ Verified on a real RV-L11-A:
 
 - **Vacuum entity:** start (a whole-house clean, or resume when paused), pause, stop, return to dock, locate, and fan speed (the suction level: quiet, standard or max; quiet, standard, strong or max on RV1 models).
 - **Sensors:** battery, status, error, cleaned area (m²), cleaning time (min), consumable usage in hours (side brush, main brush, filter, sensors), Wi-Fi signal, a mop-fitted binary sensor, a charging binary sensor (RV1 models), and the dock sensors (disabled by default; no model is verified to report dock status).
-- **Controls:** suction and water level selects, a water volume select (RV1 models), the carpet boost switch, the empty-bin button, and a **Clean <room>** button for every room the integration finds. See [Entities](#entities).
+- **Controls:** suction and water level selects, a water volume select (RV1 models), the carpet boost switch, the empty-bin button, **Reset** buttons for the consumables (side brush, main brush, filter, sensors), and a **Clean <room>** button for every room the integration finds. See [Entities](#entities).
 - **Set up in the UI:** App ID, App Secret and region, with re-authentication when the App Secret changes. English translation. A diagnostics download for mapping new models.
 - **Automatic discovery:** every robot on your Imou account is found, and only the entities its model supports are created.
 - **Room cleaning (Home Assistant 2026.3 or newer):** clean one or more rooms with `vacuum.clean_area` or by voice, after mapping the robot's rooms to your Home Assistant areas. See [Room cleaning](#room-cleaning).
@@ -256,6 +257,7 @@ Entities are created per robot, and only when the robot's model supports them.
 - Switches: carpet boost
 - Selects: suction (quiet / standard / max; quiet / standard / strong / max for an RV1 model, which does not offer "off" like the Imou app, but shows it when the robot reports it) and water level (low / medium / high); water volume (off / low / medium, only for a robot whose model has `mop_speed`, such as the RV1 models; set with a plain property write; the Imou app also has "high", which the things model has no value for).
 - Buttons: empty bin (empties the bin into the dock), and **Clean <room>** for every room the integration finds (see [Room cleaning](#room-cleaning))
+- Reset buttons (configuration category): **Reset side brush**, **Reset main brush**, **Reset filter** and **Reset sensors**. Pressing one sets that part's usage counter back to zero, like replacing the part and resetting it in the Imou app, and the matching usage sensor updates after the refresh that follows. Verified on the RV-L11-A with **Reset sensors** (the other three send the same command with another part). A button exists only when the robot's model has the `reset_parts` service and its `type` list has the part's label (the model's own words for side brush, main brush, filter and sensors); there is no fallback to a number. The RV1 models list more parts (mop, dust bag and so on), which have no button yet. The buttons are enabled by default on the RV-L11-A only. On every other model they are created disabled, because nobody has confirmed that the reset works there; you can enable them in the entity settings.
 
 ### Suction and water levels
 
