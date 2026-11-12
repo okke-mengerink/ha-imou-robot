@@ -24,9 +24,14 @@ def test_constants() -> None:
     assert const.PROBE_IDENTIFIERS == (
         "clean_params", "areainfoarray", "mapconfig", "map_switch",
         "partition_area", "map_name", "sequence", "area_clean_plan",
+        "swp_allareaconfig", "swp_areaconfig", "swp_allcleanplan",
+        "swp_cleansequence", "sweeper_sequence",
     )
     assert not {"curpath_data", "virtual_area"} & set(const.PROBE_IDENTIFIERS)
-    assert not any(i.startswith("swp_") for i in const.PROBE_IDENTIFIERS)
+    # only the room sources are probed, no other (large) swp_* property
+    assert {i for i in const.PROBE_IDENTIFIERS if i.startswith("swp_")} == {
+        "swp_allareaconfig", "swp_areaconfig", "swp_allcleanplan", "swp_cleansequence",
+    }
     assert not set(const.PROBE_IDENTIFIERS) & set(const.POLL_IDENTIFIERS)
     assert set(const.PROBE_IDENTIFIERS) <= const.NEVER_POLL_IDENTIFIERS
     assert const.SERVICE_CLEAN_LIST == "clean_list"

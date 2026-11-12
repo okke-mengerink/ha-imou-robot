@@ -456,5 +456,33 @@ def test_rv1lpro_model_and_values() -> None:
     assert "120600" not in model.poll_refs()  # never polled
 
 
+def test_array_item_members_and_member_refs() -> None:
+    """The refs of the room-source structs come from the things model."""
+    for name in ("rv1lpro_model.json", "rv1promax_model.json"):
+        model = model_mod.ThingsModel.from_api(fixture(name))
+        for identifier, refs in (
+            ("swp_allcleanplan", {"mapid": "145801", "id": "145802"}),
+            ("area_clean_plan", {"mapid": "121601", "id": "121602"}),
+            ("swp_cleansequence", {"mapid": "146001", "list": "146002"}),
+            ("map_name", {"map_id": "122301", "name": "122302"}),
+        ):
+            member_refs = model.prop(identifier).member_refs
+            assert {key: member_refs[key] for key in refs} == refs, (name, identifier, member_refs)
+            assert model.prop(identifier).children == {}  # an array: parse_values keeps it as is
+    lpro = model_mod.ThingsModel.from_api(fixture("rv1lpro_model.json"))
+    assert lpro.prop("swp_allareaconfig").member_refs == {"mapid": "147401", "id": "147402", "clean_direction": "147403"}
+    assert lpro.prop("swp_areaconfig").member_refs["id"] == "147302"
+    # a struct (not an array): the members are the children, and parse_values maps them by identifier
+    assert lpro.prop("sweeper_sequence").member_refs == {"mapid": "160701", "list": "160702"}
+    assert lpro.parse_values({"160700": {"160701": 5, "160702": "[1,2]"}})["sweeper_sequence"] == {"mapid": 5, "list": "[1,2]"}
+    # an array of structs is kept as the raw list, keyed by member ref
+    raw = [{"122302": "Map A", "122301": 1001}]
+    assert lpro.parse_values({"122300": raw})["map_name"] == raw
+    # the L11-A has none of these
+    l11a_model = l11a()
+    for identifier in ("swp_allareaconfig", "swp_cleansequence", "map_name", "sequence"):
+        assert l11a_model.prop(identifier) is None
+
+
 if __name__ == "__main__":
     raise SystemExit(run_all(globals()))

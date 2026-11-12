@@ -583,5 +583,171 @@ def test_new_last_seen_segments() -> None:
     assert rooms.new_last_seen_segments([{"id": "1", "name": "x", "extra": 1}, {"id": 1, "name": "y"}], {}) == [{"id": "1", "name": "x", "extra": 1}]
 
 
+# -- rooms from the properties of an RV1 model (synthetic data built from the definitions) --
+AREA_REFS = {"mapid": "147401", "id": "147402", "clean_direction": "147403"}
+SEQ_REFS = {"mapid": "146001", "list": "146002"}
+MAP_REFS = {"map_id": "122301", "name": "122302"}
+
+
+def test_list_room_ids() -> None:
+    assert rooms.list_room_ids("[-128,-127]") == [-128, -127]
+    assert rooms.list_room_ids(" [ -128, -127 , 3 ] ") == [-128, -127, 3]
+    assert rooms.list_room_ids("-128,-127") == [-128, -127]  # comma-separated
+    assert rooms.list_room_ids("[-128,-127") == [-128, -127]  # broken JSON, comma-separated
+    assert rooms.list_room_ids('[{"id":-128,"name":"a"},{"id":5},{"x":1},"y"]') == [-128, 5]  # objects
+    assert rooms.list_room_ids("[3,3,0,-3,true,false,null,1.5,\"7\",\"x\",[1]]") == [3, -3, 7]  # ints only; no 0, no bools
+    assert rooms.list_room_ids([3, "4", 0, True, 2.0, None, {"id": 9}]) == [3, 4, 2, 9]
+    assert rooms.list_room_ids("5") == [5] and rooms.list_room_ids("0") == []
+    for odd in ("", "  ", "[]", "{}", "null", "abc", "[[1,2]]", None, True, 0, object(), b"1", {"id": "x"}):
+        assert rooms.list_room_ids(odd) == [], odd
+
+
+def test_valid_map_id() -> None:
+    assert rooms.valid_map_id(201661) == 201661 and rooms.valid_map_id("1001") == 1001
+    for bad in (None, -1, 0, -100, True, False, "x", "", 1.5, [], {}):
+        assert rooms.valid_map_id(bad) is None, bad
+
+
+def test_room_entries_by_ref_and_by_identifier() -> None:
+    by_ref = [{"147401": 1001, "147402": -128, "147403": 0}, {"147401": 1001, "147402": -127}]
+    assert rooms.room_entries(by_ref, AREA_REFS, "id") == [(1001, (-128,)), (1001, (-127,))]
+    by_name = [{"mapId": 7, "id": -3}, {"MAPID": 7, "ID": 4}, {"mapid": 7, "id": "5"}]
+    assert rooms.room_entries(by_name, AREA_REFS, "id") == [(7, (-3,)), (7, (4,)), (7, (5,))]
+    assert rooms.room_entries(by_name, {}, "id") == [(7, (-3,)), (7, (4,)), (7, (5,))]  # no refs known
+    # one struct (not a list), and JSON text of the items
+    assert rooms.room_entries({"mapid": 7, "id": 2}, AREA_REFS, "id") == [(7, (2,))]
+    assert rooms.room_entries('[{"147401": 7, "147402": 2}]', AREA_REFS, "id") == [(7, (2,))]
+    # an item without map id, with an unusable map id (-1, 0, text), and without a usable room
+    odd = [{"147402": 1}, {"147401": -1, "147402": 2}, {"147401": 0, "147402": 3}, {"147401": "x", "147402": 4},
+           {"147401": 7, "147402": 0}, {"147401": 7, "147402": True}, {"147401": 7}, {"147401": 7, "147402": "x"}, "junk", None, 5]
+    assert rooms.room_entries(odd, AREA_REFS, "id") == [(None, (1,)), (None, (2,)), (None, (3,)), (None, (4,))]
+    for value in (None, [], {}, "", "junk", "[1", 5, True, object(), [[1]], {"a": {"b": 1}}):
+        assert rooms.room_entries(value, AREA_REFS, "id") == [], value
+
+
+def test_room_entries_of_the_cleaning_order() -> None:
+    value = [
+        {"146001": 1001, "146002": "[-128,-126,-127]"},
+        {"146001": 99, "146002": '[{"id":-5},{"id":0}]'},
+        {"146001": 1001, "146002": "-124,-128,0"},
+        {"146001": 1001, "146002": "[]"},
+        {"146001": 1001},
+    ]
+    assert rooms.room_entries(value, SEQ_REFS, list_member="list") == [
+        (1001, (-128, -126, -127)), (99, (-5,)), (1001, (-124, -128)),
+    ]
+    # sweeper_sequence is a struct; the model has parsed it by identifier
+    assert rooms.room_entries({"mapid": 5, "list": "[1,2]"}, {"mapid": "160701", "list": "160702"}, list_member="list") == [(5, (1, 2))]
+    assert rooms.room_entries({"160701": 5, "160702": "[1,2]"}, {"mapid": "160701", "list": "160702"}, list_member="list") == [(5, (1, 2))]
+
+
+def test_map_ids() -> None:
+    assert rooms.map_ids([{"122302": "Map A", "122301": 1001}], MAP_REFS) == [1001]
+    assert rooms.map_ids([{"map_id": 1}, {"map_id": 2}, {"map_id": 2}, {"map_id": -1}, {"name": "x"}], MAP_REFS) == [1, 2]
+    assert rooms.map_ids(None, MAP_REFS) == [] and rooms.map_ids([], MAP_REFS) == [] and rooms.map_ids("junk", MAP_REFS) == []
+
+
+def test_current_map_id() -> None:
+    # (a) the one usable map id of the schedules; -1 (whole house) and junk are ignored
+    assert rooms.current_map_id([201661, -1, None, 201661], []) == 201661
+    assert rooms.current_map_id([-1, None], [5]) == 5  # (b) no usable schedule map: map_name has one map
+    assert rooms.current_map_id([201661], [201661, 6]) == 201661  # (a) wins over (b)
+    assert rooms.current_map_id([201661], []) == 201661  # no map_name: the schedule is all there is
+    assert rooms.current_map_id([], [5, 5]) == 5
+    assert rooms.current_map_id([-1, 0, "x", True], [5, 6]) is None  # (c) no filter
+    assert rooms.current_map_id([], []) is None
+    assert rooms.current_map_id([1, 2], []) is None  # several maps in the schedules tell nothing
+    assert rooms.current_map_id([1, 2], [3]) == 3
+
+
+def test_current_map_id_string_and_unlisted_schedule_map() -> None:
+    # ids are compared as ints
+    assert rooms.current_map_id(["1001"], [1001, 1002]) == 1001
+    assert rooms.current_map_id([1001], ["1001"]) == 1001
+    assert rooms.current_map_id([], ["1001", 1001]) == 1001
+    # the schedule's map id is not among the listed maps: the one listed map wins
+    assert rooms.current_map_id([5], [1001]) == 1001
+    # ... and with several listed maps the unlisted schedule id tells nothing
+    assert rooms.current_map_id([5], [1001, 1002]) is None
+
+
+def test_rooms_on_map() -> None:
+    entries = [(1, (-128, -127)), (2, (-5,)), (None, (9,)), (1, (-127, 4)), (2, (4,))]
+    assert rooms.rooms_on_map(entries, 1) == [-128, -127, 9, 4]  # other maps are dropped, no map id is kept
+    assert rooms.rooms_on_map(entries, 2) == [-5, 9, 4]
+    assert rooms.rooms_on_map(entries, "2") == [-5, 9, 4]  # ids are compared as ints
+    assert rooms.rooms_on_map([], 1) == []
+    assert rooms.rooms_on_map([], None) == []
+
+
+def test_rooms_on_map_several_maps_without_a_known_map() -> None:
+    entries = [(1, (-128, -127)), (2, (-5,)), (None, (9,)), (1, (-127, 4)), (2, (4,))]
+    # unknown current map and two distinct map ids: the entries with a map id are dropped
+    assert rooms.rooms_on_map(entries, None) == [9]
+    # a known map that no entry carries: the filter is ignored, then the same rule
+    assert rooms.rooms_on_map(entries, 3) == [9]
+    assert rooms.rooms_on_map(entries, 3) == rooms.rooms_on_map(entries, None)
+    # a single map (or none): nothing is dropped
+    assert rooms.rooms_on_map([(1, (-128,)), (1, (-127,)), (None, (9,))], None) == [-128, -127, 9]
+    assert rooms.rooms_on_map([(1, (-128,)), (1, (-127,))], 7) == [-128, -127]  # unknown id, one map
+    assert rooms.rooms_on_map([(None, (-128,)), (None, (-127,))], None) == [-128, -127]
+
+
+def test_rooms_from_the_definitions_end_to_end() -> None:
+    """Seven rooms on the single map of ``map_name`` plus one room of another map."""
+    lpro = model.ThingsModel.from_api(fixture("rv1lpro_model.json"))
+    prop = lpro.prop("swp_allareaconfig")
+    values = lpro.parse_values(
+        {
+            "147400": [{"147401": 11, "147402": room, "147403": 0} for room in (-128, -127, -126, -125, -124, -123, -122)]
+            + [{"147401": 22, "147402": -50, "147403": 1}],
+            "122300": [{"122301": 11, "122302": "Map"}],
+        }
+    )
+    entries = rooms.room_entries(values["swp_allareaconfig"], prop.member_refs, "id")
+    listed = rooms.map_ids(values["map_name"], lpro.prop("map_name").member_refs, "map_id")
+    current = rooms.current_map_id([], listed)
+    assert current == 11
+    assert rooms.rooms_on_map(entries, current) == [-128, -127, -126, -125, -124, -123, -122]
+    names = rooms.segment_names(*(rooms.known_rooms(None, rooms.rooms_on_map(entries, current)),) * 2, {}, lambda i: f"Room {i}")
+    assert names[-128] == "Room -128" and len(names) == 7
+
+
+def test_sweeper_sequence_shapes_reach_the_room_parser() -> None:
+    """The path of the coordinator: parse_values, then room_entries with the model's refs."""
+    lpro = model.ThingsModel.from_api(fixture("rv1lpro_model.json"))
+    prop = lpro.prop("sweeper_sequence")
+    assert prop.children, "sweeper_sequence is a struct"
+    refs = prop.member_refs
+
+    def entries(raw: object) -> list:
+        values = lpro.parse_values({prop.ref: raw})
+        assert "sweeper_sequence" in values, raw
+        return rooms.room_entries(values["sweeper_sequence"], refs, None, "list", const.MEMBER_MAP_ID)
+
+    expected = [(5, (1, 2))]
+    assert entries({"160701": 5, "160702": "[1,2]"}) == expected  # keyed by ref
+    assert entries({"mapid": 5, "list": "[1,2]"}) == expected  # keyed by identifier
+    assert entries({"mapId": 5, "List": [1, 2]}) == expected  # identifier in another case
+    assert entries([{"160701": 5, "160702": "[1,2]"}]) == expected  # a list of structs
+    assert entries('{"160701": 5, "160702": "[1,2]"}') == expected  # JSON text
+    assert entries('[{"160701": 5, "160702": [1, 2]}]') == expected  # JSON text of a list
+    for odd in (None, 5, "junk", []):
+        assert entries(odd) == [], odd
+
+
+def test_sources_of_the_models() -> None:
+    """Every source of const.ROOM_SOURCES has the members it names in both RV1 models."""
+    for name in ("rv1lpro_model.json", "rv1promax_model.json"):
+        found = model.ThingsModel.from_api(fixture(name))
+        for identifier, room_member, list_member in const.ROOM_SOURCES:
+            prop = found.prop(identifier)
+            if prop is None:
+                continue
+            refs = prop.member_refs
+            assert const.MEMBER_MAP_ID in refs and (room_member or list_member) in refs, (name, identifier)
+    assert model.ThingsModel.from_api(fixture("l11a_model.json")).prop("swp_allareaconfig") is None
+
+
 if __name__ == "__main__":
     sys.exit(run_all(globals()))

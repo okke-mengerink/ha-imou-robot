@@ -32,11 +32,11 @@ The integration in this article is made for robot vacuums. It talks to the offic
 
 Once it is set up, you get these in Home Assistant:
 
-- A standard vacuum entity: start, pause, resume, stop, return to dock and locate. Suction level is exposed as fan speed.
+- A standard vacuum entity: start, pause, resume, stop, return to dock and locate. Suction level is exposed as fan speed (quiet, standard, max; on RV1 models quiet, standard, strong, max).
 - Room cleaning (see below).
-- Sensors for battery, status, error, cleaned area, cleaning time, consumable usage (brushes, filter, sensors) and Wi-Fi signal.
-- Switches, such as carpet boost, and selects for suction and water level.
-- A button to empty the bin.
+- Sensors for battery, status, error, cleaned area, cleaning time, consumable usage (brushes, filter, sensors), Wi-Fi signal and charging (RV1 models). The dock sensors are disabled by default; no model is verified to report dock status.
+- Switches, such as carpet boost, and selects for suction and water level (water volume on RV1 models).
+- Buttons to empty the bin and to clean a room: one **Clean <room>** button for every room the integration finds.
 - A Schedules sensor that shows the schedules from the Imou app.
 - `vacuum.send_command` for advanced use.
 
@@ -49,7 +49,12 @@ Setup happens in the Home Assistant UI. Entity names are in English.
 - An Imou robot vacuum that is online on 2.4 GHz Wi-Fi and bound to your Imou account.
 - A free developer account on the Imou Open Platform.
 
-I tested the integration with the Imou RV-L11-A (L11 series, with auto-empty dock). The Imou RV1 Pro Max has been partly supported since version 0.3.1, based on diagnostics from a user: battery, return to dock and five suction levels. That is not fully verified. Other Imou robots may work too.
+I tested the integration with the Imou RV-L11-A (L11 series, with auto-empty dock). Two other models are partly verified by users:
+
+- **RV1 Pro Max** (partly verified by a user): battery, return to dock, suction (quiet, standard, strong, max), water volume, schedule start time, and room cleaning of two rooms. The robot does not report a dock status.
+- **RV1L Pro** (partly verified by a user): return to dock, water volume and carpet boost. No dock status.
+
+Other Imou robots may work too, but they are unverified.
 
 ## Step-by-step setup
 
@@ -57,7 +62,7 @@ I tested the integration with the Imou RV-L11-A (L11 series, with auto-empty doc
 2. **Add your robot.** In the Control Board, open Device Access Service and add the robot with the serial number and safety code from the label.
    *No safety code on the label?* Add the robot in the Imou Life app with its QR code first. Then sign in to the Open Platform with the same login at [auth.imoulife.com/OAuth2/login](https://auth.imoulife.com/OAuth2/login). The robot then appears under Device Access Service. A user found this route. Note that this user did not receive the verification mail on an outlook.com address.
 3. **Copy your App ID and App Secret.** Open App Information. Keep the App Secret private.
-4. **Install through HACS.** Add the repository [github.com/okke-mengerink/ha-imou-robot](https://github.com/okke-mengerink/ha-imou-robot) as a custom repository (category Integration) and install the integration. Restart Home Assistant. The integration is waiting for inclusion in the HACS default store. You can also install it manually by copying `custom_components/imou_vacuum` into your configuration.
+4. **Install through HACS.** Add the repository [github.com/okke-mengerink/ha-imou-robot](https://github.com/okke-mengerink/ha-imou-robot) as a custom repository (category Integration) and install the integration. HACS installs the release asset `imou_vacuum.zip`. If the download fails, check that the release has that zip file. Restart Home Assistant. The integration is waiting for inclusion in the HACS default store. You can also install it manually by copying `custom_components/imou_vacuum` into your configuration.
 5. **Add the integration.** Go to Settings > Devices & services > Add integration and choose Imou Vacuum (Open Platform). Enter the App ID and App Secret and select your region: Europe (default), Singapore or North America.
 
 Your robot is now in Home Assistant.
@@ -87,7 +92,7 @@ With Home Assistant 2026.3 or newer you can clean individual rooms. The Imou API
 Not in the built-in integration, and not in Imou Life or Imou-OpenPlatform. Imou Vacuum (Open Platform), installed through HACS, adds it.
 
 **Does it work with the Imou RV-L11-A?**
-Yes, this model is tested. The RV1 Pro Max has been partly supported since version 0.3.1.
+Yes, this model is tested. The RV1 Pro Max (partly verified by a user): battery, return to dock, suction (quiet, standard, strong, max), water volume, schedule start time, and room cleaning of two rooms. The robot does not report a dock status. The RV1L Pro (partly verified by a user): return to dock, water volume and carpet boost. No dock status.
 
 **Does it cost anything?**
 The integration is free and open source (MIT). The developer account and Imou's free tier (30,000 API calls per month per App ID) are free as well.
@@ -127,7 +132,7 @@ You can find the code, install instructions and issue tracker on GitHub: [github
       "name": "Does it work with the Imou RV-L11-A?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes, this model is tested. The RV1 Pro Max has been partly supported since version 0.3.1."
+        "text": "Yes, this model is tested. The RV1 Pro Max (partly verified by a user): battery, return to dock, suction (quiet, standard, strong, max), water volume, schedule start time, and room cleaning of two rooms. The robot does not report a dock status. The RV1L Pro (partly verified by a user): return to dock, water volume and carpet boost. No dock status."
       }
     },
     {

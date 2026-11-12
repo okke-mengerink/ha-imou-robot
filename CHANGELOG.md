@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0b1 (beta)
+
+This beta is for testing on RV1 models; the current stable release is 0.6.3.
+
+Find rooms on the RV1 models without a schedule. Not verified yet: no user has confirmed this on a real robot.
+
+- New: on a model that has them (RV1 Pro Max, RV1L Pro), the integration also reads the properties `swp_allareaConfig`, `swp_areaConfig`, `swp_allCleanPlan`, `area_clean_plan`, `swp_cleanSequence` and `sweeper_sequence` (room configuration, cleaning plans and cleaning order) and `map_name`. The room ids in them are added to the rooms of the schedules, of `sequence` and the rooms you named. A room that is only found there has no name from the Imou app ("Room -127"). What these properties hold on a real robot is unknown: `area_clean_plan` was empty on both RV1 robots that were checked. If they are empty, you still need a schedule to get your rooms.
+- The properties are read in the same call as `sequence`, once an hour, so there is no extra API call. If that combined call fails, only `sequence` is read; after 3 such failures in a row the other properties are not requested again until Home Assistant restarts. A property that is not in the response counts as "read, empty". A failed read is retried after 15 minutes without reading the schedules again.
+- Several maps: items with a map id only count for the current map, when that is known. That is the map id of the robot's schedules (-1, "whole house", is ignored), else the one map that `map_name` lists (also when the schedule's map is not among the listed maps). If no item has that map id, or the current map is unknown, and the items carry two or more different map ids, the items with a map id are dropped (room ids repeat per map). Items without a map id are always used. Zeros and values that are not numbers are ignored.
+- Diagnostics: the probe also shows the raw values of these properties.
+- No change for the RV-L11-A: its model has none of these properties, so it makes no new call and gets no new entity. It still needs a schedule.
+- Docs: the README rooms section describes the new sources and that they are not verified yet.
+
 ## 0.6.3
 
 Feedback on the Imou RV1L Pro (issue #8, version 0.6.2).

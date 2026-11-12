@@ -3,7 +3,9 @@
 The robot does not report a map. Room ids, and the room TYPE labels that were chosen
 in the Imou app, appear in the cleaning schedules (``clean_list``); a model with the
 property ``sequence`` (the cleaning order) also reports its room ids there. Room ids
-can be negative. This module parses those and works with room names.
+can be negative. RV1 models may also report rooms in the room configuration, the
+cleaning plans and the cleaning order of a map. This module parses those and works
+with room names.
 
 This module is deliberately free of Home Assistant imports so that it can be
 unit tested with plain Python.
@@ -14,9 +16,15 @@ from __future__ import annotations
 from collections.abc import Callable, Container, Iterable, Mapping
 from dataclasses import dataclass, field
 import json
+import logging
 from typing import Any
 
 from .model import PropertyDef, ci_get, to_bool, to_int
+
+_LOGGER = logging.getLogger(__name__)
+
+# the rooms of one struct item of a room source: (map id or None, room ids)
+RoomEntry = tuple[int | None, tuple[int, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,13 +363,186 @@ def sequence_room_ids(value: Any) -> list[int]:
     return list(dict.fromkeys(room for room in _int_list(value) if room != 0))
 
 
+# -- rooms from the properties of an RV1 model ----------------------------------
+def _plain_int(value: Any) -> int | None:
+    """Return an int for an int, an integral float or a numeric text; never for a bool."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _room_number(value: Any) -> int | None:
+    """Return a room id (negative ids are valid), or ``None`` for 0 and non-numbers."""
+    return _plain_int(value) or None
+
+
+def valid_map_id(value: Any) -> int | None:
+    """Return a usable map id, else ``None``.
+
+    -1 (a whole-house schedule), 0, other negative numbers and non-numbers are not
+    usable. The declared range of the model is not enforced (real ids are large).
+    """
+    number = _plain_int(value)
+    return number if number is not None and number > 0 else None
+
+
+def _loads(text: str) -> Any:
+    """Parse JSON text; ``None`` when it is not JSON."""
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError):
+        return None
+
+
+def list_room_ids(value: Any) -> list[int]:
+    """Return the room ids of a list of rooms, in order and without duplicates.
+
+    ``value`` is a list, or text: JSON (``"[-128,-127]"``, a list of objects with an
+    ``id``) or comma-separated numbers. Only ints (and numeric text) count; zeros,
+    bools and everything else are ignored. Never raises.
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        parsed = _loads(text)
+        value = parsed if parsed is not None else text.strip("[]").split(",")
+    if isinstance(value, (Mapping, int, float)):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        _LOGGER.debug("A room list has an unknown format: %s", type(value).__name__)
+        return []
+    rooms = [
+        _room_number(ci_get(item, "id") if isinstance(item, Mapping) else item)
+        for item in value
+    ]
+    return list(dict.fromkeys(room for room in rooms if room is not None))
+
+
+def _member(item: Mapping[str, Any], refs: Mapping[str, str], identifier: str) -> Any:
+    """Return a struct member by its ref (from the model), else by its identifier."""
+    if (ref := refs.get(identifier)) is not None:
+        for key, value in item.items():
+            if str(key) == ref:
+                return value
+    return ci_get(item, identifier)
+
+
+def _value_items(value: Any) -> list[Mapping[str, Any]]:
+    """Return the struct items of a property value: a list, one struct or JSON text."""
+    if isinstance(value, str):
+        value = _loads(value)
+    if isinstance(value, Mapping):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        if value is not None:
+            _LOGGER.debug("A room property has an unknown format: %s", type(value).__name__)
+        return []
+    items = [item for item in value if isinstance(item, Mapping)]
+    if len(items) != len(value):
+        _LOGGER.debug("A room property has %d item(s) that are not structs", len(value) - len(items))
+    return items
+
+
+def room_entries(
+    value: Any,
+    refs: Mapping[str, str],
+    room_member: str | None = None,
+    list_member: str | None = None,
+    map_member: str = "mapid",
+) -> list[RoomEntry]:
+    """Return the rooms of each struct item of a property value, with its map id.
+
+    ``refs`` maps the lower-case member identifiers to their refs (from the things
+    model, ``PropertyDef.member_refs``); an item may be keyed by ref or by identifier.
+    ``room_member`` holds one room id, ``list_member`` a list of room ids (see
+    ``list_room_ids``). The map id is ``None`` when the item has none or an unusable
+    one (see ``valid_map_id``). Items without rooms are left out. Never raises.
+    """
+    entries: list[RoomEntry] = []
+    for item in _value_items(value):
+        map_id = valid_map_id(_member(item, refs, map_member))
+        if list_member is not None:
+            rooms = list_room_ids(_member(item, refs, list_member))
+        elif room_member is not None and (room := _room_number(_member(item, refs, room_member))):
+            rooms = [room]
+        else:
+            rooms = []
+        if rooms:
+            entries.append((map_id, tuple(rooms)))
+    return entries
+
+
+def map_ids(value: Any, refs: Mapping[str, str], member: str = "map_id") -> list[int]:
+    """Return the usable map ids of ``map_name``, without duplicates."""
+    found = (valid_map_id(_member(item, refs, member)) for item in _value_items(value))
+    return list(dict.fromkeys(map_id for map_id in found if map_id is not None))
+
+
+def current_map_id(
+    schedule_map_ids: Iterable[Any], listed_map_ids: Iterable[Any]
+) -> int | None:
+    """Return the id of the map the robot uses now, if it can be told, else ``None``.
+
+    (a) the one usable map id of the schedules (-1 and other unusable ids are
+    ignored; several different ids tell nothing), unless ``map_name`` lists maps and
+    that id is not among them (the two may be different id spaces), else (b) the map
+    id when ``map_name`` lists exactly one map, else (c) ``None``. Ids are compared
+    as ints, so ``"123"`` and ``123`` are the same map.
+    """
+    scheduled = {valid_map_id(item) for item in schedule_map_ids} - {None}
+    listed = {valid_map_id(item) for item in listed_map_ids} - {None}
+    if len(scheduled) == 1:
+        only = next(iter(scheduled))
+        if not listed or only in listed:
+            return only
+    return next(iter(listed)) if len(listed) == 1 else None
+
+
+def rooms_on_map(entries: Iterable[RoomEntry], current_map: Any) -> list[int]:
+    """Return the rooms (in order, without duplicates) of the entries on the current map.
+
+    Entries without a map id are always kept. Room ids repeat per map, so rooms of
+    several maps must not be mixed: when the current map is unknown (or no entry has
+    its id: the ids of the schedules and of these properties may differ) and the
+    entries carry two or more distinct map ids, the entries with a map id are dropped.
+    With a single map id they are kept.
+    """
+    entries = list(entries)
+    present = {map_id for map_id, _ in entries if map_id is not None}
+    current = valid_map_id(current_map)
+    if current is not None and current not in present:
+        current = None
+    rooms: dict[int, None] = {}
+    for map_id, room_ids in entries:
+        if map_id is None:
+            keep = True
+        elif current is not None:
+            keep = map_id == current
+        else:
+            keep = len(present) < 2
+        if keep:
+            rooms.update(dict.fromkeys(room_ids))
+    return list(rooms)
+
+
 def known_rooms(
     schedules: ScheduleList | None, sequence: Iterable[int] = ()
 ) -> dict[int, str | None]:
     """Return every room id of every schedule and of the cleaning order (ascending),
     with a name if known.
 
-    The rooms of ``sequence`` (the ids of the ``sequence`` property) have no name.
+    The rooms of ``sequence`` (the ids of the ``sequence`` property, and of the other
+    room properties of an RV1 model) have no name.
 
     The labels are room TYPES and rooms without a label are skipped, so a name is
     only taken from a schedule whose raw ids and labels have the same length and

@@ -147,6 +147,11 @@ NEVER_POLL_IDENTIFIERS: Final = frozenset(
         "map_name",
         "sequence",
         "area_clean_plan",
+        "swp_allareaconfig",
+        "swp_areaconfig",
+        "swp_allcleanplan",
+        "swp_cleansequence",
+        "sweeper_sequence",
         "curpath_data",
         "virtual_area",
     }
@@ -161,6 +166,13 @@ PROP_MAP_SWITCH: Final = "map_switch"
 PROP_PARTITION_AREA: Final = "partition_area"  # RV1 Pro Max (array)
 PROP_SEQUENCE: Final = "sequence"  # RV1 Pro Max (array)
 PROP_AREA_CLEAN_PLAN: Final = "area_clean_plan"  # RV1 Pro Max (array)
+# RV1 models (arrays of structs with a map id and a room id; the two sequences hold
+# a map id and a text list of room ids). Identifiers are lower-case, like the model's.
+PROP_ALL_AREA_CONFIG: Final = "swp_allareaconfig"
+PROP_AREA_CONFIG: Final = "swp_areaconfig"
+PROP_ALL_CLEAN_PLAN: Final = "swp_allcleanplan"
+PROP_ALL_CLEAN_SEQUENCE: Final = "swp_cleansequence"
+PROP_SWEEPER_SEQUENCE: Final = "sweeper_sequence"  # a single struct, not an array
 MAP_NAME: Final = "map_name"
 MAP_URL: Final = "map_url"
 AREA_URL: Final = "area_url"
@@ -174,6 +186,11 @@ PROBE_IDENTIFIERS: Final[tuple[str, ...]] = (
     MAP_NAME,
     PROP_SEQUENCE,
     PROP_AREA_CLEAN_PLAN,
+    PROP_ALL_AREA_CONFIG,
+    PROP_AREA_CONFIG,
+    PROP_ALL_CLEAN_PLAN,
+    PROP_ALL_CLEAN_SEQUENCE,
+    PROP_SWEEPER_SEQUENCE,
 )
 
 # clean_control "status" input values
@@ -188,13 +205,34 @@ CLEAN_PLAN_GENERAL: Final = 0
 
 # Rooms and schedules. The robot reports no map. Room ids appear in the schedules
 # (clean_list, with the room type labels) and, on models that have the property
-# ``sequence`` (the cleaning order), in that list. Room ids can be negative. Both
-# are read together and refreshed this often (seconds); a failed fetch is retried
-# sooner.
+# ``sequence`` (the cleaning order), in that list. Room ids can be negative. RV1
+# models may also report them in the room configuration, the cleaning plans and the
+# cleaning order of a map (ROOM_SOURCES). All are read together and refreshed this
+# often (seconds); a failed fetch is retried sooner.
 CONF_ROOM_NAMES: Final = "room_names"  # config entry option: {device id: {room id: name}}
 SCHEDULE_REFRESH_SECONDS: Final = 3600
 SCHEDULE_RETRY_SECONDS: Final = 900
 SCHEDULE_MIN_REFRESH_SECONDS: Final = 60  # on-demand reads are cached this long
+# the part of the hourly read that is one getIotDeviceProperties call (``sequence``,
+# the ROOM_SOURCES and ``map_name``); the other part is the service SERVICE_CLEAN_LIST
+PART_ROOM_PROPERTIES: Final = "room_properties"
+
+# Properties with rooms of the current map, read together with ``sequence``:
+# (identifier, member with the room id, member with the text list of room ids).
+# The members are found in the things model; the map id is MEMBER_MAP_ID.
+ROOM_SOURCES: Final[tuple[tuple[str, str | None, str | None], ...]] = (
+    (PROP_ALL_AREA_CONFIG, "id", None),
+    (PROP_AREA_CONFIG, "id", None),
+    (PROP_ALL_CLEAN_PLAN, "id", None),
+    (PROP_AREA_CLEAN_PLAN, "id", None),
+    (PROP_ALL_CLEAN_SEQUENCE, None, "list"),
+    (PROP_SWEEPER_SEQUENCE, None, "list"),
+)
+# failed combined reads in a row (while ``sequence`` alone works) after which the extra
+# refs are not requested any more until a restart
+MAX_EXTRA_FAILURES: Final = 3
+MEMBER_MAP_ID: Final = "mapid"  # member of the ROOM_SOURCES structs
+MAP_NAME_MEMBER_ID: Final = "map_id"  # member of the ``map_name`` struct
 
 # ---------------------------------------------------------------------------
 # Documented fallback: the refs of the tested Imou RV-L11-A. They are used ONLY

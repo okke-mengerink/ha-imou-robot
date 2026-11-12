@@ -781,12 +781,17 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.6.3"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.0b1"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
         and manifest["issue_tracker"] == "https://github.com/okke-mengerink/ha-imou-robot/issues",
     )  # fmt: skip
+    # hassfest accepts a version that AwesomeVersion reads as one of these schemes (HA uses it too)
+    from awesomeversion import AwesomeVersion, AwesomeVersionStrategy  # noqa: PLC0415
+
+    version = AwesomeVersion(manifest["version"])
+    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.0", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b1" and AwesomeVersion("0.6.3") < version < AwesomeVersion("0.7.0"), f"{version.strategy} {version.modifier}")
     hacs = json.loads((ROOT / "hacs.json").read_text("utf-8"))
     check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True, "zip_release": True, "filename": "imou_vacuum.zip"}, str(hacs))
     # the release workflow zips exactly this folder; the archive name must match hacs.json
@@ -869,6 +874,12 @@ PROBE_PROPS = {
 }
 
 
+# refs of the room properties that are read once an hour with ``sequence`` (RV1 models): sequence,
+# swp_allareaConfig, swp_areaConfig, swp_allCleanPlan, area_clean_plan, swp_cleanSequence,
+# sweeper_sequence and map_name
+ROOM_READ_REFS = {"120600", "147400", "147300", "145800", "121600", "146000", "160700", "122300"}
+
+
 class FakeClient:
     """Stands in for ImouClient (no network)."""
 
@@ -888,6 +899,7 @@ class FakeClient:
         self.props.update(copy.deepcopy(PROBE_PROPS))  # never polled; only read by the diagnostics probe
         self.calls: list[tuple[Any, ...]] = []
         self.probe_service_calls: list[tuple[Any, ...]] = []
+        self.room_read_refs: list[list[str]] = []  # the refs of every read of the room properties
         self.poll_count = 0
         self.fail_with: Exception | None = FakeClient.initial_fail_with  # makes polls and commands fail
         self.report_while_not_online = False  # a cloud that still returns the last values while asleep
@@ -896,7 +908,8 @@ class FakeClient:
         self.fail_control_with: Exception | None = None  # makes only service calls fail
         self.fail_schedules_with: Exception | None = None  # makes only clean_list fail
         self.fail_sequence_with: Exception | None = None  # makes only the sequence read fail
-        self.sequence_reads = 0
+        self.fail_extras_with: Exception | None = None  # makes only the room reads with more than ``sequence`` fail
+        self.sequence_reads = 0  # reads of the room properties (sequence, room sources, map_name)
         self.timer_value: Any = copy.deepcopy(SCHEDULES_VALUE)
         self.latency = False  # service calls yield to the event loop first (to interleave concurrent calls)
         self.ignore_sets = False  # simulate a cloud that accepts but does not apply writes
@@ -928,12 +941,16 @@ class FakeClient:
     async def async_get_properties(self, product_id: str, device_id: str, refs: Any) -> Any:
         api = mod("api")
         self.poll_count += 1
-        if list(refs) != ["120600"]:  # (the cleaning order, read together with the schedules, is not the poll)
+        room_read = set(refs) <= ROOM_READ_REFS  # (read together with the schedules; not the poll, not the probe)
+        if not room_read:
             self.last_refs = list(refs)
-        if list(refs) == ["120600"]:
+        else:
+            self.room_read_refs.append(list(refs))
             self.sequence_reads += 1
             if self.fail_sequence_with is not None:
                 raise self.fail_sequence_with
+            if self.fail_extras_with is not None and set(refs) - {"120600"}:
+                raise self.fail_extras_with
         if self.fail_with is not None:
             raise self.fail_with
         values = {ref: self.props[ref] for ref in refs if ref in self.props} if self.status == "online" or self.report_while_not_online else {}
@@ -1531,6 +1548,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
 
     real_session_getter = diagnostics.async_get_clientsession
     diagnostics.async_get_clientsession = lambda hass: FakeSession()
+    check("L11-A: no room property call (no sequence, room sources or map_name in its model), so no extra call and no extra entity", client.room_read_refs == [] and coordinator._room_property_identifiers() == [] and coordinator.sequence_rooms is None and coordinator.source_entries is None and coordinator.listed_map_ids == [])  # noqa: SLF001
     client.probe_service_calls.clear()  # (the schedules were read during setup)
     probe_polls_before, polled_refs_before = client.poll_count, getattr(client, "last_refs", None)
     calls_before, health_before = len(client.calls), coordinator.health.failures
@@ -2279,9 +2297,9 @@ async def rv1_setup_checks(config_dir: str) -> None:
         report = dump["robots"][0]["support_report"]
         check("RV1 Pro Max: diagnostics support_report (partly verified, nothing missing or unknown)", report["partly_verified"] is True and report["verified_model"] is False and report["missing_core"] == [] and report["unknown_enum_labels"] == {}, str(report))
         probe_props = dump["robots"][0]["probe"]["properties"]
-        check("RV1 Pro Max: probe reads exactly the declared room/map properties", set(probe_props) == {"partition_area", "map_name", "sequence", "area_clean_plan"}, str(set(probe_props)))
-        check("RV1 Pro Max: probe is one property call with the 4 refs, no large ones", client.poll_count == polls_before + 1 and sorted(client.last_refs) == ["120600", "121600", "122300", "126200"], f"{client.poll_count - polls_before} {client.last_refs}")
-        check("RV1 Pro Max: probe never reads curpath_data, virtual_area or swp_*", not {"121300", "121400", "146100", "146000", "145800", "145700"} & set(client.last_refs))
+        check("RV1 Pro Max: probe reads exactly the declared room/map properties", set(probe_props) == {"partition_area", "map_name", "sequence", "area_clean_plan", "swp_allcleanplan", "swp_cleansequence"}, str(set(probe_props)))
+        check("RV1 Pro Max: probe is one property call with the 6 refs, no large ones", client.poll_count == polls_before + 1 and sorted(client.last_refs) == ["120600", "121600", "122300", "126200", "145800", "146000"], f"{client.poll_count - polls_before} {client.last_refs}")
+        check("RV1 Pro Max: probe never reads curpath_data, virtual_area or the other swp_* properties", not {"121300", "121400", "146100", "145700"} & set(client.last_refs))
 
         # --- 0.5.0: mop intensity, dock status, schedules ---------------------
         for key in ("mop_intensity", "dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag", "schedules"):
@@ -2407,12 +2425,12 @@ async def rv1_setup_checks(config_dir: str) -> None:
         client.probe_service_calls.clear()
         client.sequence_reads = 0
         await coordinator.async_refresh()
-        check("RV1 Pro Max: sequence fails: clean_list was read once, retry in about 15 minutes", len(client.probe_service_calls) == 1 and client.sequence_reads == 1 and coordinator._failed_parts == {"sequence"} and 800 < coordinator._schedules_due - time.monotonic() <= 900, f"{client.probe_service_calls} {client.sequence_reads} {coordinator._failed_parts}")
+        check("RV1 Pro Max: sequence fails: clean_list was read once (the room properties twice: combined, then sequence alone), retry in about 15 minutes", len(client.probe_service_calls) == 1 and client.sequence_reads == 2 and coordinator._failed_parts == {"room_properties"} and 800 < coordinator._schedules_due - time.monotonic() <= 900, f"{client.probe_service_calls} {client.sequence_reads} {coordinator._failed_parts}")
         client.fail_sequence_with = None
         coordinator._schedules_due = 0.0
         client.probe_service_calls.clear()
         await coordinator.async_refresh()
-        check("RV1 Pro Max: the retry reads only sequence (no clean_list call), then waits an hour", client.probe_service_calls == [] and client.sequence_reads == 2 and coordinator.sequence_rooms == [-128] and not coordinator._failed_parts and 3500 < coordinator._schedules_due - time.monotonic() <= 3600, f"{client.probe_service_calls} {client.sequence_reads} {coordinator.sequence_rooms}")
+        check("RV1 Pro Max: the retry reads only sequence (no clean_list call), then waits an hour", client.probe_service_calls == [] and client.sequence_reads == 3 and coordinator.sequence_rooms == [-128] and not coordinator._failed_parts and 3500 < coordinator._schedules_due - time.monotonic() <= 3600, f"{client.probe_service_calls} {client.sequence_reads} {coordinator.sequence_rooms}")
         # the reverse: clean_list fails, sequence is not read again by the retry
         client.fail_schedules_with = api_mod.ImouConnectionError("TIMEOUT", "iotDeviceControl")
         coordinator._schedules_due = 0.0
@@ -2617,6 +2635,127 @@ async def rv1_silent_checks(hass: Any, entry: Any) -> None:
     check("when the robot starts to report them, the entities show the values", (hass.states.get(regs["dust_bag"].entity_id).state, hass.states.get(regs["clean_water_tank"].entity_id).state) == ("full", "normal"), str([hass.states.get(regs[k].entity_id).state for k in ("dust_bag", "clean_water_tank")]))
 
 
+# --- 0.7.0: rooms without a schedule, from the room properties of an RV1 model --------------------
+ROOM_MAP = 1001
+OTHER_MAP = 1002
+
+
+class RV1LProRoomsClient(RV1LProClient):
+    """An RV1L Pro without a schedule and with an empty ``sequence``, but with the room
+    configuration (swp_allareaConfig): 7 rooms on its single map and 1 room of another map."""
+
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
+        super().__init__(session, app_id, app_secret, host)
+        rooms = [{"147401": ROOM_MAP, "147402": room, "147403": 0} for room in (-128, -127, -126, -125, -124, -123, -122)]
+        rooms.append({"147401": OTHER_MAP, "147402": -50, "147403": 1})  # another map: filtered out
+        self.props.update({"147400": rooms, "122300": [{"122302": "Map A", "122301": ROOM_MAP}]})
+
+
+async def rv1lpro_rooms_checks(hass: Any, entry: Any) -> None:
+    from homeassistant.components import vacuum as vacuum_component  # noqa: PLC0415
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    registry = er.async_get(hass)
+    regs = {e.unique_id.split("_", 1)[1]: e for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+    wanted = (-128, -127, -126, -125, -124, -123, -122)
+    check("RV1L Pro rooms: no schedule and an empty sequence", coordinator.schedules is not None and coordinator.schedules.schedules == [] and coordinator.sequence_rooms == [], str(coordinator.sequence_rooms))
+    check("RV1L Pro rooms: the room properties were read in one call with the refs of the model (sequence 120600 ... map_name 122300)", len(client.room_read_refs) == 1 and sorted(client.room_read_refs[0]) == ["120600", "121600", "122300", "145800", "146000", "147300", "147400", "160700"], str(client.room_read_refs))
+    check("RV1L Pro rooms: the current map is the one map of map_name", coordinator.current_map() == ROOM_MAP, str(coordinator.current_map()))
+    check("RV1L Pro rooms: 7 rooms with default names; the room of the other map is filtered out", coordinator.room_names() == {room: f"Room {room}" for room in wanted}, str(coordinator.room_names()))
+    clean_buttons = {key for key in regs if key.startswith("clean_room_")}
+    check("RV1L Pro rooms: 7 Clean buttons", clean_buttons == {f"clean_room_{room}" for room in wanted}, str(sorted(clean_buttons)))
+    check("RV1L Pro rooms: every Clean button is available", all(hass.states.get(regs[key].entity_id).state != "unavailable" for key in clean_buttons))
+    if ha_clean_area() is not None:
+        vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(regs["vacuum"].entity_id)
+        segments = await vac_entity.async_get_segments()
+        check("RV1L Pro rooms: 7 segments", sorted(int(seg.id) for seg in segments) == sorted(wanted), str([(seg.id, seg.name) for seg in segments]))
+    client.calls.clear()
+    await hass.services.async_call("button", "press", {"entity_id": regs["clean_room_-127"].entity_id}, blocking=True)
+    check("RV1L Pro rooms: pressing a Clean button cleans only that room (partition_area as a list)", client.calls == [("control", "TESTDEVICE0004", "200900", {"200901": 1, "200902": 1, "200903": [-127]})], str(client.calls))
+    # several maps and no known current map: the rooms with a map id are dropped (room ids repeat per map)
+    client.props["122300"] = [{"122302": "A", "122301": ROOM_MAP}, {"122302": "B", "122301": OTHER_MAP}]
+    client.props["147400"].append({"147402": -9, "147403": 0})  # an item without a map id is kept
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    check("RV1L Pro rooms: two maps and no schedule: the rooms with a map id are dropped, the one without stays", await coordinator.async_refresh_schedules() is True and coordinator.current_map() is None and coordinator.room_names() == {-9: "Room -9"}, f"{coordinator.current_map()} {coordinator.room_names()}")
+    # the current map is known (the one listed map) but no room carries its id: the filter is ignored, then the same rule
+    client.props["122300"] = [{"122302": "C", "122301": 5555}]
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    check("RV1L Pro rooms: a known map that no room carries: same result", await coordinator.async_refresh_schedules() is True and coordinator.current_map() == 5555 and coordinator.room_names() == {-9: "Room -9"}, f"{coordinator.current_map()} {coordinator.room_names()}")
+    client.props["147400"].pop()
+    client.props["122300"] = [{"122302": "A", "122301": ROOM_MAP}]
+    # a model with map_name but without sequence and room sources makes no call at all
+    real_model = coordinator.model
+    coordinator.model = mod("model").ThingsModel.from_api({"properties": [p for p in copy.deepcopy(RV1LPRO_MODEL_JSON["properties"]) if p["identifier"] == "map_name"], "services": []})
+    reads_before, polls_before = len(client.room_read_refs), client.poll_count
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    await coordinator.async_refresh_schedules()
+    check("RV1L Pro rooms: a model with only map_name makes no property call", coordinator._room_property_identifiers() == [] and client.poll_count == polls_before and len(client.room_read_refs) == reads_before, f"{coordinator._room_property_identifiers()} {client.poll_count - polls_before}")  # noqa: SLF001
+    coordinator.model = real_model
+    # a response without these properties behaves like a robot without them
+    for ref in ("147400", "122300"):
+        del client.props[ref]
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    check("RV1L Pro rooms: a response without the properties is 'read, empty': no rooms, no failure", await coordinator.async_refresh_schedules() is True and coordinator.room_names() == {} and coordinator.source_entries == [] and not coordinator._failed_parts, f"{coordinator.room_names()} {coordinator._failed_parts}")  # noqa: SLF001
+
+
+async def rv1lpro_fallback_checks(hass: Any, entry: Any) -> None:
+    """The room properties share one call with ``sequence``; when that call fails, ``sequence`` alone is read."""
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    api = mod("api")
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    capture = Capture(level=logging.INFO)
+    logging.getLogger(PKG).addHandler(capture)
+    try:
+        check("fallback: the first combined read worked", len(client.room_read_refs[0]) == 8 and coordinator.sequence_rooms == [] and len(coordinator.room_names()) == 7, str(client.room_read_refs))
+        client.props["120600"] = [-128, -5]
+        client.fail_extras_with = api.ImouApiError("OP1001", "param error")
+
+        async def refresh() -> bool:
+            client.room_read_refs.clear()
+            coordinator._schedules_fetched_at = None  # noqa: SLF001
+            return await coordinator.async_refresh_schedules()
+
+        for attempt in (1, 2, 3):
+            ok = await refresh()
+            check(f"fallback: failed combined read {attempt}: retried with only sequence, which keeps the rooms", ok is True and [len(r) for r in client.room_read_refs] == [8, 1] and client.room_read_refs[1] == ["120600"] and coordinator.sequence_rooms == [-128, -5] and not coordinator._failed_parts, f"{ok} {client.room_read_refs} {coordinator.sequence_rooms}")  # noqa: SLF001
+            check(f"fallback: ... the rooms of the earlier combined read stay (attempt {attempt})", {-128, -5} <= set(coordinator.room_names()) and len(coordinator.room_names()) == 8, str(coordinator.room_names()))
+        infos = [r.getMessage() for r in records if r.levelno == logging.INFO and "room properties" in r.getMessage()]
+        check("fallback: after 3 failures one info line and the extra refs are no longer requested", coordinator._extras_disabled and len(infos) == 1, f"{coordinator._extras_disabled} {infos}")  # noqa: SLF001
+        ok = await refresh()
+        check("fallback: the next read asks for sequence only (one call)", ok is True and client.room_read_refs == [["120600"]], str(client.room_read_refs))
+        ok = await refresh()
+        check("fallback: ... and says nothing more", len([r for r in records if r.levelno == logging.INFO and "room properties" in r.getMessage()]) == 1)
+        # a failure of sequence alone too is a plain failed read, not blamed on the extra refs
+        client.fail_extras_with = None
+        coordinator._extras_disabled, coordinator._extra_failures = False, 0  # noqa: SLF001  (a restart)
+        client.fail_sequence_with = api.ImouApiError("OP1001", "param error")
+        for _ in range(4):
+            await refresh()
+        check("fallback: when even sequence fails, nothing is disabled and the part is retried", not coordinator._extras_disabled and "room_properties" in coordinator._failed_parts, f"{coordinator._extras_disabled} {coordinator._failed_parts}")  # noqa: SLF001
+        client.fail_sequence_with = None
+        check("fallback: a restart (fresh state) asks for everything again and a good read resets the count", await refresh() is True and len(client.room_read_refs[0]) == 8 and coordinator._extra_failures == 0, str(client.room_read_refs))  # noqa: SLF001
+    finally:
+        logging.getLogger(PKG).removeHandler(capture)
+
+
+def test_rv1lpro_room_call_fallback() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1LProRoomsClient, rv1lpro_fallback_checks)
+
+
+def test_rv1lpro_rooms_without_a_schedule() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1LProRoomsClient, rv1lpro_rooms_checks)
+
+
 def test_rv1lpro_setup() -> None:
     FakeClient.initial_status, RV1LProClient.drop_station = "online", False
     run_fresh(RV1LProClient, rv1lpro_checks)
@@ -2782,7 +2921,7 @@ def test_issue_translations() -> None:
 
 
 def main() -> int:
-    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
+    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
         print(f"\n=== {func.__name__} ===")
         try:
             func()

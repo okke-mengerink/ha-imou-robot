@@ -41,12 +41,18 @@ from .const import (
     INPUT_STATUS,
     INPUT_WATER,
     INPUT_WIND,
+    MAP_NAME,
+    MAP_NAME_MEMBER_ID,
+    MAX_EXTRA_FAILURES,
+    MEMBER_MAP_ID,
     OUTPUT_TIMER,
+    PART_ROOM_PROPERTIES,
     PROP_ERROR_INFO,
     PROP_SEQUENCE,
     PROP_WATER,
     PROP_WIND_POWER,
     PROP_WORK_STATUS,
+    ROOM_SOURCES,
     SCAN_INTERVAL_ACTIVE,
     SCAN_INTERVAL_IDLE,
     SCHEDULE_MIN_REFRESH_SECONDS,
@@ -61,11 +67,16 @@ from .health import PollHealth
 from .model import ReportTracker, ThingsModel, to_bool, to_int
 from .probe import redact, summarize
 from .rooms import (
+    RoomEntry,
     ScheduleList,
+    current_map_id,
     known_rooms,
-    remembered_rooms,
+    map_ids,
     parse_schedules,
     partition_area,
+    remembered_rooms,
+    room_entries,
+    rooms_on_map,
     segment_names,
     sequence_room_ids,
 )
@@ -177,15 +188,22 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         # the last service call (redacted inputs, summarized output or error code),
         # for diagnostics
         self.last_command: dict[str, Any] | None = None
-        # the robot's cleaning schedules, or None while unknown; and the room ids of
-        # its cleaning order (``sequence``), or None while unknown. Both are read
-        # together, about once an hour.
+        # the robot's cleaning schedules, or None while unknown; the room ids of its
+        # cleaning order (``sequence``), or None while unknown; the rooms of the other
+        # room properties (ROOM_SOURCES, per map) and the ids of the maps of
+        # ``map_name``, or None while unknown. All are read together, about once an hour.
         self.schedules: ScheduleList | None = None
         self.sequence_rooms: list[int] | None = None
+        self.source_entries: list[RoomEntry] | None = None
+        self.listed_map_ids: list[int] = []
         self._schedules_due = 0.0  # time.monotonic() of the next fetch
-        # the parts (``clean_list``, ``sequence``) whose last read failed: only
+        # the parts (``clean_list``, PART_ROOM_PROPERTIES) whose last read failed: only
         # those are retried, so one part's failure does not repeat the other's call
         self._failed_parts: set[str] = set()
+        # failed combined reads of the room properties in a row (while ``sequence`` alone
+        # worked), and whether the extra refs are no longer requested (this run)
+        self._extra_failures = 0
+        self._extras_disabled = False
         self._schedules_fetched_at: float | None = None  # monotonic, last success
         self._boost_until = 0.0
         self._command_refresh_cancel: CALLBACK_TYPE | None = None
@@ -368,10 +386,11 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
 
     # -- rooms and schedules -------------------------------------------------
     async def _async_fetch_schedules(self, parts: set[str] | None = None) -> bool:
-        """Read the schedules and the cleaning order; on a failure keep the previous ones.
+        """Read the schedules and the room properties; on a failure keep the previous ones.
 
-        ``parts`` limits the read to ``clean_list`` and/or ``sequence`` (a retry of
-        what failed); ``None`` reads both. Never raises ``ImouError``, so it cannot
+        ``parts`` limits the read to ``clean_list`` and/or PART_ROOM_PROPERTIES (a retry
+        of what failed); ``None`` reads both. The room properties are one property call
+        (``sequence``, the ROOM_SOURCES and ``map_name``, as far as the model has them). Never raises ``ImouError``, so it cannot
         make a poll fail. Returns whether anything new was read. A part that fails
         is retried sooner than the hour, and alone.
         """
@@ -402,19 +421,28 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                     self._failed_parts.discard(SERVICE_CLEAN_LIST)
                     read = True
         if (
-            parts is None or PROP_SEQUENCE in parts
-        ) and self.model.prop(PROP_SEQUENCE) is not None:
-            self._failed_parts.add(PROP_SEQUENCE)
+            parts is None or PART_ROOM_PROPERTIES in parts
+        ) and (identifiers := self._room_property_identifiers()):
+            self._failed_parts.add(PART_ROOM_PROPERTIES)
+            values: dict[str, Any] | None = None
+            with_sources = len(identifiers) > 1 or identifiers[0] != PROP_SEQUENCE
             try:
-                values = await self.async_read_identifiers([PROP_SEQUENCE])
+                values = await self.async_read_identifiers(identifiers)
             except ImouError as err:
                 _LOGGER.debug(
-                    "Could not read the cleaning order of %s: %s", self.device.name, err
+                    "Could not read the rooms of %s: %s", self.device.name, err
                 )
+                if with_sources and PROP_SEQUENCE in identifiers:
+                    # the extra refs may be the cause: keep the ``sequence`` rooms
+                    values = await self._async_read_sequence_only(err)
+                    with_sources = False
             else:
-                # a response without ``sequence`` is "read, empty", not a failure
-                self.sequence_rooms = sequence_room_ids(values.get(PROP_SEQUENCE))
-                self._failed_parts.discard(PROP_SEQUENCE)
+                if with_sources:
+                    self._extra_failures = 0
+            if values is not None:
+                # a property missing in the response is "read, empty", not a failure
+                self._store_room_properties(values, with_sources)
+                self._failed_parts.discard(PART_ROOM_PROPERTIES)
                 read = True
         now = time.monotonic()
         if read:
@@ -426,6 +454,90 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         )
         return read
 
+    def _room_property_identifiers(self) -> list[str]:
+        """Return the properties of this model that can tell rooms (and maps), by
+        identifier: ``sequence``, the ROOM_SOURCES and ``map_name``.
+
+        ``map_name`` is only read with a room source (it only filters their rooms), so
+        a model with just ``map_name`` makes no call. After MAX_EXTRA_FAILURES failed
+        combined reads, only ``sequence`` is requested (until a restart).
+        """
+        sequence = [PROP_SEQUENCE] if self.model.prop(PROP_SEQUENCE) is not None else []
+        if self._extras_disabled:
+            return sequence
+        sources = [s[0] for s in ROOM_SOURCES if self.model.prop(s[0]) is not None]
+        if not sources:
+            return sequence
+        return [*sequence, *sources, *([MAP_NAME] if self.model.prop(MAP_NAME) else [])]
+
+    async def _async_read_sequence_only(self, combined_error: ImouError) -> dict[str, Any] | None:
+        """Retry a failed combined read with only ``sequence``; ``None`` if that fails too.
+
+        Only when ``sequence`` alone works are the extra refs to blame: after
+        MAX_EXTRA_FAILURES of those in a row they are not requested again this run.
+        """
+        try:
+            values = await self.async_read_identifiers([PROP_SEQUENCE])
+        except ImouError as err:
+            _LOGGER.debug("Could not read the cleaning order of %s: %s", self.device.name, err)
+            return None
+        self._extra_failures += 1
+        if self._extra_failures >= MAX_EXTRA_FAILURES:
+            self._extras_disabled = True
+            _LOGGER.info(
+                "Reading the room properties of %s failed %d times (%s); "
+                "only the cleaning order (sequence) is read until Home Assistant restarts",
+                self.device.name,
+                self._extra_failures,
+                combined_error,
+            )
+        return values
+
+    def _store_room_properties(self, values: Mapping[str, Any], with_sources: bool = True) -> None:
+        """Keep the rooms and the map ids found in a read of the room properties.
+
+        Without ``with_sources`` (only ``sequence`` was read) the earlier rooms of the
+        other properties are kept, or none if there were none.
+        """
+        if self.model.prop(PROP_SEQUENCE) is not None:
+            self.sequence_rooms = sequence_room_ids(values.get(PROP_SEQUENCE))
+        if not with_sources:
+            if self.source_entries is None:
+                self.source_entries = []
+            return
+        entries: list[RoomEntry] = []
+        for identifier, room_member, list_member in ROOM_SOURCES:
+            if (prop := self.model.prop(identifier)) is not None:
+                entries += room_entries(
+                    values.get(identifier),
+                    prop.member_refs,
+                    room_member,
+                    list_member,
+                    MEMBER_MAP_ID,
+                )
+        self.source_entries = entries
+        if (prop := self.model.prop(MAP_NAME)) is not None:
+            self.listed_map_ids = map_ids(
+                values.get(MAP_NAME), prop.member_refs, MAP_NAME_MEMBER_ID
+            )
+
+    def current_map(self) -> int | None:
+        """Return the id of the current map if it is known (see ``current_map_id``)."""
+        scheduled = (
+            [schedule.map_id for schedule in self.schedules.schedules]
+            if self.schedules is not None
+            else []
+        )
+        return current_map_id(scheduled, self.listed_map_ids)
+
+    def property_rooms(self) -> list[int]:
+        """Return the rooms from the properties: the cleaning order and the rooms of
+        the current map from the other room properties."""
+        return [
+            *(self.sequence_rooms or ()),
+            *rooms_on_map(self.source_entries or (), self.current_map()),
+        ]
+
     async def async_refresh_schedules(self) -> bool:
         """Read the schedules and cleaning order now and update the entities; False if
         that failed.
@@ -436,7 +548,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         # a partial read (one part worked, the other failed) is no "fresh" cache
         complete = (
             self.model.service(SERVICE_CLEAN_LIST) is None or self.schedules is not None
-        ) and (self.model.prop(PROP_SEQUENCE) is None or self.sequence_rooms is not None)
+        ) and (not self._room_property_identifiers() or self.source_entries is not None)
         if (
             fetched_at is not None
             and complete
@@ -470,19 +582,20 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
     def known_room_tags(self) -> dict[int, str | None]:
         """Return every room (ascending) with its label from the Imou app, if any.
 
-        These are the rooms of the schedules, the rooms of the cleaning order
-        (``sequence``, without a label) and the rooms the user named, so a named
-        room stays when no schedule lists it any more.
+        These are the rooms of the schedules, the rooms of the properties
+        (``sequence`` and the other room properties of the current map, without a
+        label) and the rooms the user named, so a named room stays when no schedule
+        lists it any more.
         """
         return remembered_rooms(
-            known_rooms(self.schedules, self.sequence_rooms or ()), self.room_overrides()
+            known_rooms(self.schedules, self.property_rooms()), self.room_overrides()
         )
 
     def room_names(self) -> dict[int, str]:
         """Return the name of every known room, by room id.
 
-        The rooms are those of the schedules, of the cleaning order and those the user
-        named. The user's name, else the room type label from the Imou app, else
+        The rooms are those of the schedules, of the room properties and those the
+        user named. The user's name, else the room type label from the Imou app, else
         ``Room <id>``; rooms with the same name get their id appended.
         """
         known = self.known_room_tags()

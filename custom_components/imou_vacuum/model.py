@@ -37,6 +37,7 @@ from .const import (
     RETURN_HOME_IDENTIFIERS,
     RETURN_START_LABEL,
     RETURN_START_VALUE,
+    ROOM_SOURCES,
     WIFI_KEYS,
     WIFI_LABEL_KEYS,
     WIND_ENUM_LABEL_KEYS,
@@ -117,6 +118,10 @@ def _clean_ref(value: Any) -> str:
     return str(value).strip()
 
 
+# the identifiers of the room properties: a struct of these is kept in any shape
+_ROOM_SOURCE_IDENTIFIERS = frozenset(source[0] for source in ROOM_SOURCES)
+
+
 @dataclass(frozen=True, slots=True)
 class PropertyDef:
     """One property (or struct member) of the things model."""
@@ -132,6 +137,15 @@ class PropertyDef:
     enum_labels: Mapping[int, str] = field(default_factory=dict)
     # struct members by lower-case identifier
     children: Mapping[str, PropertyDef] = field(default_factory=dict)
+    # members (by lower-case identifier) of the item struct of an array of structs
+    item_members: Mapping[str, PropertyDef] = field(default_factory=dict)
+
+    @property
+    def member_refs(self) -> dict[str, str]:
+        """Return the refs of the struct members (or of the array's item struct
+        members), by lower-case identifier."""
+        members = self.children or self.item_members
+        return {name: member.ref for name, member in members.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +187,7 @@ def _parse_property(raw: Any) -> PropertyDef | None:
     specs = ci_get(data_type, "specs")
 
     children: dict[str, PropertyDef] = {}
+    item_members: dict[str, PropertyDef] = {}
     enum_labels: dict[int, str] = {}
     unit: str | None = None
     minimum: float | None = None
@@ -183,6 +198,13 @@ def _parse_property(raw: Any) -> PropertyDef | None:
         for member in specs:
             if (child := _parse_property(member)) is not None:
                 children.setdefault(child.identifier, child)
+    elif type_name == "array" and isinstance(specs, Mapping):
+        element = ci_get(specs, "item")
+        members = ci_get(element, "specs")
+        if str(ci_get(element, "type") or "").lower() == "struct" and isinstance(members, list):
+            for member in members:
+                if (child := _parse_property(member)) is not None:
+                    item_members.setdefault(child.identifier, child)
     elif isinstance(specs, Mapping):
         for item in ci_get(specs, "list") or []:
             number = to_int(ci_get(item, "value"))
@@ -204,6 +226,7 @@ def _parse_property(raw: Any) -> PropertyDef | None:
         step=step,
         enum_labels=enum_labels,
         children=children,
+        item_members=item_members,
     )
 
 
@@ -527,14 +550,23 @@ class ThingsModel:
                 continue
             value = by_ref[prop.ref]
             if prop.children:
+                keep_raw = identifier in _ROOM_SOURCE_IDENTIFIERS
                 if not isinstance(value, Mapping):
-                    continue
-                members = {str(key): item for key, item in value.items()}
-                value = {
-                    name: members[child.ref]
-                    for name, child in prop.children.items()
-                    if child.ref in members
-                }
+                    # a room source struct may come as a list or as JSON text: the room
+                    # parser (``rooms.room_entries``) reads those shapes
+                    if not keep_raw:
+                        continue
+                else:
+                    members = {str(key): item for key, item in value.items()}
+                    mapped = {
+                        name: members[child.ref]
+                        for name, child in prop.children.items()
+                        if child.ref in members
+                    }
+                    if not mapped and keep_raw:
+                        pass  # keyed by identifier (or unknown): keep it as it came
+                    else:
+                        value = mapped
             values[identifier] = value
         return values
 

@@ -32,11 +32,11 @@ De integratie in dit artikel is speciaal voor robotstofzuigers gemaakt. Hij praa
 
 Na het instellen krijg je in Home Assistant:
 
-- Een standaard stofzuiger-entiteit met starten, pauzeren, hervatten, stoppen, terug naar het basisstation en lokaliseren. De zuigkracht stel je in als ventilatorsnelheid.
+- Een standaard stofzuiger-entiteit met starten, pauzeren, hervatten, stoppen, terug naar het basisstation en lokaliseren. De zuigkracht stel je in als ventilatorsnelheid (bij de L11-A: stil, standaard of max; bij RV1-modellen: stil, standaard, sterk of max).
 - Kamerreiniging (zie verderop).
-- Sensoren voor batterij, status, foutmelding, schoongemaakt oppervlak, schoonmaaktijd, slijtage van onderdelen (borstels, filter, sensoren) en wifi-signaal.
-- Schakelaars, bijvoorbeeld voor extra kracht op tapijt, en keuzelijsten voor zuigkracht en waterniveau.
-- Een knop om de stofbak te legen in het afzuigstation.
+- Sensoren voor batterij, status, foutmelding, schoongemaakt oppervlak, schoonmaaktijd, slijtage van onderdelen (borstels, filter, sensoren), wifi-signaal en opladen (RV1-modellen). De sensoren voor het basisstation staan standaard uit; geen enkel model is geverifieerd met een status van het basisstation.
+- Schakelaars, bijvoorbeeld voor extra kracht op tapijt, en keuzelijsten voor zuigkracht en waterniveau (bij RV1-modellen ook waterhoeveelheid).
+- Knoppen om de stofbak te legen in het afzuigstation, en een knop **Clean <room>** per kamer.
 - Een Schedules-sensor die de schema's uit de Imou-app toont.
 - `vacuum.send_command` voor geavanceerd gebruik.
 
@@ -49,7 +49,12 @@ Je stelt alles in via de Home Assistant-interface. De namen van entiteiten zijn 
 - Een Imou-robotstofzuiger die online is op 2,4 GHz wifi en aan je Imou-account gekoppeld is.
 - Een gratis ontwikkelaarsaccount op het Imou Open Platform.
 
-Getest is de integratie met de Imou RV-L11-A (L11-serie, met afzuigstation). De Imou RV1 Pro Max wordt sinds versie 0.3.1 gedeeltelijk ondersteund: batterij, terug naar het basisstation en vijf zuigkrachtniveaus, op basis van diagnostiek van een gebruiker. Dat is niet volledig geverifieerd. Andere Imou-robots werken mogelijk ook.
+Getest is de integratie met de Imou RV-L11-A (L11-serie, met afzuigstation). Twee andere modellen zijn deels geverifieerd door gebruikers:
+
+- **RV1 Pro Max** (deels geverifieerd door een gebruiker): batterij, terug naar het basisstation, zuigkracht (stil, standaard, sterk, max), waterhoeveelheid, starttijd van schema's en kamerreiniging van twee kamers. De robot meldt geen status van het basisstation.
+- **RV1L Pro** (deels geverifieerd door een gebruiker): terug naar het basisstation, waterhoeveelheid en extra kracht op tapijt. Geen status van het basisstation.
+
+Andere Imou-robots werken mogelijk ook, maar die zijn niet geverifieerd.
 
 ## Stap voor stap instellen
 
@@ -57,7 +62,7 @@ Getest is de integratie met de Imou RV-L11-A (L11-serie, met afzuigstation). De 
 2. **Voeg je robot toe.** Ga in het Control Board naar Device Access Service en voeg de robot toe met het serienummer en de veiligheidscode (safety code) van het label.
    *Staat er geen veiligheidscode op het label?* Voeg de robot dan toe in de Imou Life-app met de QR-code. Log daarna met dezelfde inloggegevens in op het Open Platform via [auth.imoulife.com/OAuth2/login](https://auth.imoulife.com/OAuth2/login). De robot staat dan onder Device Access Service. Een gebruiker vond deze route. Let op: die gebruiker ontving de verificatiemail niet op een outlook.com-adres.
 3. **Haal je App ID en App Secret op.** Open App Information. Houd het App Secret privé.
-4. **Installeer via HACS.** Voeg de repository [github.com/okke-mengerink/ha-imou-robot](https://github.com/okke-mengerink/ha-imou-robot) toe als aangepaste repository (categorie Integration) en installeer de integratie. Herstart daarna Home Assistant. De integratie wacht nog op opname in de standaardlijst van HACS. Handmatig installeren kan ook: kopieer de map `custom_components/imou_vacuum` naar je eigen configuratie.
+4. **Installeer via HACS.** Voeg de repository [github.com/okke-mengerink/ha-imou-robot](https://github.com/okke-mengerink/ha-imou-robot) toe als aangepaste repository (categorie Integration) en installeer de integratie. HACS installeert het release-bestand `imou_vacuum.zip`. Lukt het downloaden niet, controleer dan of de release dat zip-bestand bevat. Herstart daarna Home Assistant. De integratie wacht nog op opname in de standaardlijst van HACS. Handmatig installeren kan ook: kopieer de map `custom_components/imou_vacuum` naar je eigen configuratie.
 5. **Voeg de integratie toe.** Ga naar Instellingen > Apparaten en diensten > Integratie toevoegen en kies Imou Vacuum (Open Platform). Vul App ID en App Secret in en kies je regio: Europa (standaard), Singapore of Noord-Amerika.
 
 Je robot staat nu in Home Assistant.
@@ -87,7 +92,7 @@ Met Home Assistant 2026.3 of nieuwer kun je per ruimte laten schoonmaken. De Imo
 Niet in de ingebouwde integratie, en ook niet in Imou Life of Imou-OpenPlatform. Wel in Imou Vacuum (Open Platform), die je via HACS installeert.
 
 **Werkt de integratie met de Imou RV-L11-A?**
-Ja, dit model is getest. De RV1 Pro Max wordt sinds versie 0.3.1 gedeeltelijk ondersteund.
+Ja, dit model is getest. RV1 Pro Max (deels geverifieerd door een gebruiker): batterij, terug naar het basisstation, zuigkracht (stil, standaard, sterk, max), waterhoeveelheid, starttijd van schema's en kamerreiniging van twee kamers. De robot meldt geen status van het basisstation. RV1L Pro (deels geverifieerd door een gebruiker): terug naar het basisstation, waterhoeveelheid en extra kracht op tapijt. Geen status van het basisstation.
 
 **Kost het iets?**
 De integratie is gratis en open source (MIT). Het ontwikkelaarsaccount en de gratis laag van Imou (30.000 API-aanroepen per maand per App ID) zijn ook gratis.
@@ -127,7 +132,7 @@ Je vindt de code, de installatie-instructies en de issue-pagina op GitHub: [gith
       "name": "Werkt de integratie met de Imou RV-L11-A?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Ja, dit model is getest. De RV1 Pro Max wordt sinds versie 0.3.1 gedeeltelijk ondersteund."
+        "text": "Ja, dit model is getest. RV1 Pro Max (deels geverifieerd door een gebruiker): batterij, terug naar het basisstation, zuigkracht (stil, standaard, sterk, max), waterhoeveelheid, starttijd van schema's en kamerreiniging van twee kamers. De robot meldt geen status van het basisstation. RV1L Pro (deels geverifieerd door een gebruiker): terug naar het basisstation, waterhoeveelheid en extra kracht op tapijt. Geen status van het basisstation."
       }
     },
     {
