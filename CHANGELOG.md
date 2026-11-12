@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.3
+
+Feedback on the Imou RV1L Pro (issue #8, version 0.6.2).
+
+- Change: the four dock sensors (Dock connected, Clean water tank, Dirty water tank, Dust bag) are now disabled by default on every model. The RV1L Pro reports the dock status as all zeros, also while it is charging on its dock, and the RV1 Pro Max and the L11-A report nothing, so no model is verified to show real dock status. You can enable them yourself in the entity settings. They are still created after the robot's first online poll, and sensors you already have keep their enabled state.
+- Docs: the RV1L Pro is confirmed by the user for return to dock, water volume (medium matches the app) and carpet boost. Dock status is not supported on this model.
+
 ## 0.6.2
 
 Changes after the HACS review of the default-store submission.

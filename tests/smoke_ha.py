@@ -625,7 +625,7 @@ def test_model_adaptive_entities() -> None:
     check("... and they stay available (state unknown), not unavailable", all(e.available for e in silent.values()))
     dock = {"121100": {"121101": True, "121102": 0, "121103": 0, "121104": 0}}
     loud = dock_entities(FakeCoordinator(RV1_MODEL_JSON, {**RV1_VALUES_JSON["properties"], **dock}))
-    check("a robot that reports station_status (RV1L Pro): the dock entities are enabled and available", all(e.entity_registry_enabled_default and e.available for e in loud.values()) and len(loud) == 4)
+    check("a robot that reports station_status (RV1L Pro): the dock entities are still disabled by default (no model is verified), and available", all(not e.entity_registry_enabled_default and e.available for e in loud.values()) and len(loud) == 4)
     waiting = FakeCoordinator(RV1_MODEL_JSON, {}, online=False)
     waiting_added: dict[str, list[Any]] = {"sensor": [], "binary_sensor": []}
     for platform, collected in waiting_added.items():
@@ -635,7 +635,7 @@ def test_model_adaptive_entities() -> None:
     check("a robot that is offline at setup: no dock entities yet (the rest is there), two listeners wait", not waiting_keys & set(dock_keys) and "battery" in waiting_keys and len(waiting.listeners) == 2, str(waiting_keys))
     waiting.first_online_poll(RV1_VALUES_JSON["properties"])
     late_dock = {e.unique_id.split("_", 1)[1]: e for v in waiting_added.values() for e in v if e.unique_id.split("_", 1)[1] in dock_keys}
-    check("... the first online poll adds them, disabled because it lacks station_status, and the listeners are gone", sorted(late_dock) == sorted(dock_keys) and not any(e.entity_registry_enabled_default for e in late_dock.values()) and not waiting.listeners, str(sorted(late_dock)))
+    check("... the first online poll adds them, disabled by default, and the listeners are gone", sorted(late_dock) == sorted(dock_keys) and not any(e.entity_registry_enabled_default for e in late_dock.values()) and not waiting.listeners, str(sorted(late_dock)))
     mop = by_key(make_entities(FakeCoordinator(RV1_MODEL_JSON, RV1_VALUES_JSON["properties"]))["binary_sensor"])["mop_fitted"]
     check("Mop fitted has the translation key mop_fitted (states Fitted / Not fitted in the translations)", mop.translation_key == "mop_fitted" and EN_JSON["entity"]["binary_sensor"]["mop_fitted"]["state"] == {"on": "Fitted", "off": "Not fitted"} and STRINGS_JSON == EN_JSON)
     l11a_ents = make_entities(FakeCoordinator(MODEL_JSON, VALUES_JSON["properties"]))
@@ -781,7 +781,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.6.2"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.6.3"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -2182,6 +2182,9 @@ async def rv1_setup_checks(config_dir: str) -> None:
     await bootstrap.async_load_base_functionality(hass)
     await hass.async_start()
     try:
+        # dock sensors are disabled by default (0.6.3); these exist enabled, like those of an earlier install
+        for platform, key in (("binary_sensor", "dock_connected"), ("sensor", "clean_water_tank"), ("sensor", "dirty_water_tank"), ("sensor", "dust_bag")):
+            er.async_get(hass).async_get_or_create(platform, "imou_vacuum", f"TESTDEVICE0002_{key}", suggested_object_id=f"rv1_pro_max_test_{key}")
         entry = config_entries.ConfigEntry(
             data={"app_id": "rv1-app", "app_secret": "s", "region": "eu"}, discovery_keys={},
             domain="imou_vacuum", entry_id="rv1-app", minor_version=1, options={}, source="user",
@@ -2532,7 +2535,7 @@ async def rv1lpro_checks(hass: Any, entry: Any) -> None:
     check("RV1L Pro: return_to_base writes swp_backStation {151300: 1} (start return)", client.calls == [("set", "TESTDEVICE0004", {"151300": 1})], str(client.calls))
     # 2. optional entities, decided by the first (online) poll
     check("RV1L Pro: Carpet boost is reported, so enabled and on", regs["carpet_boost"].disabled_by is None and state("carpet_boost").state == "on")
-    check("RV1L Pro: the dock sensors are reported, so enabled and show values", all(regs[k].disabled_by is None for k in ("dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag")) and (state("dock_connected").state, state("clean_water_tank").state, state("dust_bag").state) == ("off", "normal", "normal"), str([state(k).state for k in ("dock_connected", "clean_water_tank", "dust_bag")]))
+    check("RV1L Pro: the dock sensors exist but are disabled by default (it reports all zeros, no model is verified)", all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION for k in ("dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag")), str({k: regs[k].disabled_by for k in ("dock_connected", "clean_water_tank", "dirty_water_tank", "dust_bag")}))
     # 4. suction and 5. water volume
     check("RV1L Pro: suction reports 4 (max); the offered levels are quiet/standard/strong/max", state("vacuum").attributes["fan_speed"] == "max" and list(state("vacuum").attributes["fan_speed_list"]) == ["quiet", "standard", "strong", "max"] and state("suction_level").attributes["options"] == ["quiet", "standard", "strong", "max"])
     check("RV1L Pro: water volume 2 is medium", state("mop_intensity").state == "medium" and state("mop_intensity").attributes["options"] == ["off", "low", "medium"], str(state("mop_intensity")))
@@ -2587,7 +2590,7 @@ async def rv1lpro_late_checks(hass: Any, entry: Any) -> None:
     await hass.async_block_till_done()
     regs = keys()
     check("the first online poll creates them", optional <= set(regs), str(sorted(optional - set(regs))))
-    check("... decided on that poll: the RV1L Pro reports all of them, so they are enabled", all(regs[k].disabled_by is None for k in optional), str({k: regs[k].disabled_by for k in optional}))
+    check("... decided on that poll: the carpet boost it reports is enabled, the dock sensors are disabled by default", regs["carpet_boost"].disabled_by is None and all(regs[k].disabled_by is er.RegistryEntryDisabler.INTEGRATION for k in optional - {"carpet_boost"}), str({k: regs[k].disabled_by for k in optional}))
     count = len(regs)
     await coordinator.async_refresh()
     await hass.async_block_till_done()

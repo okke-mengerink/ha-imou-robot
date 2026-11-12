@@ -87,8 +87,8 @@ class ImouEnumSensorDescription(SensorEntityDescription):
     # the model's raw value -> key (label based, see ThingsModel.enum_keys)
     keys_fn: Callable[[ThingsModel], Mapping[int, str]]
     raw_fn: Callable[[ImouRobotState], int | None]
-    # a dock sensor: created after the first online poll, disabled by default when
-    # the robot does not report it (see ``ImouEntity``)
+    # a dock sensor: created after the first online poll, always disabled by default
+    # (no model is verified to report real dock status)
     optional: bool = False
 
 
@@ -295,6 +295,9 @@ class ImouEnumSensor(ImouEntity, SensorEntity):
             description.key,
             description.identifier if description.optional else None,
         )
+        if description.optional:
+            # no model is verified to report real dock status
+            self._attr_entity_registry_enabled_default = False
         self.entity_description = description
         definition = coordinator.model.member(description.identifier, description.child)
         self._model_labels = definition.enum_labels if definition is not None else {}

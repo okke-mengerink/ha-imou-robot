@@ -39,8 +39,8 @@ class ImouBinarySensorDescription(BinarySensorEntityDescription):
     is_on_fn: Callable[[ThingsModel, Any, Mapping[str, Any]], bool | None] = (
         lambda _model, raw, _values: to_bool(raw)
     )
-    # a dock sensor: created after the first online poll, disabled by default when
-    # the robot does not report it (see ``ImouEntity``)
+    # a dock sensor: created after the first online poll, always disabled by default
+    # (no model is verified to report real dock status)
     optional: bool = False
 
 
@@ -117,6 +117,9 @@ class ImouBinarySensor(ImouEntity, BinarySensorEntity):
             description.key,
             description.identifier if description.optional else None,
         )
+        if description.optional:
+            # no model is verified to report real dock status
+            self._attr_entity_registry_enabled_default = False
         self.entity_description = description
 
     @property
