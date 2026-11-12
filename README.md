@@ -8,7 +8,7 @@
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=okke-mengerink&repository=ha-imou-robot&category=integration)
 
-This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot vacuum (robot cleaner) to Home Assistant as a standard vacuum entity, with sensors for battery, status, cleaned area and cleaning time. You install it through HACS, set it up in the Home Assistant UI, and it controls the robot through the official Imou Open Platform cloud API (cloud only, with a free developer account). It is tested on the Imou RV-L11-A (L11 series, with the auto-empty dock). Other Imou robots that use the same things-model identifiers may work, but none are verified. Home Assistant's built-in Imou integration and the Imou Life and Imou-OpenPlatform integrations in HACS do not support robot vacuums, which is why this one exists.
+This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot vacuum (robot cleaner) to Home Assistant as a standard vacuum entity, with sensors for battery, status, cleaned area and cleaning time. You install it through HACS, set it up in the Home Assistant UI, and it controls the robot through the official Imou Open Platform cloud API (cloud only, with a free developer account). It is verified on the Imou RV-L11-A (L11 series, with the auto-empty dock). The Imou RV1 Pro Max and RV1L Pro are partly verified by users. Other Imou robots that use the same things-model identifiers may work, but they are unverified. Home Assistant's built-in Imou integration and the Imou Life and Imou-OpenPlatform integrations in HACS do not support robot vacuums, which is why this one exists.
 
 > **Using this integration?** Give it a ⭐ on GitHub: stars help other Imou owners find it. Do you have another Imou robot? [Share its diagnostics](#help-us-map-other-models) so it can be supported too.
 
@@ -16,7 +16,7 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 
 ![Home Assistant device page of an Imou RV-L11-A with the Imou Vacuum (Open Platform) integration: device info, controls, sensors including the schedules sensor, and diagnostic entities](https://raw.githubusercontent.com/okke-mengerink/ha-imou-robot/main/docs/images/device-page.png)
 
-*The device page of an Imou RV-L11-A in Home Assistant (version 0.3.1). "Stofzuiger boven" is the name the owner gave the robot.*
+*The device page of an Imou RV-L11-A in Home Assistant (version 0.6.3). "Stofzuiger boven" is the name the owner gave the robot.*
 
 ## Why this integration?
 
@@ -30,7 +30,7 @@ This custom integration, **Imou Vacuum (Open Platform)**, adds your Imou robot v
 
 | Robot | Status | Notes |
 |---|---|---|
-| Imou RV-L11-A (L11 series, with auto-empty dock) | Tested | Imou cloud `deviceModel` `L11-A`, Home Assistant 2026.10 |
+| Imou RV-L11-A (L11 series, with auto-empty dock) | Verified | Imou cloud `deviceModel` `L11-A`, Home Assistant 2026.10 |
 | Imou RV1 Pro Max | Reported by a user (issue #1), partly verified | Confirmed by the user: battery, return to dock, the suction levels (quiet, standard, strong, max), the water volume (off, low, medium), the schedule start time and room cleaning of the two rooms from the user's schedule. Not yet verified: room cleaning with the rooms of the cleaning order (`sequence`); one robot's diagnostics list all of its rooms there, but that this holds for every robot and that those rooms can be cleaned is not confirmed. Not yet confirmed: dock status. The robot does not report the dock status, so those entities are disabled by default (as on every model). |
 | Imou RV1L Pro | Reported by a user (issue #8), partly verified | Confirmed by the user: return to dock (through `swp_backStation`), the water volume (the app shows medium and the robot reports `mop_speed` 2, which the integration shows as medium; the app's fourth level, High, is not in the things model) and carpet boost (the app and Home Assistant agree). Dock status is not supported on this model: it reports `station_status` as all zeros, also while charging, and the app has no station settings. |
 | Any other Imou robot vacuum | unverified — please share diagnostics | Might work if its things model uses the same identifiers. See [Help us map other models](#help-us-map-other-models). |
@@ -49,9 +49,9 @@ Verified on a real RV-L11-A:
 
 ## Features
 
-- **Vacuum entity:** start (a whole-house clean, or resume when paused), pause, stop, return to dock, locate, and fan speed (the suction level: quiet, standard or max).
-- **Sensors:** battery, status, error, cleaned area (m²), cleaning time (min), consumable usage in hours (side brush, main brush, filter, sensors), Wi-Fi signal and a mop-fitted binary sensor.
-- **Controls:** suction and water level selects, the carpet boost switch, and an empty-bin button. See [Entities](#entities).
+- **Vacuum entity:** start (a whole-house clean, or resume when paused), pause, stop, return to dock, locate, and fan speed (the suction level: quiet, standard or max; quiet, standard, strong or max on RV1 models).
+- **Sensors:** battery, status, error, cleaned area (m²), cleaning time (min), consumable usage in hours (side brush, main brush, filter, sensors), Wi-Fi signal, a mop-fitted binary sensor, a charging binary sensor (RV1 models), and the dock sensors (disabled by default; no model is verified to report dock status).
+- **Controls:** suction and water level selects, a water volume select (RV1 models), the carpet boost switch, the empty-bin button, and a **Clean <room>** button for every room the integration finds. See [Entities](#entities).
 - **Set up in the UI:** App ID, App Secret and region, with re-authentication when the App Secret changes. English translation. A diagnostics download for mapping new models.
 - **Automatic discovery:** every robot on your Imou account is found, and only the entities its model supports are created.
 - **Room cleaning (Home Assistant 2026.3 or newer):** clean one or more rooms with `vacuum.clean_area` or by voice, after mapping the robot's rooms to your Home Assistant areas. See [Room cleaning](#room-cleaning).
@@ -73,10 +73,10 @@ Not supported: the map, zone cleaning and creating, editing or switching schedul
 ### HACS
 
 1. In HACS, add a custom repository with category **Integration** and URL `https://github.com/okke-mengerink/ha-imou-robot`, or click the "Open your Home Assistant instance" badge at the top of this page.
-2. Install the integration from HACS.
+2. Install the integration from HACS. HACS installs it from the release asset `imou_vacuum.zip`.
 3. Restart Home Assistant.
 
-If HACS reports "Could not download" (a known problem in some Home Assistant/HACS versions with GitHub release downloads), use the manual installation below.
+If the download fails, check that the release has the `imou_vacuum.zip` asset. You can also use the manual installation below.
 
 ### Manual
 
@@ -126,7 +126,7 @@ data:
     - office
 ```
 
-When a new room id appears in your schedules, Home Assistant shows a repair notice so that you can map it.
+On Home Assistant 2026.3 or newer, a new room id that appears in your schedules or in the robot's cleaning order gives a repair notice, so that you can map it.
 
 **About the room names.** The app does not store room names in the schedules but room *types* (such as "Bedroom" or "Office"), and it leaves out rooms without a type. A type is therefore only used as the name when every selected room in that schedule has one; other rooms are called "Room <id>". Two rooms can have the same type; those names get the id added, for example "Bedroom (3)". Your own names (from **Link rooms to areas** or **Rename rooms**) always win.
 
@@ -138,7 +138,7 @@ When a new room id appears in your schedules, Home Assistant shows a repair noti
 
 The schedules of the Imou app are read once an hour and shown in the Schedules sensor.
 
-- **L11-A format (RV-L11-A):** a repeating schedule shows its local time of day in `time` (for example `14:00`) and its days in `days` (`sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`). The robot counts 0 as Sunday; the days 1 to 6 are assumed to be Monday to Saturday. A one-off schedule has a `start` (local date and time) and a `time`, and no `days`. Other attributes are `enabled`, `active`, `repeat` (the raw days), `rooms` (names, or `whole_house`).
+- **L11-A format (RV-L11-A):** a repeating schedule shows its local time of day in `time` (for example `14:00`) and its days in `days` (`sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`). The robot counts 0 as Sunday; the days 1 to 6 are assumed to be Monday to Saturday. A one-off schedule has a `start` (local date and time) and a `time`, and no `days`. Other attributes are `enabled`, `active`, `repeat` (the raw days), `rooms` (names, `whole_house` or `unknown`).
 - **RV1 models (RV1 Pro Max, RV1L Pro):** the format is different, but `time` and `days` have the same format as above. The start time is the local time of day, and the days count 1 as Monday to 7 as Sunday. The raw start time (`start_raw`) and `once` are also shown.
 
 **Schedules are read-only.** Home Assistant cannot switch a schedule on or off, create it or change it, because writing a schedule back through the cloud API loses its room/whole-house setting (a room schedule became a whole-house schedule in a live test). Change schedules in the Imou app.
@@ -177,7 +177,7 @@ Entity IDs are derived from the device name, so they normally come back the same
 
 ### Does the official Imou integration support robot vacuums?
 
-No. At the time of writing (October 2026), Home Assistant's built-in `imou` integration and the `imou_life` (Imou Life) and `Imou-OpenPlatform` integrations from HACS do not support robot vacuums. This integration adds that support through the official Imou Open Platform cloud API.
+No. At the time of writing (November 2026), Home Assistant's built-in `imou` integration and the `imou_life` (Imou Life) and `Imou-OpenPlatform` integrations from HACS do not support robot vacuums. This integration adds that support through the official Imou Open Platform cloud API.
 
 ### Can I control my Imou robot vacuum locally?
 
@@ -201,7 +201,7 @@ Not directly: this integration only provides the Home Assistant vacuum entity. L
 
 ### Does it work with other Imou robot vacuums?
 
-Maybe. The integration reads each robot's things model (the list of properties and services in the Imou cloud) and creates entities from the identifiers it finds. A device counts as a robot when its things model has the service `clean_control`. Robots that use the same identifiers as the RV-L11-A may work, but only the RV-L11-A is verified. If you have another model, please open a [Help support my Imou robot](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml) issue and attach the diagnostics file.
+Maybe. The integration reads each robot's things model (the list of properties and services in the Imou cloud) and creates entities from the identifiers it finds. A device counts as a robot when its things model has the service `clean_control`. Robots that use the same identifiers as the RV-L11-A may work, but only the RV-L11-A is verified. The RV1 Pro Max and RV1L Pro are partly verified by users; other models are unverified. If you have another model, please open a [Help support my Imou robot](https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml) issue and attach the diagnostics file.
 
 ### Can I run it next to Home Assistant's built-in Imou integration?
 
@@ -212,7 +212,7 @@ Not with the same App ID. The core `imou` integration polls every 2 minutes and 
 The integration controls Imou robot vacuums with generic "things model" calls through the Imou Open Platform cloud API.
 
 - It discovers every robot on your Imou account. A device counts as a robot when its things model has the service `clean_control`.
-- Properties and services are resolved at runtime by their identifier in the device's things model. Models that use the same identifiers may work; none other than the RV-L11-A are verified.
+- Properties and services are resolved at runtime by their identifier in the device's things model. Models that use the same identifiers may work; only the RV-L11-A is verified. The RV1 Pro Max and RV1L Pro are partly verified by users; other models are unverified.
 - Entities are only created when the identifier exists in the model.
 - The integration domain is `imou_vacuum`. In the Home Assistant log it shows up as `custom_components.imou_vacuum`.
 
@@ -222,18 +222,19 @@ Entities are created per robot, and only when the robot's model supports them.
 
 ### Vacuum
 
-- Controls: start (begins a whole-house clean, or resumes when paused), pause, stop, return to dock, locate, and fan speed (quiet / standard / max, which is the suction level).
+- Controls: start (begins a whole-house clean, or resumes when paused), pause, stop, return to dock, locate, and fan speed (quiet / standard / max, which is the suction level; quiet / standard / strong / max on RV1 models, where "off" is not offered).
+- Room buttons: **Clean <room>**, one for every room the integration finds (see [Room cleaning](#room-cleaning)).
 - Room cleaning through `vacuum.clean_area` (Home Assistant 2026.3 or newer, see [Room cleaning](#room-cleaning)) and `vacuum.send_command`.
 - Activity is derived from the robot status:
 
 | Robot status | Vacuum activity |
 |---|---|
 | standby | idle |
-| paused, return-paused | paused |
-| returning to dock | returning |
-| charging, emptying bin | docked |
+| paused, return-paused, mapping paused, return-to-wash paused | paused |
+| returning to dock, returning to wash the mop | returning |
+| charging, emptying bin, washing the mop and drying | docked |
 | error | error |
-| relocating, remote control, room, zone, spot, go-to, whole-house cleaning | cleaning |
+| relocating, remote control, room, zone, spot, go-to, whole-house cleaning, mapping | cleaning |
 
 - Extra attributes: `work_status` and `error` (raw numbers).
 
@@ -246,7 +247,7 @@ Entities are created per robot, and only when the robot's model supports them.
 - Cleaning time (min)
 - Consumable usage in hours: side brush, main brush, filter and sensors (diagnostic). The robot reports minutes used; the sensors show hours (minutes / 60, one decimal).
 - Wi-Fi signal (enum, diagnostic)
-- Schedules: the number of enabled schedules in the Imou app. The attribute `schedules` lists each schedule with `enabled`, `active` (raw), `start` (local date and time of a one-off schedule, `null` for a weekly schedule), `time` (local time of day, for example `14:00`), `days` (for a weekly schedule, for example `["sun"]`), `repeat` (raw, as the robot reports it) and `rooms` (names, or `whole_house`). Read once an hour. On an RV1 model `time` and `days` come from the robot's `start_time` (local seconds since midnight) and `select_day` (1 = Monday to 7 = Sunday); each schedule also has `start_raw` (the raw `start_time`), `once` (runs one time) and `repeat` (the days, as a list of numbers), and `start` stays `null`.
+- Schedules: the number of enabled schedules in the Imou app. The attribute `schedules` lists each schedule with `enabled`, `active` (raw), `start` (local date and time of a one-off schedule, `null` for a weekly schedule), `time` (local time of day, for example `14:00`), `days` (for a weekly schedule, for example `["sun"]`), `repeat` (raw, as the robot reports it) and `rooms` (names, `whole_house` or `unknown`). Read once an hour. On an RV1 model `time` and `days` come from the robot's `start_time` (local seconds since midnight) and `select_day` (1 = Monday to 7 = Sunday); each schedule also has `start_raw` (the raw `start_time`), `once` (runs one time) and `repeat` (the days, as a list of numbers), and `start` stays `null`.
 - Dock status (only for a robot whose model has `station_status`): Clean water tank (normal / not installed / water low), Dirty water tank (normal / not installed / full) and Dust bag (normal / not installed / full). These sensors are disabled by default on every model, because no model is verified to report real dock status (the RV1 Pro Max never reports `station_status`, the RV1L Pro reports only zeros). You can enable them yourself in the entity settings. They are created after the robot's first online poll. A dock sensor whose value the robot never reported simply stays unknown.
 
 ### Other entities
@@ -254,7 +255,7 @@ Entities are created per robot, and only when the robot's model supports them.
 - Binary sensors: mop fitted ("Fitted" / "Not fitted"); charging (only for a robot whose model has `power_status`, such as the RV1 models; on while the robot reports "charging", and without a `power_status` value on a negative battery value; otherwise it is unknown); dock connected (only for a robot whose model has `station_status`; disabled by default on every model, because no model is verified to report real dock status, and you can enable it yourself)
 - Switches: carpet boost
 - Selects: suction (quiet / standard / max; quiet / standard / strong / max for an RV1 model, which does not offer "off" like the Imou app, but shows it when the robot reports it) and water level (low / medium / high); water volume (off / low / medium, only for a robot whose model has `mop_speed`, such as the RV1 models; set with a plain property write; the Imou app also has "high", which the things model has no value for).
-- Button: empty bin (empties the bin into the dock)
+- Buttons: empty bin (empties the bin into the dock), and **Clean <room>** for every room the integration finds (see [Room cleaning](#room-cleaning))
 
 ### Suction and water levels
 
@@ -342,6 +343,7 @@ python3 -I tests/test_commanded.py
 python3 -I tests/test_health.py
 python3 -I tests/test_probe.py
 python3 -I tests/test_rooms.py
+python3 -I tests/test_support.py
 ```
 
 The smoke test sets the integration up in a bare Home Assistant core with a fake API client (no network, no credentials):
