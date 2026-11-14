@@ -878,5 +878,47 @@ def test_new_last_seen_segments_sort_numerically() -> None:
     assert [e["id"] for e in rooms.new_last_seen_segments(old, {9: "Nine", 2: "Two"})] == ["10", "2", "9"]
 
 
+# --- 0.7.0b3: rooms learned from partition_area (neutral ids) --------------------------------------
+def test_partition_room_ids() -> None:
+    assert rooms.partition_room_ids([-128]) == [-128]
+    assert rooms.partition_room_ids([-128, -127, -128]) == [-128, -127]  # no duplicates, order kept
+    assert rooms.partition_room_ids([0]) == [] and rooms.partition_room_ids([]) == []
+    assert rooms.partition_room_ids([0, -5, 0, 7]) == [-5, 7]  # padding zeros are ignored
+    # only real ints count: no bools, text, floats, None, nested lists or structs
+    assert rooms.partition_room_ids([True, False, "3", "-4", 2.0, 1.5, None, [1], {"id": 9}, -6]) == [-6]
+    # not a list: nothing (and no exception)
+    for value in (None, "[-128]", -128, {"a": 1}, 0, True, 3.5):
+        assert rooms.partition_room_ids(value) == []
+    assert rooms.partition_room_ids((-1, -2)) == [-1, -2]
+
+
+def test_learn_rooms() -> None:
+    assert const.PROP_PARTITION_AREA == "partition_area" and "partition_area" in const.POLL_IDENTIFIERS
+    assert "partition_area" not in const.NEVER_POLL_IDENTIFIERS
+    assert rooms.learned_key(None) == "plain" and rooms.learned_key(1001) == "1001"
+    first = rooms.learn_rooms({}, None, [-128])
+    assert first == {"plain": [-128]}
+    assert rooms.learn_rooms(first, None, [-128]) is None  # nothing new: nothing to save
+    assert rooms.learn_rooms(first, None, [0]) is None and rooms.learn_rooms(first, None, []) is None
+    second = rooms.learn_rooms(first, None, [-127, -128])
+    assert second == {"plain": [-128, -127]} and first == {"plain": [-128]}  # the input is not changed
+    assert rooms.learned_for(second, None) == [-128, -127]  # ascending
+    # per map: the same id on another map is new there
+    by_map = rooms.learn_rooms(second, 1001, [-128])
+    assert by_map == {"plain": [-128, -127], "1001": [-128]}
+    assert rooms.learn_rooms(by_map, 1001, [-128]) is None
+    assert rooms.learn_rooms(by_map, 1002, [-128]) == {"plain": [-128, -127], "1001": [-128], "1002": [-128]}
+    assert rooms.learned_for(by_map, 1001) == [-128] and rooms.learned_for(by_map, 1002) == []
+
+
+def test_clean_learned() -> None:
+    assert rooms.clean_learned({"plain": [-127, -128, 0, "x"], "1001": [5], "1002": [], "1003": "no", 7: [1]}) == {
+        "plain": [-128, -127],
+        "1001": [5],
+    }
+    for stored in (None, [], "x", 3):
+        assert rooms.clean_learned(stored) == {}
+
+
 if __name__ == "__main__":
     sys.exit(run_all(globals()))

@@ -23,6 +23,7 @@ from .const import (
     CONF_APP_SECRET,
     PROBE_IDENTIFIERS,
     PROP_MAP_SWITCH,
+    PROP_PARTITION_AREA,
     SERVICE_CLEAN_LIST,
 )
 from .coordinator import ImouConfigEntry, ImouCoordinator
@@ -148,6 +149,8 @@ async def async_get_config_entry_diagnostics(
                 },
                 "active_map": coordinator.active_map(),
                 "multi_map": coordinator.is_multi_map(),
+                "learned_rooms": {key: list(ids) for key, ids in coordinator.learned_rooms.items()},
+                "partition_area": data.values.get(PROP_PARTITION_AREA) if data is not None else None,
                 "poll_refs": coordinator.poll_refs,
                 "reports": coordinator.reports.as_diagnostics(),
                 "failed_polls_in_a_row": coordinator.health.failures,

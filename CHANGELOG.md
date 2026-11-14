@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0b3 (beta)
+
+This beta is for testing on RV1 models; the current stable release is 0.6.4. Not verified yet: no user has confirmed this on a real robot.
+
+Learn rooms from the room cleans you start in the Imou app, for RV1 robots that report no room list at all (empty `sequence`, no room properties, a whole-house schedule).
+
+- New: on a model that has the property `partition_area` (the RV1 models), it is added to the regular property poll, in the same `getIotDeviceProperties` call, so there is no extra call. Zeros and values that are not integers are ignored. A real RV1 Pro Max showed `[-128]` in it after a room clean started in the Imou app. If the cloud rejects the poll because of this ref (the poll fails, but works without it), the ref is left out for the rest of the run, with one info line; a restart tries again.
+- New: the room ids it holds are learned only while the robot does a room clean (`work_status` is the room-clean status). The property keeps the rooms of the last clean, which may have been on another map, so an idle or docked robot learns nothing. With several maps the room properties are read fresh (one extra call, the cache is bypassed) on the first poll of a room clean, and the rooms are filed under the active map; while the active map is unknown (or that read fails) nothing is learned. Whether a clean started by a schedule or by the cleaning order fills `partition_area` is not verified.
+- New: learned rooms are stored (Home Assistant storage, per config entry and robot). The store is written after a delay when a new room is learned, and at once when you forget the rooms, so they survive a restart. They join the known rooms with the same rules as the other sources: default name "Room <id>", Clean buttons, segments and entries in the options flow, and with several maps only the active map's rooms.
+- New: **Configure** has **Forget learned rooms** (robots with `partition_area` only), with a confirmation. It clears the learned rooms of that robot; a room is learned again the next time it is cleaned.
+- Diagnostics show `learned_rooms` and the raw `partition_area`. The learned rooms of a removed config entry are deleted with it.
+- No change for the RV-L11-A: its model has no `partition_area` property, so no extra poll ref, no learning, no store writes (it only reads an empty store at startup) and no new menu item.
+- Docs: the README rooms section explains the learning and that it is not verified yet.
+
 ## 0.7.0b2 (beta)
 
 This beta is for testing on RV1 models; the current stable release is 0.6.4. Not verified yet: no user has confirmed this on a real robot with several maps.

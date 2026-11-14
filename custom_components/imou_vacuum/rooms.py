@@ -859,3 +859,61 @@ def new_last_seen_segments(old: Any, names: Mapping[int | str, str]) -> list[dic
 def partition_area(room_ids: Iterable[int]) -> str:
     """Return the ``partition_area`` input for room cleaning: a compact JSON list."""
     return json.dumps([int(room_id) for room_id in room_ids], separators=(",", ":"))
+
+
+# -- rooms learned from the room clean that was last started (RV1 ``partition_area``) --
+# learned rooms: {map key: room ids}; see ``learned_key``
+LearnedRooms = dict[str, list[int]]
+
+LEARNED_NO_MAP = "plain"  # the key of a robot with one map (plain room ids)
+
+
+def partition_room_ids(value: Any) -> list[int]:
+    """Return the room ids of a polled ``partition_area``: its ints, in order, without duplicates.
+
+    Zeros, bools and everything else that is not an int are ignored (the robot pads or
+    clears the array with zeros). Never raises.
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    found = (item for item in value if isinstance(item, int) and not isinstance(item, bool) and item)
+    return list(dict.fromkeys(found))
+
+
+def learned_key(map_id: int | None) -> str:
+    """Return the key of the learned rooms of a map (``None``: a robot with one map)."""
+    return LEARNED_NO_MAP if map_id is None else str(map_id)
+
+
+def learned_for(learned: Mapping[str, list[int]], map_id: int | None) -> list[int]:
+    """Return the learned rooms of one map (``None``: the plain ones), ascending."""
+    return sorted(learned.get(learned_key(map_id), ()))
+
+
+def learn_rooms(
+    learned: Mapping[str, list[int]], map_id: int | None, room_ids: Iterable[int]
+) -> LearnedRooms | None:
+    """Return the learned rooms with ``room_ids`` added to those of ``map_id``.
+
+    ``None`` when nothing is new, so the caller knows that there is nothing to save.
+    The input is not changed.
+    """
+    key = learned_key(map_id)
+    known = set(learned.get(key, ()))
+    new = {room_id for room_id in room_ids if room_id and room_id not in known}
+    if not new:
+        return None
+    result = {name: list(ids) for name, ids in learned.items()}
+    result[key] = sorted(known | new)
+    return result
+
+
+def clean_learned(stored: Any) -> LearnedRooms:
+    """Return the learned rooms from stored data; anything that is not usable is dropped."""
+    result: LearnedRooms = {}
+    if not isinstance(stored, Mapping):
+        return result
+    for key, ids in stored.items():
+        if isinstance(key, str) and (found := sorted(partition_room_ids(ids))):
+            result[key] = found
+    return result

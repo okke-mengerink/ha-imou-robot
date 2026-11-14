@@ -125,6 +125,10 @@ RESET_PART_LABEL_KEYS: Final[dict[str, str]] = {
 ERROR_CODE: Final = "errcode"
 ERROR_VALID: Final = "valid"
 
+# RV1 models: the rooms of the room clean that was last started (an int array). It is
+# polled with the other values, and its room ids are learned (see ``rooms.learn_rooms``).
+PROP_PARTITION_AREA: Final = "partition_area"
+
 # Identifiers that are polled, in this order. Everything else (map, trail,
 # zone and timer data) is large and is never polled.
 POLL_IDENTIFIERS: Final[tuple[str, ...]] = (
@@ -143,6 +147,7 @@ POLL_IDENTIFIERS: Final[tuple[str, ...]] = (
     PROP_ERROR_INFO,
     PROP_WIFI,
     PROP_STATION_STATUS,
+    PROP_PARTITION_AREA,
 )
 
 # Documented guard: these must never end up in the poll list.
@@ -154,7 +159,6 @@ NEVER_POLL_IDENTIFIERS: Final = frozenset(
         "trailpath",
         "map_switch",
         "specify_clean",
-        "partition_area",
         "map_name",
         "sequence",
         "area_clean_plan",
@@ -174,7 +178,6 @@ PROP_CLEAN_PARAMS: Final = "clean_params"
 PROP_AREA_INFO: Final = "areainfoarray"
 PROP_MAP_CONFIG: Final = "mapconfig"
 PROP_MAP_SWITCH: Final = "map_switch"
-PROP_PARTITION_AREA: Final = "partition_area"  # RV1 Pro Max (array)
 PROP_SEQUENCE: Final = "sequence"  # RV1 Pro Max (array)
 PROP_AREA_CLEAN_PLAN: Final = "area_clean_plan"  # RV1 Pro Max (array)
 # RV1 models (arrays of structs with a map id and a room id; the two sequences hold
@@ -239,6 +242,11 @@ ROOM_SOURCES: Final[tuple[tuple[str, str | None, str | None], ...]] = (
     (PROP_ALL_CLEAN_SEQUENCE, None, "list"),
     (PROP_SWEEPER_SEQUENCE, None, "list"),
 )
+# Rooms learned from ``partition_area`` are stored per config entry and robot. The save is
+# delayed (seconds), so a burst of changes is written once.
+ROOM_CLEAN_KEY: Final = "room_clean"  # the work_status key of a room clean (选区清扫中)
+LEARNED_STORAGE_VERSION: Final = 1
+LEARNED_SAVE_DELAY: Final = 30
 # failed combined reads in a row (while ``sequence`` alone works) after which the extra
 # refs are not requested any more until a restart
 MAX_EXTRA_FAILURES: Final = 3

@@ -522,5 +522,16 @@ def test_reset_parts_follow_the_label_not_the_number() -> None:
     assert build(unknown_labels).reset_parts() == {}  # no label match, no numeric fallback
 
 
+def test_partition_area_is_polled_only_when_present() -> None:
+    """0.7.0b3: the RV1 models poll partition_area (ref 126200) with the rest; the L11-A has none."""
+    for model in (rv1(), rv1lpro()):
+        refs = model.poll_refs()
+        assert refs[-1] == "126200" and refs.count("126200") == 1
+        assert model.prop("partition_area").data_type == "array"
+        assert model.parse_values({"126200": [-128]})["partition_area"] == [-128]
+    assert model_mod.ThingsModel.from_api(fixture("l11a_model.json")).prop("partition_area") is None
+    assert l11a().poll_refs() == EXPECTED_POLL_REFS and "126200" not in l11a().poll_refs()
+
+
 if __name__ == "__main__":
     raise SystemExit(run_all(globals()))
