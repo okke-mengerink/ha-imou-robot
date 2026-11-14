@@ -1164,7 +1164,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     coordinator = runtime.coordinators["TESTDEVICE0001"]
     check("polled refs are exactly the spec list", client.last_refs == ["12300", "11600", "1019", "1020", "1021", "1027", "1028", "1029", "11900", "12200", "40500", "11300"], str(client.last_refs))
     check("never polls map/trail/zone refs", not {"1022", "1023", "1025", "1026", "40100", "40400"} & set(client.last_refs))
-    # 0.7.0b3: the L11-A has no partition_area property, so it learns nothing and stores nothing
+    # 0.7.1b1: the L11-A has no partition_area property, so it learns nothing and stores nothing
     check("L11-A: no learning (no partition_area property), no learned rooms, nothing waiting to be saved", not coordinator.can_learn_rooms() and coordinator.learned_rooms == {} and not coordinator._learned_unsaved and "126200" not in client.last_refs)  # noqa: SLF001
     check("L11-A: no store was written for it", await mod("coordinator").learned_rooms_store(hass, entry.entry_id, "TESTDEVICE0001").async_load() is None)
 
@@ -3228,7 +3228,7 @@ def test_optional_entities_of_a_silent_robot() -> None:
         RV1LProClient.drop_station = False
 
 
-# --- 0.7.0b3: rooms learned from partition_area (only during a room clean) ------------------------
+# --- 0.7.1b1: rooms learned from partition_area (only during a room clean) ------------------------
 def work_status_ref_and_values(coordinator: Any) -> tuple[str, int, int]:
     """Return the ref of work_status, the value of a room clean and the value of 'charging' (docked)."""
     by_key = {key: number for number, key in coordinator.model.work_status_keys().items()}

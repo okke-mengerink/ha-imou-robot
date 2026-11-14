@@ -32,7 +32,7 @@ def test_constants() -> None:
     assert {i for i in const.PROBE_IDENTIFIERS if i.startswith("swp_")} == {
         "swp_allareaconfig", "swp_areaconfig", "swp_allcleanplan", "swp_cleansequence",
     }
-    # partition_area is the one probed property that is also polled (0.7.0b3: rooms are learned from it)
+    # partition_area is the one probed property that is also polled (0.7.1b1: rooms are learned from it)
     assert set(const.PROBE_IDENTIFIERS) & set(const.POLL_IDENTIFIERS) == {"partition_area"}
     assert set(const.PROBE_IDENTIFIERS) - {"partition_area"} <= const.NEVER_POLL_IDENTIFIERS
     assert "partition_area" not in const.NEVER_POLL_IDENTIFIERS

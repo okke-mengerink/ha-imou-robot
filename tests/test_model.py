@@ -534,7 +534,7 @@ def test_reset_parts_follow_the_label_not_the_number() -> None:
 
 
 def test_partition_area_is_polled_only_when_present() -> None:
-    """0.7.0b3: the RV1 models poll partition_area (ref 126200) with the rest; the L11-A has none."""
+    """0.7.1b1: the RV1 models poll partition_area (ref 126200) with the rest; the L11-A has none."""
     for model in (rv1(), rv1lpro()):
         refs = model.poll_refs()
         assert refs[-1] == "126200" and refs.count("126200") == 1

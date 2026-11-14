@@ -878,7 +878,7 @@ def test_new_last_seen_segments_sort_numerically() -> None:
     assert [e["id"] for e in rooms.new_last_seen_segments(old, {9: "Nine", 2: "Two"})] == ["10", "2", "9"]
 
 
-# --- 0.7.0b3: rooms learned from partition_area (neutral ids) --------------------------------------
+# --- 0.7.1b1: rooms learned from partition_area (neutral ids) --------------------------------------
 def test_partition_room_ids() -> None:
     assert rooms.partition_room_ids([-128]) == [-128]
     assert rooms.partition_room_ids([-128, -127, -128]) == [-128, -127]  # no duplicates, order kept
