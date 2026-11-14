@@ -1,32 +1,15 @@
 # Changelog
 
-## 0.7.0b2 (beta)
+## 0.7.0
 
-This beta is for testing on RV1 models; the current stable release is 0.6.4. Not verified yet: no user has confirmed this on a real robot with several maps.
+Rooms for the RV1 models, from the betas 0.7.0b1 and 0.7.0b2. Confirmed by two users: an RV1L Pro and two RV1 Pro Max robots, one of them with two maps.
 
-Rooms per map, for a robot whose `map_name` lists two or more maps. Room ids repeat on every map, and the robot can only clean the rooms of its active map.
-
-- New: the integration works out the active map: the map id of `sweeper_sequence` when it is usable, else the one map in `swp_cleansequence` whose cleaning order equals `sequence`, else the one map of `map_name`; otherwise it is unknown. Diagnostics show `active_map` and `multi_map`.
-- Changed, several maps only: the rooms are those of the active map (its part of the room properties, its cleaning order and the schedules whose map is the active one). Rooms and schedules of another map are no longer added. A robot that reports no rooms of its own still needs a schedule for its rooms. While the active map is unknown, the rooms of `sequence` and the schedules without a usable map are used. A room property item without a map id is still used, as before.
-- Changed, several maps only: room names, the Clean button ids and the segment ids (`<map id>:<room id>`, buttons `<device>_clean_room_<map id>_<room id>`) include the map, so a name given to a room no longer shows up on the other map. The Clean buttons are also named after their map. The buttons of the map that is not active are unavailable. The room options (**Link rooms to areas**, **Rename rooms**) show the active map's rooms, labelled with the map name, and keep the names and area links of the other maps.
-- New: before a room is cleaned on a robot with several maps (a Clean button or `vacuum.clean_area`), the integration reads the room properties again, bypassing the cache (one extra call), and checks the room's map against the active map. A room of another map is refused with "This room is on another map; switch the map in the Imou app first." When that read fails or the active map is still unknown, cleaning is refused with "Could not confirm the robot's active map; try again." A plain room id (no map, for example an older area link) is refused too while the active map is known: link the rooms again under **Configure** → **Link rooms to areas**. Robots with one map, and the RV-L11-A, make no extra call and still accept plain ids.
-- Changed, several maps only: no Clean buttons are created until the active map is known. The options forms (**Link rooms to areas**, **Rename rooms**) are aborted with "map_changed" when the active map changed while they were open. The repair issue for new rooms only compares with the rooms mapped on the active map, so switching maps does not raise it. When only `sequence` could be read, the active map counts as unknown until the next full read.
-- The schedules sensor no longer uses the names of the active map for the rooms of a schedule of another map.
-- Room names that you saved before are plain (without a map). On a robot with several maps they are used only while the active map is unknown; name those rooms again. Robots with one map, and the RV-L11-A, are not changed: plain room ids, names and buttons.
-- Docs: the README describes the behaviour with several maps, and gives a tip for a robot that reports no rooms (put the rooms in a schedule, which may stay switched off).
-
-## 0.7.0b1 (beta)
-
-This beta is for testing on RV1 models; the current stable release is 0.6.4.
-
-Find rooms on the RV1 models without a schedule. Not verified yet: no user has confirmed this on a real robot.
-
-- New: on a model that has them (RV1 Pro Max, RV1L Pro), the integration also reads the properties `swp_allareaConfig`, `swp_areaConfig`, `swp_allCleanPlan`, `area_clean_plan`, `swp_cleanSequence` and `sweeper_sequence` (room configuration, cleaning plans and cleaning order) and `map_name`. The room ids in them are added to the rooms of the schedules, of `sequence` and the rooms you named. A room that is only found there has no name from the Imou app ("Room -127"). What these properties hold on a real robot is unknown: `area_clean_plan` was empty on both RV1 robots that were checked. If they are empty, you still need a schedule to get your rooms.
-- The properties are read in the same call as `sequence`, once an hour, so there is no extra API call. If that combined call fails, only `sequence` is read; after 3 such failures in a row the other properties are not requested again until Home Assistant restarts. A property that is not in the response counts as "read, empty". A failed read is retried after 15 minutes without reading the schedules again.
-- Several maps: items with a map id only count for the current map, when that is known. That is the map id of the robot's schedules (-1, "whole house", is ignored), else the one map that `map_name` lists (also when the schedule's map is not among the listed maps). If no item has that map id, or the current map is unknown, and the items carry two or more different map ids, the items with a map id are dropped (room ids repeat per map). Items without a map id are always used. Zeros and values that are not numbers are ignored.
-- Diagnostics: the probe also shows the raw values of these properties.
-- No change for the RV-L11-A: its model has none of these properties, so it makes no new call and gets no new entity. It still needs a schedule.
-- Docs: the README rooms section describes the new sources and that they are not verified yet.
+- New: on a model that has them (RV1 Pro Max, RV1L Pro), the integration also reads the room configuration, cleaning plans and cleaning order (`swp_allareaConfig`, `swp_areaConfig`, `swp_allCleanPlan`, `area_clean_plan`, `swp_cleanSequence`, `sweeper_sequence`) and `map_name`, in the same hourly call as `sequence`. Their room ids are added to the rooms, so a robot that reports them needs no schedule. A user confirmed that setting a cleaning order in the Imou app makes all rooms of a map appear. A robot that reports no rooms at all still needs a schedule with the rooms (it may stay switched off).
+- New, robots with several maps: the integration works out the active map and only shows its rooms. Names, area links, segment ids (`<map id>:<room id>`) and Clean buttons are kept per map, so a name no longer shows up on the other map; the buttons of the other map are unavailable. Confirmed by a user with two maps.
+- New, robots with several maps: before a room is cleaned, the active map is read again (one extra call) and a room of another map, an old plain room id or an unconfirmed map is refused with a clear message.
+- If the combined room read fails, only `sequence` is read; after 3 such failures the other properties are skipped until a restart. Diagnostics show the raw values, `active_map` and `multi_map`.
+- Room names saved before on a robot with several maps are plain (without a map): name and link those rooms again under **Configure**.
+- No change for robots with one map and the RV-L11-A: plain room ids, names and buttons, and no extra calls.
 
 ## 0.6.4
 
