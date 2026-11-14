@@ -14,6 +14,18 @@
       },
       "clean_room": {
         "default": "mdi:broom"
+      },
+      "reset_side_brush": {
+        "default": "mdi:brush"
+      },
+      "reset_main_brush": {
+        "default": "mdi:brush"
+      },
+      "reset_filter": {
+        "default": "mdi:air-filter"
+      },
+      "reset_sensors": {
+        "default": "mdi:radar"
       }
     },
     "select": {

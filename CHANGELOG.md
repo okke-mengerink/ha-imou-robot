@@ -2,7 +2,7 @@
 
 ## 0.7.0b1 (beta)
 
-This beta is for testing on RV1 models; the current stable release is 0.6.3.
+This beta is for testing on RV1 models; the current stable release is 0.6.4.
 
 Find rooms on the RV1 models without a schedule. Not verified yet: no user has confirmed this on a real robot.
 
@@ -12,6 +12,12 @@ Find rooms on the RV1 models without a schedule. Not verified yet: no user has c
 - Diagnostics: the probe also shows the raw values of these properties.
 - No change for the RV-L11-A: its model has none of these properties, so it makes no new call and gets no new entity. It still needs a schedule.
 - Docs: the README rooms section describes the new sources and that they are not verified yet.
+
+## 0.6.4
+
+- New: reset buttons for the consumables. **Reset side brush**, **Reset main brush**, **Reset filter** and **Reset sensors** set the usage counter of that part back to zero, so the usage sensor starts again at 0 after you replaced or cleaned the part. They are in the configuration category and call the robot's `reset_parts` service. Verified on the RV-L11-A: **Reset sensors** set the robot's sensor counter to 0 and left the other counters alone; the other three buttons send the same command with another part.
+- A button is only created when the robot's model has `reset_parts` and lists that part by name. The RV1 models list more parts (mop, dust bag, cleaning fluid, main brush cover, battery); these have no button yet.
+- The buttons are enabled by default on the RV-L11-A, and disabled by default on every other model, because nobody has confirmed yet that the reset works there. You can enable them in the entity settings.
 
 ## 0.6.3
 

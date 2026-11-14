@@ -104,6 +104,18 @@
       },
       "clean_room": {
         "name": "Clean {room}"
+      },
+      "reset_side_brush": {
+        "name": "Reset side brush"
+      },
+      "reset_main_brush": {
+        "name": "Reset main brush"
+      },
+      "reset_filter": {
+        "name": "Reset filter"
+      },
+      "reset_sensors": {
+        "name": "Reset sensors"
       }
     },
     "select": {

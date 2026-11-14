@@ -102,14 +102,14 @@ def test_imports() -> None:
 class FakeCoordinator:
     """Just enough of ImouCoordinator for entities; records commands."""
 
-    def __init__(self, model_json: dict[str, Any], raw_values: dict[str, Any], online: bool = True) -> None:
+    def __init__(self, model_json: dict[str, Any], raw_values: dict[str, Any], online: bool = True, device_model: str = "L11-A") -> None:
         api, coordinator = mod("api"), mod("coordinator")
         self.model = mod("model").ThingsModel.from_api(model_json)
         self.device = api.ImouDevice(
             device_id="TESTDEVICE0001",
             product_id="PRODUCT_ID",
             name="RV-L11-A-TEST",
-            model="L11-A",
+            model=device_model,
             status="online",
             version="0.4.50",
             brand="lechange",
@@ -212,10 +212,10 @@ def test_entities() -> None:
     coordinator = FakeCoordinator(MODEL_JSON, VALUES_JSON["properties"])
     ents = make_entities(coordinator)
     total = sum(len(v) for v in ents.values())
-    check("entity counts per platform (1/11/1/1/2/1)", [len(ents[p]) for p in ents] == [1, 11, 1, 1, 2, 1], str({p: len(v) for p, v in ents.items()}))
+    check("entity counts per platform (1/11/1/1/2/5)", [len(ents[p]) for p in ents] == [1, 11, 1, 1, 2, 5], str({p: len(v) for p, v in ents.items()}))
     expected_ids = sorted(f"TESTDEVICE0001_{key}" for key in ('battery', 'carpet_boost', 'cleaned_area', 'cleaning_time', 'empty_bin', 'error', 'filter', 'main_brush', 'mop_fitted', 'mop_water_level', 'schedules', 'sensors', 'side_brush', 'status', 'suction_level', 'vacuum', 'wifi_signal'))  # main (v0.4.x) behaviour
-    check("L11-A has exactly the same unique ids as on main", sorted(e.unique_id for v in ents.values() for e in v) == expected_ids, str(sorted(e.unique_id for v in ents.values() for e in v)))
-    check("17 entities with unique ids", total == 17 and len({e.unique_id for v in ents.values() for e in v}) == 17)
+    check("L11-A has the unique ids of main plus the four reset buttons", sorted(e.unique_id for v in ents.values() for e in v) == sorted(expected_ids + [f"TESTDEVICE0001_reset_{p}" for p in ("side_brush", "main_brush", "filter", "sensors")]), str(sorted(e.unique_id for v in ents.values() for e in v)))
+    check("21 entities with unique ids (the 17 of main plus four reset buttons)", total == 21 and len({e.unique_id for v in ents.values() for e in v}) == 21)
 
     # --- Clean <room> buttons ---------------------------------------------
     room_coordinator = FakeCoordinator(MODEL_JSON, VALUES_JSON["properties"])
@@ -583,6 +583,37 @@ def test_entities() -> None:
     check("entities only for identifiers in the model", not keys & {"carpet_boost", "side_brush", "main_brush", "filter", "sensors", "mop_fitted", "suction_level", "wifi_signal", "error", "empty_bin"} and {"vacuum", "battery", "status", "mop_water_level"} <= keys, str(sorted(keys)))
     slim_vac = slim_ents["vacuum"][0]
     check("vacuum without 'location' service has no LOCATE, without WindPower no FAN_SPEED", not slim_vac.supported_features & VacuumEntityFeature.LOCATE and not slim_vac.supported_features & VacuumEntityFeature.FAN_SPEED and bool(slim_vac.supported_features & VacuumEntityFeature.START))
+
+
+def test_reset_buttons() -> None:
+    from homeassistant.const import EntityCategory  # noqa: PLC0415
+
+    def reset_buttons(model_json: dict[str, Any], device_model: str) -> tuple[Any, dict[str, Any]]:
+        coordinator = FakeCoordinator(model_json, VALUES_JSON["properties"], device_model=device_model)
+        return coordinator, {b.unique_id: b for b in make_entities(coordinator)["button"] if "_reset_" in b.unique_id}
+
+    parts = ("side_brush", "main_brush", "filter", "sensors")
+    ids = [f"TESTDEVICE0001_reset_{part}" for part in parts]
+    coordinator, l11a = reset_buttons(MODEL_JSON, "L11-A")
+    check("L11-A: four reset buttons, unique id <device id>_reset_<part>", sorted(l11a) == sorted(ids), str(sorted(l11a)))
+    check("L11-A: reset buttons are enabled by default, configuration category, translation key reset_<part>", all(b.entity_registry_enabled_default and b.entity_category is EntityCategory.CONFIG and b.translation_key == f"reset_{p}" for p, b in zip(parts, (l11a[i] for i in ids))))
+    asyncio.run(l11a["TESTDEVICE0001_reset_sensors"].async_press())
+    check("pressing Reset sensors sends reset_parts with type 3", coordinator.calls == [("control", "reset_parts", {"type": 3})], str(coordinator.calls))
+    coordinator.calls.clear()
+    asyncio.run(l11a["TESTDEVICE0001_reset_side_brush"].async_press())
+    check("pressing Reset side brush sends type 0", coordinator.calls[0] == ("control", "reset_parts", {"type": 0}), str(coordinator.calls))
+    for json_model, name in ((RV1_MODEL_JSON, "RV1 Pro Max"), (RV1LPRO_MODEL_JSON, "RV1L Pro")):
+        rv1_coordinator, rv1 = reset_buttons(json_model, name)
+        check(f"{name}: four reset buttons, all disabled by default", sorted(rv1) == sorted(ids) and not any(b.entity_registry_enabled_default for b in rv1.values()), str({k: b.entity_registry_enabled_default for k, b in rv1.items()}))
+        asyncio.run(rv1["TESTDEVICE0001_reset_sensors"].async_press())
+        check(f"{name}: a reset button still sends type 3 (its enum value)", rv1_coordinator.calls[0] == ("control", "reset_parts", {"type": 3}), str(rv1_coordinator.calls))
+    no_service = copy.deepcopy(MODEL_JSON)
+    no_service["services"] = [s for s in no_service["services"] if s["identifier"] != "reset_parts"]
+    check("a model without reset_parts gets no reset buttons", not reset_buttons(no_service, "L11-A")[1])
+    unknown_labels = copy.deepcopy(MODEL_JSON)
+    next(s for s in unknown_labels["services"] if s["identifier"] == "reset_parts")["inputData"][0]["dataType"]["specs"]["list"] = [{"value": "0", "desc": "Brush"}]
+    check("reset_parts without a matching label gets no button (no numeric fallback)", not reset_buttons(unknown_labels, "L11-A")[1])
+    check("reset button texts and icons exist", all(json.loads((ROOT / "custom_components/imou_vacuum" / f).read_text("utf-8"))["entity"]["button"][f"reset_{p}"] for f in ("strings.json", "icons.json") for p in parts))
 
 
 def test_model_adaptive_entities() -> None:
@@ -1101,7 +1132,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     entities = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
     room_button_ids = {f"TESTDEVICE0001_clean_room_{room_id}" for room_id in (2, 3, 4)}
     check("a Clean button exists for every room of the schedules", {e.unique_id for e in entities} >= room_button_ids)
-    check("L11-A entities: the 17 of main plus one Clean button per room (20), and no schedule switch", len(entities) == 20 and len({e.unique_id for e in entities} - room_button_ids) == 17 and not any("schedule_" in e.unique_id for e in entities) and not [e for e in entities if e.domain == "switch" and "schedule" in e.unique_id], str(sorted(e.unique_id for e in entities)))
+    check("L11-A entities: the 17 of main, four reset buttons and one Clean button per room (24), and no schedule switch", len(entities) == 24 and len({e.unique_id for e in entities} - room_button_ids) == 21 and not any("schedule_" in e.unique_id for e in entities) and not [e for e in entities if e.domain == "switch" and "schedule" in e.unique_id], str(sorted(e.unique_id for e in entities)))
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in entities}
     print("entity ids:", ", ".join(sorted(ids.values())))
     check("existing registry entries stay enabled (upgrade): switches are not disabled", all(e.disabled_by is None for e in entities if e.domain == "switch"), str({e.unique_id: e.disabled_by for e in entities if e.domain == "switch"}))
@@ -1513,7 +1544,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     coordinator = entry.runtime_data.coordinators["TESTDEVICE0001"]
     client = FakeClient.instance
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id)}
-    check("entities are back after reauth reload", len(ids) == 20 and state("vacuum").state == "docked")
+    check("entities are back after reauth reload", len(ids) == 24 and state("vacuum").state == "docked")
 
     # ---- diagnostics ------------------------------------------------------------------------
     diagnostics = importlib.import_module(f"{PKG}.diagnostics")
@@ -2102,7 +2133,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         regs = {e.unique_id.removeprefix(f"{robot_id}_"): e for e in er.async_entries_for_config_entry(ent_reg, fresh.entry_id)}
         if "initial_status" in flags:
             # no first online poll yet: the switches do not exist (so nothing is wrongly enabled), the rest does
-            check(f"fresh install, {label}: no switch yet, the other 16 entities are there", not set(switch_keys) & set(regs) and len(regs) == 16 and fresh.state is config_entries.ConfigEntryState.LOADED, f"{sorted(regs)} {fresh.state}")
+            check(f"fresh install, {label}: no switch yet, the other 20 entities are there", not set(switch_keys) & set(regs) and len(regs) == 20 and fresh.state is config_entries.ConfigEntryState.LOADED, f"{sorted(regs)} {fresh.state}")
             fresh_client = FakeClient.instance
             fresh_client.status = "online"
             await fresh.runtime_data.coordinators[robot_id].async_refresh()
@@ -2111,7 +2142,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
             check(f"fresh install, {label}: the first online poll adds the switch", set(switch_keys) <= set(regs), str(sorted(regs)))
         disabled = {k for k in switch_keys if regs[k].disabled_by is not None}
         check(f"fresh install, {label}: disabled by default = {sorted(expected_disabled)}", disabled == expected_disabled and fresh.state is config_entries.ConfigEntryState.LOADED, f"{disabled} {fresh.state}")
-        check(f"fresh install, {label}: all 20 entities are created", len(regs) == 20, str(len(regs)))
+        check(f"fresh install, {label}: all 24 entities are created", len(regs) == 24, str(len(regs)))
         check(f"fresh install, {label}: the reported switch is on and says so", hass.states.get(regs["carpet_boost"].entity_id).state == "on" and hass.states.get(regs["carpet_boost"].entity_id).attributes["reported_by_device"] is True)
         await hass.config_entries.async_remove(fresh.entry_id)
         FakeClient.robot_id, FakeClient.initial_status = "TESTDEVICE0001", "online"
@@ -2385,6 +2416,8 @@ async def rv1_setup_checks(config_dir: str) -> None:
         reads = client.poll_count
         check("RV1 Pro Max: a second read within a minute is served from the cache", await coordinator.async_refresh_schedules() is True and client.poll_count == reads)
         registry = er.async_get(hass)
+        reset_entries = [registry.async_get(registry.async_get_entity_id("button", "imou_vacuum", f"TESTDEVICE0002_reset_{part}")) for part in ("side_brush", "main_brush", "filter", "sensors")]
+        check("RV1 Pro Max: the four reset buttons are in the registry, disabled by the integration, configuration category", all(e.disabled_by is er.RegistryEntryDisabler.INTEGRATION and e.entity_category == "config" for e in reset_entries), str([(e.disabled_by, e.entity_category) for e in reset_entries]))
         room_buttons = {rid: registry.async_get_entity_id("button", "imou_vacuum", f"TESTDEVICE0002_clean_room_{rid}") for rid in (-128, -127, -126, -124)}
         check("RV1 Pro Max: a Clean button exists for each room, unique id <device id>_clean_room_<negative id>", all(room_buttons.values()), str(room_buttons))
         check("RV1 Pro Max: the button of room -127 reads 'Clean room -127'", hass.states.get(room_buttons[-127]).name == "RV1-PRO-MAX-TEST Clean room -127", hass.states.get(room_buttons[-127]).name)
@@ -2921,7 +2954,7 @@ def test_issue_translations() -> None:
 
 
 def main() -> int:
-    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
+    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_reset_buttons, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
         print(f"\n=== {func.__name__} ===")
         try:
             func()
