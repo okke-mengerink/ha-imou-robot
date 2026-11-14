@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import hashlib
 import logging
 import time
 from typing import Any
@@ -18,9 +19,11 @@ from homeassistant.exceptions import (
     ServiceValidationError,
 )
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
+    ImouApiError,
     ImouAuthError,
     ImouClient,
     ImouDevice,
@@ -45,6 +48,8 @@ from .const import (
     INPUT_STATUS,
     INPUT_WATER,
     INPUT_WIND,
+    LEARNED_SAVE_DELAY,
+    LEARNED_STORAGE_VERSION,
     MAP_NAME,
     MAP_NAME_MEMBER_ID,
     MAP_NAME_MEMBER_NAME,
@@ -55,11 +60,13 @@ from .const import (
     PART_ROOM_PROPERTIES,
     PROP_ALL_CLEAN_SEQUENCE,
     PROP_ERROR_INFO,
+    PROP_PARTITION_AREA,
     PROP_SEQUENCE,
     PROP_SWEEPER_SEQUENCE,
     PROP_WATER,
     PROP_WIND_POWER,
     PROP_WORK_STATUS,
+    ROOM_CLEAN_KEY,
     ROOM_SOURCES,
     SCAN_INTERVAL_ACTIVE,
     SCAN_INTERVAL_IDLE,
@@ -75,17 +82,22 @@ from .health import PollHealth
 from .model import ReportTracker, ThingsModel, to_bool, to_int
 from .probe import redact, summarize
 from .rooms import (
+    LearnedRooms,
     RoomEntry,
     Schedule,
     ScheduleList,
     active_map_id,
+    clean_learned,
     current_map_id,
     known_rooms,
+    learn_rooms,
+    learned_for,
     map_ids,
     map_names,
     map_rooms,
     parse_schedules,
     partition_area,
+    partition_room_ids,
     remembered_rooms,
     room_entries,
     room_key,
@@ -144,6 +156,17 @@ type ImouConfigEntry = ConfigEntry[ImouRuntimeData]
 def default_room_name(room_id: int) -> str:
     """Return the name of a room that has no label and no name of the user."""
     return f"Room {room_id}"
+
+
+def learned_rooms_store(
+    hass: HomeAssistant, entry_id: str, device_id: str
+) -> Store[dict[str, Any]]:
+    """Return the store of the learned rooms of one robot of one config entry.
+
+    The robot's serial is only hashed into the file name.
+    """
+    digest = hashlib.sha256(device_id.encode()).hexdigest()[:12]
+    return Store(hass, LEARNED_STORAGE_VERSION, f"{DOMAIN}.learned_rooms.{entry_id}.{digest}")
 
 
 def _unsupported(feature: str) -> HomeAssistantError:
@@ -216,6 +239,14 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         self.sweeper_map_id: int | None = None
         self.sequence_entries: list[RoomEntry] = []
         self.map_names: dict[int, str] = {}
+        # rooms learned from ``partition_area`` (the rooms of a room clean started in the
+        # Imou app), per map key (see ``rooms.learned_key``). Kept in a Store, per entry and robot.
+        self.learned_rooms: LearnedRooms = {}
+        # rooms are only learned during a room clean; on a robot with several maps the active
+        # map is read fresh once per clean first (``_map_confirmed``)
+        self._map_confirmed = False
+        self._learned_unsaved = False
+        self._store = learned_rooms_store(hass, entry.entry_id, device.device_id)
         self._schedules_due = 0.0  # time.monotonic() of the next fetch
         # the parts (``clean_list``, PART_ROOM_PROPERTIES) whose last read failed: only
         # those are retried, so one part's failure does not repeat the other's call
@@ -240,9 +271,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         """
         asleep = False
         try:
-            result = await self.client.async_get_properties(
-                self.device.product_id, self.device.device_id, self.poll_refs
-            )
+            result = await self._async_poll_properties()
         except ImouDeviceOfflineError as err:
             if err.code.upper() != ASLEEP_CODE:
                 return self._poll_failed("the robot is offline")
@@ -275,9 +304,44 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 failed,
             )
         self._update_polling_interval(state)
-        if status == "online" and time.monotonic() >= self._schedules_due:
+        fetched = status == "online" and time.monotonic() >= self._schedules_due
+        if fetched:
             await self._async_fetch_schedules(self._failed_parts or None)
+        if status == "online":
+            await self._async_learn_partition_area(values, fetched)
         return state
+
+    async def _async_poll_properties(self) -> Any:
+        """Read the poll refs.
+
+        When the call fails with an API error and the poll asks for ``partition_area``,
+        it is read once more without that ref. If that works the cloud rejects the ref:
+        it is left out of the poll until Home Assistant restarts. If it fails too, that
+        error is raised and the ref stays.
+        """
+        refs = self.poll_refs
+        try:
+            return await self.client.async_get_properties(
+                self.device.product_id, self.device.device_id, refs
+            )
+        except (ImouAuthError, ImouDeviceOfflineError):
+            raise
+        except ImouApiError as err:
+            prop = self.model.prop(PROP_PARTITION_AREA)
+            if prop is None or prop.ref not in refs:
+                raise
+            without = [ref for ref in refs if ref != prop.ref]
+            result = await self.client.async_get_properties(
+                self.device.product_id, self.device.device_id, without
+            )
+            self.poll_refs = without
+            _LOGGER.info(
+                "Reading %s failed with partition_area (%s) but works without it; "
+                "rooms are not learned until Home Assistant restarts",
+                self.device.name,
+                err,
+            )
+            return result
 
     def _poll_failed(self, reason: str, err: ImouError | None = None) -> ImouRobotState:
         """Count a failed poll and decide what the entities see.
@@ -555,6 +619,78 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 values.get(MAP_NAME), prop.member_refs, MAP_NAME_MEMBER_ID, MAP_NAME_MEMBER_NAME
             )
 
+    # -- learned rooms -------------------------------------------------------
+    async def async_load_learned_rooms(self) -> None:
+        """Load the learned rooms of this robot from the store (before the first refresh)."""
+        stored = await self._store.async_load()
+        if not isinstance(stored, Mapping):
+            return
+        self.learned_rooms = clean_learned(stored.get("rooms"))
+
+    def _is_room_clean(self, values: Mapping[str, Any]) -> bool:
+        """Whether the robot is doing a room clean now (its status is the room-clean one)."""
+        status = to_int(values.get(PROP_WORK_STATUS))
+        return status is not None and self.model.work_status_keys().get(status) == ROOM_CLEAN_KEY
+
+    async def _async_learn_partition_area(self, values: Mapping[str, Any], fetched: bool) -> None:
+        """Learn the rooms of ``partition_area``, but only while the robot does a room clean.
+
+        ``partition_area`` keeps the rooms of the last room clean (of any map), so an idle
+        or docked robot learns nothing. On a robot with several maps the room properties
+        are read fresh once per clean (unless this poll just read them, ``fetched``), and
+        nothing is learned while the active map is unknown; the rooms are filed under the
+        active map. Saves (delayed) only when a room is new.
+        """
+        if not self._is_room_clean(values):
+            self._map_confirmed = False
+            return
+        found = partition_room_ids(values.get(PROP_PARTITION_AREA))
+        if not found:
+            return
+        if self.is_multi_map():
+            if not self._map_confirmed:
+                if not fetched:
+                    await self._async_fetch_schedules({PART_ROOM_PROPERTIES})
+                self._map_confirmed = PART_ROOM_PROPERTIES not in self._failed_parts
+            if not self._map_confirmed or self.active_map() is None:
+                return
+        learned = learn_rooms(self.learned_rooms, self.room_map(), found)
+        if learned is not None:
+            self.learned_rooms = learned
+            _LOGGER.debug("Learned %d room(s) of %s", len(found), self.device.name)
+            self._save_learned_rooms()
+
+    def _save_learned_rooms(self) -> None:
+        """Save the learned rooms after a delay."""
+        self._learned_unsaved = True
+        self._store.async_delay_save(self._learned_data, LEARNED_SAVE_DELAY)
+
+    def _learned_data(self) -> dict[str, Any]:
+        """Return what is stored (also called by the store when its delayed save runs)."""
+        self._learned_unsaved = False
+        return {
+            "rooms": {key: list(ids) for key, ids in self.learned_rooms.items()},
+        }
+
+    def learned_room_ids(self) -> list[int]:
+        """Return the learned rooms of the rooms' map (none while the active map is unknown)."""
+        if self.is_multi_map() and self.active_map() is None:
+            return []
+        return learned_for(self.learned_rooms, self.room_map())
+
+    def can_learn_rooms(self) -> bool:
+        """Whether the model has ``partition_area`` (so rooms can be learned)."""
+        return self.model.prop(PROP_PARTITION_AREA) is not None
+
+    async def async_forget_learned_rooms(self) -> None:
+        """Forget every learned room of this robot (all maps) and update the entities.
+
+        A room is learned again the next time it is cleaned. The store is written at once.
+        """
+        self.learned_rooms = {}
+        await self._store.async_save(self._learned_data())
+        self.async_update_listeners()
+
     def current_map(self) -> int | None:
         """Return the id of the current map if it is known (see ``current_map_id``)."""
         scheduled = (
@@ -649,8 +785,8 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             self.check_room_map(map_id)
 
     def property_rooms(self) -> list[int]:
-        """Return the rooms from the properties: the cleaning order and the rooms of
-        the current map from the other room properties.
+        """Return the rooms from the properties: the cleaning order, the rooms of
+        the current map from the other room properties and the learned rooms.
 
         With several maps, ``sequence`` is the order of the active map, and the other
         properties only count for the active map.
@@ -659,10 +795,12 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             return [
                 *(self.sequence_rooms or ()),
                 *map_rooms(self.source_entries or (), self.active_map()),
+                *self.learned_room_ids(),
             ]
         return [
             *(self.sequence_rooms or ()),
             *rooms_on_map(self.source_entries or (), self.current_map()),
+            *self.learned_room_ids(),
         ]
 
     def room_schedules(self) -> ScheduleList | None:
@@ -826,10 +964,12 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             await self.async_refresh()
 
     async def async_shutdown(self) -> None:
-        """Cancel the pending command refresh and shut the coordinator down."""
+        """Cancel the pending command refresh, save the learned rooms and shut down."""
         if self._command_refresh_cancel is not None:
             self._command_refresh_cancel()
             self._command_refresh_cancel = None
+        if self._learned_unsaved:  # a reload must not lose a delayed save
+            await self._store.async_save(self._learned_data())
         await super().async_shutdown()
 
 

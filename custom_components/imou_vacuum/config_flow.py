@@ -226,13 +226,16 @@ class ImouOptionsFlow(OptionsFlow):
     async def async_step_menu(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Choose between linking rooms to areas and the advanced names text."""
+        """Choose between linking rooms to areas, the advanced names text and forgetting learned rooms."""
         coordinator = self._coordinators.get(self._device_id or "")
         if coordinator is None:
             return self.async_abort(reason="no_rooms")
+        options = ["room_areas", "rooms"]
+        if coordinator.can_learn_rooms():
+            options.append("forget_learned")
         return self.async_show_menu(
             step_id="menu",
-            menu_options=["room_areas", "rooms"],
+            menu_options=options,
             description_placeholders={"robot": coordinator.device.name},
         )
 
@@ -341,6 +344,22 @@ class ImouOptionsFlow(OptionsFlow):
         return self.async_create_entry(
             data={**self.config_entry.options, CONF_ROOM_NAMES: stored}
         )
+
+    async def async_step_forget_learned(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for a confirmation, then forget the rooms learned from room cleans."""
+        coordinator = self._coordinators.get(self._device_id or "")
+        if coordinator is None or not coordinator.can_learn_rooms():
+            return self.async_abort(reason="no_rooms")
+        if user_input is None:
+            return self.async_show_form(
+                step_id="forget_learned",
+                data_schema=vol.Schema({}),
+                description_placeholders={"robot": coordinator.device.name},
+            )
+        await coordinator.async_forget_learned_rooms()
+        return self.async_create_entry(data=dict(self.config_entry.options))
 
     async def async_step_rooms(
         self, user_input: dict[str, Any] | None = None

@@ -794,7 +794,7 @@ def test_files() -> None:
             check(f"[{lang}] {platform}.{key} has a translated state for every known value", set(states) == set(known.values()) and all(states.values()), str(set(known.values()) ^ set(states)))
         fan_states = data["entity"]["vacuum"]["robot"]["state_attributes"]["fan_speed"]["state"]
         check(f"[{lang}] vacuum fan speed presets are translated", set(fan_states) == set(const.LEVEL_KEYS["windpower"].values()) | set(const.WIND_ENUM_LABEL_KEYS.values()) and all(fan_states.values()), str(fan_states))
-        check(f"[{lang}] options flow texts: the menu, both room steps, field, error and abort", {"init", "menu", "room_areas", "rooms"} <= set(data["options"]["step"]) and set(data["options"]["step"]["menu"]["menu_options"]) == {"room_areas", "rooms"} and data["options"]["step"]["menu"]["menu_options"]["room_areas"] == "Link rooms to areas" and "{robot}" in data["options"]["step"]["room_areas"]["title"] and "Clean room" in data["options"]["step"]["room_areas"]["description"] and data["entity"]["button"]["clean_room"]["name"] == "Clean {room}" and data["options"]["step"]["rooms"]["data"]["room_names"] and data["options"]["step"]["init"]["data"]["robot"] and data["options"]["error"]["invalid_room_names"] and data["options"]["abort"]["no_rooms"] and "{robot}" in data["options"]["step"]["rooms"]["title"])
+        check(f"[{lang}] options flow texts: the menu, both room steps, field, error and abort", {"init", "menu", "room_areas", "rooms", "forget_learned"} <= set(data["options"]["step"]) and set(data["options"]["step"]["menu"]["menu_options"]) == {"room_areas", "rooms", "forget_learned"} and data["options"]["step"]["menu"]["menu_options"]["forget_learned"] == "Forget learned rooms" and bool(data["options"]["step"]["forget_learned"]["description"]) and data["options"]["step"]["menu"]["menu_options"]["room_areas"] == "Link rooms to areas" and "{robot}" in data["options"]["step"]["room_areas"]["title"] and "Clean room" in data["options"]["step"]["room_areas"]["description"] and data["entity"]["button"]["clean_room"]["name"] == "Clean {room}" and data["options"]["step"]["rooms"]["data"]["room_names"] and data["options"]["step"]["init"]["data"]["robot"] and data["options"]["error"]["invalid_room_names"] and data["options"]["abort"]["no_rooms"] and "{robot}" in data["options"]["step"]["rooms"]["title"])
         check(f"[{lang}] schedules sensor name and invalid_room exception", data["entity"]["sensor"]["schedules"]["name"] and "{room}" in data["exceptions"]["invalid_room"]["message"])
         check(f"[{lang}] region selector options", set(data["selector"]["region"]["options"]) == set(const.REGION_HOSTS))
         check(f"[{lang}] config errors/abort/steps present", {"cannot_connect", "invalid_auth", "unknown"} <= set(data["config"]["error"]) and "already_configured" in data["config"]["abort"] and {"user", "reauth_confirm"} <= set(data["config"]["step"]))
@@ -821,7 +821,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.0"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.1b1"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -831,7 +831,7 @@ def test_files() -> None:
     from awesomeversion import AwesomeVersion, AwesomeVersionStrategy  # noqa: PLC0415
 
     version = AwesomeVersion(manifest["version"])
-    check("manifest version is valid for hassfest (AwesomeVersion) and newer than 0.6.4", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier is None and AwesomeVersion("0.6.4") < version, f"{version.strategy} {version.modifier}")
+    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.1", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b1" and AwesomeVersion("0.7.0") < version < AwesomeVersion("0.7.1"), f"{version.strategy} {version.modifier}")
     hacs = json.loads((ROOT / "hacs.json").read_text("utf-8"))
     check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True, "zip_release": True, "filename": "imou_vacuum.zip"}, str(hacs))
     # the release workflow zips exactly this folder; the archive name must match hacs.json
@@ -1132,6 +1132,9 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     coordinator = runtime.coordinators["TESTDEVICE0001"]
     check("polled refs are exactly the spec list", client.last_refs == ["12300", "11600", "1019", "1020", "1021", "1027", "1028", "1029", "11900", "12200", "40500", "11300"], str(client.last_refs))
     check("never polls map/trail/zone refs", not {"1022", "1023", "1025", "1026", "40100", "40400"} & set(client.last_refs))
+    # 0.7.0b3: the L11-A has no partition_area property, so it learns nothing and stores nothing
+    check("L11-A: no learning (no partition_area property), no learned rooms, nothing waiting to be saved", not coordinator.can_learn_rooms() and coordinator.learned_rooms == {} and not coordinator._learned_unsaved and "126200" not in client.last_refs)  # noqa: SLF001
+    check("L11-A: no store was written for it", await mod("coordinator").learned_rooms_store(hass, entry.entry_id, "TESTDEVICE0001").async_load() is None)
 
     # ---- registries -------------------------------------------------------
     dev_reg, ent_reg = dr.async_get(hass), er.async_get(hass)
@@ -2195,7 +2198,7 @@ class RV1Client(FakeClient):
         super().__init__(session, app_id, app_secret, host)
         self.props = copy.deepcopy(RV1_VALUES_JSON["properties"])
         # room/map properties: never polled, only read by the diagnostics probe
-        self.props.update({"126200": [3, 4], "122300": ["Map one"], "120600": [], "121600": []})
+        self.props.update({"126200": [], "122300": ["Map one"], "120600": [], "121600": []})
         if RV1Client.report_station:  # (the real RV1 Pro Max never reports it; see rv1_dock_checks)
             self.props["121100"] = {"121101": True, "121102": 0, "121103": 0, "121104": 0}
         # clean_list: the real response of the user's robot (one whole-house schedule)
@@ -3193,6 +3196,254 @@ def test_optional_entities_of_a_silent_robot() -> None:
         RV1LProClient.drop_station = False
 
 
+# --- 0.7.0b3: rooms learned from partition_area (only during a room clean) ------------------------
+def work_status_ref_and_values(coordinator: Any) -> tuple[str, int, int]:
+    """Return the ref of work_status, the value of a room clean and the value of 'charging' (docked)."""
+    by_key = {key: number for number, key in coordinator.model.work_status_keys().items()}
+    return coordinator.model.prop("work_status").ref, by_key["room_clean"], by_key["charging"]
+
+
+async def learned_single_checks(hass: Any, entry: Any) -> None:
+    """A single-map RV1 that reports no rooms at all (empty sequence, no room properties)."""
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    device = "TESTDEVICE0004"
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators[device]
+    registry = er.async_get(hass)
+    status_ref, cleaning, docked = work_status_ref_and_values(coordinator)
+
+    def clean_keys() -> set[str]:
+        keys = {e.unique_id.split("_", 1)[1] for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+        return {k for k in keys if k.startswith("clean_room_")}
+
+    def state_of(room: int) -> str:
+        return hass.states.get(registry.async_get_entity_id("button", "imou_vacuum", f"{device}_clean_room_{room}")).state
+
+    saves: list[Any] = []
+    real_delay_save = coordinator._store.async_delay_save  # noqa: SLF001
+
+    def counting_delay_save(*args: Any, **kwargs: Any) -> None:
+        saves.append(args)
+        real_delay_save(*args, **kwargs)
+
+    coordinator._store.async_delay_save = counting_delay_save  # noqa: SLF001
+    check("learn: the robot reports no rooms at all and has no Clean buttons", coordinator.room_names() == {} and not clean_keys() and coordinator.can_learn_rooms())
+    check("learn: partition_area (126200) is in the regular poll", "126200" in client.last_refs and "126200" in coordinator.poll_refs, str(client.last_refs))
+    polls = client.poll_count
+    client.props[status_ref] = docked
+    client.props["126200"] = [-128]
+    await coordinator.async_refresh()
+    check("learn: a stale partition_area while the robot is docked learns nothing (one call per poll)", coordinator.learned_rooms == {} and client.poll_count == polls + 1 and not saves, f"{coordinator.learned_rooms} {client.poll_count - polls}")
+    client.props[status_ref] = cleaning
+    client.props["126200"] = [0]
+    await coordinator.async_refresh()
+    check("learn: a room clean with [0] learns nothing", coordinator.learned_rooms == {} and not saves)
+    client.props["126200"] = [-128]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("learn: [-128] during a room clean is learned (plain key, single map), saved after a delay, with a default name", coordinator.learned_rooms == {"plain": [-128]} and len(saves) == 1 and coordinator.room_names() == {-128: "Room -128"}, f"{coordinator.learned_rooms} {len(saves)}")
+    check("learn: a Clean button for room -128 appeared", clean_keys() == {"clean_room_-128"} and state_of(-128) != "unavailable", str(clean_keys()))
+    await coordinator.async_refresh()
+    check("learn: the same value again changes nothing and saves nothing", len(saves) == 1, str(len(saves)))
+    client.props["126200"] = [-127]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("learn: [-127] is added; both buttons exist", coordinator.learned_rooms == {"plain": [-128, -127]} and clean_keys() == {"clean_room_-128", "clean_room_-127"} and len(saves) == 2, f"{coordinator.learned_rooms} {clean_keys()}")
+    client.props[status_ref] = docked
+    client.props["126200"] = [-50]
+    await coordinator.async_refresh()
+    check("learn: once the clean is over a new stale value is not learned", coordinator.learned_rooms == {"plain": [-128, -127]} and len(saves) == 2)
+    client.calls.clear()
+    await hass.services.async_call("button", "press", {"entity_id": registry.async_get_entity_id("button", "imou_vacuum", f"{device}_clean_room_-128")}, blocking=True)
+    check("learn: pressing the learned room's button cleans only that room", client.calls == [("control", device, "200900", {"200901": 1, "200902": 1, "200903": [-128]})], str(client.calls))
+    # a reload (the new fake cloud reports nothing): the rooms come back from the store
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators[device]
+    check("learn: after a reload the learned rooms and both buttons survive", client.props["126200"] == [] and coordinator.learned_rooms == {"plain": [-128, -127]} and clean_keys() == {"clean_room_-128", "clean_room_-127"} and state_of(-127) != "unavailable", f"{coordinator.learned_rooms} {clean_keys()}")
+    data = await mod("coordinator").learned_rooms_store(hass, entry.entry_id, device).async_load()
+    check("learn: the store holds the rooms", data == {"rooms": {"plain": [-128, -127]}}, str(data))
+    diag = await mod("diagnostics").async_get_config_entry_diagnostics(hass, entry)
+    robot = diag["robots"][0]
+    check("learn: diagnostics show the learned rooms and the raw partition_area", robot["learned_rooms"] == {"plain": [-128, -127]} and robot["partition_area"] == [] and "126200" in robot["poll_refs"], f"{robot['learned_rooms']} {robot['partition_area']}")
+    # forget, through the options flow
+    client.props[status_ref] = docked
+    client.props["126200"] = [-127]
+    await coordinator.async_refresh()
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    check("forget: the options menu has 'forget_learned' on a robot with partition_area", result["type"] == "menu" and result["menu_options"] == ["room_areas", "rooms", "forget_learned"], str(result))
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"next_step_id": "forget_learned"})
+    check("forget: a confirmation form with the robot's name", result["type"] == "form" and result["step_id"] == "forget_learned" and result["description_placeholders"] == {"robot": "RV1L-PRO-TEST"}, str(result))
+    check("forget: nothing is forgotten before the form is submitted", coordinator.learned_rooms == {"plain": [-128, -127]})
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators[device]
+    check("forget: submitting clears the rooms, the store and the buttons (unavailable)", result["type"] == "create_entry" and coordinator.learned_rooms == {} and coordinator.room_names() == {} and state_of(-128) == "unavailable" and state_of(-127) == "unavailable", f"{result['type']} {coordinator.learned_rooms}")
+    data = await mod("coordinator").learned_rooms_store(hass, entry.entry_id, device).async_load()
+    check("forget: the stored rooms are empty", data == {"rooms": {}}, str(data))
+    await coordinator.async_refresh()
+    check("forget: the stale value the idle robot still reports is not learned again", coordinator.learned_rooms == {})
+    client.props[status_ref] = cleaning
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("forget: cleaning that room again learns it again", coordinator.learned_rooms == {"plain": [-127]} and state_of(-127) != "unavailable", str(coordinator.learned_rooms))
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    check("learn: removing the entry removes the store", await mod("coordinator").learned_rooms_store(hass, entry.entry_id, device).async_load() is None)
+
+
+def test_rv1_learned_rooms_single_map() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1LProClient, learned_single_checks)
+
+
+async def learned_two_map_checks(hass: Any, entry: Any) -> None:
+    """Two maps, map A active: rooms are learned during a room clean, under the map that is active then."""
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    device = "TESTDEVICE0004"
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators[device]
+    registry = er.async_get(hass)
+    status_ref, cleaning, docked = work_status_ref_and_values(coordinator)
+
+    def state_of(map_id: int, room: int) -> str | None:
+        entity_id = registry.async_get_entity_id("button", "imou_vacuum", f"{device}_clean_room_{map_id}_{room}")
+        return None if entity_id is None else hass.states.get(entity_id).state
+
+    check("learn, two maps: map A is active", coordinator.active_map() == MAP_A and coordinator.is_multi_map())
+    client.props[status_ref] = docked
+    client.props["126200"] = [-200]
+    await coordinator.async_refresh()
+    check("learn, two maps: a stale value while docked is not learned", coordinator.learned_rooms == {}, str(coordinator.learned_rooms))
+    reads = client.sequence_reads
+    client.props[status_ref] = cleaning
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("learn, two maps: the first poll of a room clean reads the room properties fresh (one call)", client.sequence_reads == reads + 1, str(client.sequence_reads - reads))
+    check("learn, two maps: the room is filed under the active map only", coordinator.learned_rooms == {str(MAP_A): [-200]}, str(coordinator.learned_rooms))
+    check("learn, two maps: the room has a segment and a button of map A", f"{MAP_A}:-200" in coordinator.room_segments() and state_of(MAP_A, -200) not in (None, "unavailable"), str(coordinator.room_segments()))
+    client.props["126200"] = [-201]
+    await coordinator.async_refresh()
+    check("learn, two maps: later polls of the same clean make no extra read", client.sequence_reads == reads + 1 and coordinator.learned_rooms == {str(MAP_A): [-201, -200]}, f"{client.sequence_reads - reads} {coordinator.learned_rooms}")
+    # the map is switched in the Imou app; the integration has not noticed yet (no refresh of the room properties)
+    client.props[status_ref] = docked
+    await coordinator.async_refresh()
+    client.props["160700"] = {"160701": MAP_B, "160702": json.dumps(ORDER_B)}
+    client.props["120600"] = list(ORDER_B)
+    check("learn, two maps: the cached active map is still A", coordinator.active_map() == MAP_A)
+    client.props["126200"] = [-300]
+    client.props[status_ref] = cleaning
+    reads = client.sequence_reads
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    check("learn, two maps: the fresh read at the start of the clean finds map B, and the room is filed under B (not A)", client.sequence_reads == reads + 1 and coordinator.active_map() == MAP_B and coordinator.learned_rooms == {str(MAP_A): [-201, -200], str(MAP_B): [-300]}, f"{coordinator.active_map()} {coordinator.learned_rooms}")
+    check("learn, two maps: on map B the rooms of map A are not shown; its buttons are unavailable", -200 not in coordinator.room_names() and -300 in coordinator.room_names() and state_of(MAP_A, -200) == "unavailable" and state_of(MAP_B, -300) not in (None, "unavailable"), str(coordinator.room_names()))
+    # a failed fresh read: nothing is learned, and the next poll tries again
+    client.props[status_ref] = docked
+    await coordinator.async_refresh()
+    client.props["126200"] = [-301]
+    client.props[status_ref] = cleaning
+    api = mod("api")
+    client.fail_sequence_with = api.ImouApiError("OP1001", "param error")
+    await coordinator.async_refresh()
+    check("learn, two maps: when the fresh read fails nothing is learned", str(MAP_B) in coordinator.learned_rooms and -301 not in coordinator.learned_rooms[str(MAP_B)], str(coordinator.learned_rooms))
+    client.fail_sequence_with = None
+    await coordinator.async_refresh()
+    check("learn, two maps: the next poll reads again and learns", coordinator.learned_rooms[str(MAP_B)] == [-301, -300], str(coordinator.learned_rooms))
+
+
+def test_rv1_learned_rooms_two_maps() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1TwoMapClient, learned_two_map_checks)
+
+
+async def learned_unknown_map_checks(hass: Any, entry: Any) -> None:
+    """Two maps and no active map: nothing is learned (and nothing is saved)."""
+    device = "TESTDEVICE0004"
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators[device]
+    status_ref, cleaning, _ = work_status_ref_and_values(coordinator)
+    saves: list[Any] = []
+    real_delay_save = coordinator._store.async_delay_save  # noqa: SLF001
+    coordinator._store.async_delay_save = lambda *args, **kwargs: (saves.append(args), real_delay_save(*args, **kwargs))  # noqa: SLF001
+    check("learn, unknown map: several maps and no active map", coordinator.is_multi_map() and coordinator.active_map() is None)
+    client.props[status_ref] = cleaning
+    client.props["126200"] = [-200]
+    await coordinator.async_refresh()
+    check("learn, unknown map: nothing is learned or saved, and no learned room shows", coordinator.learned_rooms == {} and not saves and coordinator.learned_room_ids() == [] and -200 not in coordinator.room_names(), f"{coordinator.learned_rooms} {len(saves)}")
+    client.props["160700"] = {"160701": MAP_A, "160702": json.dumps(ORDER_A)}
+    client.props["120600"] = list(ORDER_A)
+    await coordinator.async_refresh()
+    check("learn, unknown map: the map is read once per clean, so a later poll of the same clean still learns nothing", coordinator.learned_rooms == {} and not saves, str(coordinator.learned_rooms))
+    coordinator._schedules_fetched_at = None  # the next regular read of the room properties (or the options flow) finds the map  # noqa: SLF001
+    await coordinator.async_refresh_schedules()
+    await coordinator.async_refresh()
+    check("learn, unknown map: once the map is known the next poll of the clean learns the room under it", coordinator.learned_rooms == {str(MAP_A): [-200]}, str(coordinator.learned_rooms))
+
+
+def test_rv1_learned_rooms_unknown_map() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1TwoMapUnknownClient, learned_unknown_map_checks)
+
+
+class RV1RejectsPartitionClient(RV1LProClient):
+    """The cloud rejects the poll as soon as it contains partition_area (126200), when ``reject_partition`` is set."""
+
+    reject_partition = False
+
+    async def async_get_properties(self, product_id: str, device_id: str, refs: Any) -> Any:
+        if self.reject_partition and "126200" in refs and not set(refs) <= ROOM_READ_REFS:
+            self.poll_count += 1
+            raise mod("api").ImouApiError("OP1001", "param error")
+        return await super().async_get_properties(product_id, device_id, refs)
+
+
+async def partition_rejected_checks(hass: Any, entry: Any) -> None:
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    api = mod("api")
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    capture = Capture(level=logging.INFO)
+    logging.getLogger(PKG).addHandler(capture)
+
+    def infos() -> list[logging.LogRecord]:
+        return [r for r in records if r.levelno == logging.INFO and "partition_area" in r.getMessage()]
+
+    try:
+        check("partition rejected: the poll asks for partition_area at first", "126200" in coordinator.poll_refs)
+        # a poll that fails for another reason (the retry fails too) keeps the ref
+        client.fail_with = api.ImouApiError("OP1001", "param error")
+        polls = client.poll_count
+        await coordinator.async_refresh()
+        check("partition rejected: when the retry fails as well, the ref stays and there is no info line", "126200" in coordinator.poll_refs and client.poll_count == polls + 2 and not infos(), f"{client.poll_count - polls} {coordinator.poll_refs}")
+        client.fail_with = None
+        # now the cloud rejects the ref
+        client.reject_partition = True
+        polls = client.poll_count
+        await coordinator.async_refresh()
+        check("partition rejected: the poll is retried once without the ref, which works", client.poll_count == polls + 2 and coordinator.last_update_success and coordinator.data.online, f"{client.poll_count - polls}")
+        check("partition rejected: the ref is dropped for the run and one info line is logged", "126200" not in coordinator.poll_refs and len(infos()) == 1, f"{coordinator.poll_refs} {[r.getMessage() for r in infos()]}")
+        polls = client.poll_count
+        await coordinator.async_refresh()
+        await coordinator.async_refresh()
+        check("partition rejected: later polls make one call each, without the ref, and say nothing more", client.poll_count == polls + 2 and "126200" not in client.last_refs and len(infos()) == 1 and coordinator.last_update_success, str(client.last_refs))
+    finally:
+        logging.getLogger(PKG).removeHandler(capture)
+
+
+def test_rv1_partition_area_rejected() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1RejectsPartitionClient, partition_rejected_checks)
+
+
 # ---------------------------------------------------------------------------
 # 7. a model that is not fully supported: repair issue, log line, removal
 # ---------------------------------------------------------------------------
@@ -3331,7 +3582,7 @@ def test_issue_translations() -> None:
 
 
 def main() -> int:
-    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_reset_buttons, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_rv1_two_maps, test_rv1_two_maps_unknown_at_setup, test_rv1_single_map_with_room_properties, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
+    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_reset_buttons, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_rv1_two_maps, test_rv1_two_maps_unknown_at_setup, test_rv1_single_map_with_room_properties, test_rv1_learned_rooms_single_map, test_rv1_learned_rooms_two_maps, test_rv1_learned_rooms_unknown_map, test_rv1_partition_area_rejected, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
         print(f"\n=== {func.__name__} ===")
         try:
             func()

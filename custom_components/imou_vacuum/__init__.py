@@ -18,7 +18,7 @@ from homeassistant.exceptions import (
     ConfigEntryError,
     ConfigEntryNotReady,
 )
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import (
@@ -38,7 +38,12 @@ from .const import (
     REGION_HOSTS,
     SERVICE_CLEAN_CONTROL,
 )
-from .coordinator import ImouConfigEntry, ImouCoordinator, ImouRuntimeData
+from .coordinator import (
+    ImouConfigEntry,
+    ImouCoordinator,
+    ImouRuntimeData,
+    learned_rooms_store,
+)
 from .model import ThingsModel
 from .support import (
     needs_notice,
@@ -199,6 +204,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool
     coordinators: dict[str, ImouCoordinator] = {}
     for device, model in robots:
         coordinator = ImouCoordinator(hass, entry, client, device, model)
+        await coordinator.async_load_learned_rooms()
         await coordinator.async_config_entry_first_refresh()
         coordinators[device.device_id] = coordinator
         _async_report_support(hass, entry, device, model)
@@ -228,5 +234,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> boo
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> None:
-    """Delete the repair issues of a removed config entry."""
+    """Delete the repair issues and the learned rooms of a removed config entry."""
     _async_delete_support_issues(hass, entry.entry_id)
+    for device in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id):
+        for domain, device_id in device.identifiers:
+            if domain == DOMAIN:
+                await learned_rooms_store(hass, entry.entry_id, device_id).async_remove()
