@@ -122,6 +122,15 @@
       },
       "reset_sensors": {
         "name": "Reset sensors"
+      },
+      "reset_mop": {
+        "name": "Reset mop"
+      },
+      "reset_main_brush_cover": {
+        "name": "Reset main brush cover"
+      },
+      "reset_battery": {
+        "name": "Reset battery"
       }
     },
     "select": {
@@ -215,6 +224,15 @@
       },
       "sensors": {
         "name": "Sensors usage"
+      },
+      "mop": {
+        "name": "Mop cloth usage"
+      },
+      "main_brush_cover": {
+        "name": "Main brush cover usage"
+      },
+      "battery_usage": {
+        "name": "Battery usage"
       },
       "wifi_signal": {
         "name": "Wi-Fi signal",

@@ -101,6 +101,9 @@ LIFE_SIDE_BRUSH: Final = "brush_time"
 LIFE_MAIN_BRUSH: Final = "main_brush_time"
 LIFE_FILTER: Final = "rosebox_time"
 LIFE_SENSORS: Final = "sensor_time"
+LIFE_MOP: Final = "mop_time"
+LIFE_MAIN_BRUSH_COVER: Final = "cover_time"
+LIFE_BATTERY: Final = "battery_time"
 
 # The L11-A reports the consumable counters in MINUTES used, although its things
 # model declares the unit "h" (after a 34 minute cleaning run all four read 34).
@@ -111,15 +114,21 @@ LIFE_RAW_PER_HOUR: Final[dict[str, int]] = {
     LIFE_MAIN_BRUSH: 60,
     LIFE_FILTER: 60,
     LIFE_SENSORS: 60,
+    LIFE_MOP: 60,
+    LIFE_MAIN_BRUSH_COVER: 60,
+    LIFE_BATTERY: 60,
 }
 
 # reset_parts "type" enum labels (as the things model words them) -> the consumable.
-# Only these four have a usage sensor; a label that is not listed gets no button.
+# A label that is not listed gets no button.
 RESET_PART_LABEL_KEYS: Final[dict[str, str]] = {
     "边刷": "side_brush",
     "滚刷": "main_brush",
     "滤芯": "filter",
     "传感器": "sensors",
+    "拖布": "mop",
+    "主刷盖板": "main_brush_cover",
+    "电池": "battery",
 }
 
 ERROR_CODE: Final = "errcode"

@@ -34,6 +34,15 @@ from .model import ThingsModel
 VERIFIED_MODELS: frozenset[str] = frozenset({"L11-A"})
 PARTLY_VERIFIED_MODELS: frozenset[str] = frozenset({"RV1 Pro Max"})
 
+# Reset buttons that are enabled by default: the parts whose reset was confirmed on a
+# real robot of that model (the owner's L11-A, a user's RV1L Pro). Every other
+# model/part combination is created disabled. Keys are robot model names (matched
+# like ``model_in``), values the part keys of ``RESET_PART_LABEL_KEYS``.
+CONFIRMED_RESETS: dict[str, frozenset[str]] = {
+    "L11-A": frozenset({"side_brush", "main_brush", "filter", "sensors"}),
+    "RV1L Pro": frozenset({"side_brush", "main_brush", "filter"}),
+}
+
 NEW_MODEL_URL = (
     "https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml"
 )
@@ -65,6 +74,14 @@ def model_in(name: str | None, names: frozenset[str]) -> bool:
     given = _normalise_model(name)
     known = {_normalise_model(item) for item in names}
     return given in known or (given.startswith("RV") and given[2:] in known)
+
+
+def reset_confirmed(device_model: str | None, part: str) -> bool:
+    """Return whether the reset of ``part`` is confirmed on this robot model."""
+    return any(
+        part in parts and model_in(device_model, frozenset({name}))
+        for name, parts in CONFIRMED_RESETS.items()
+    )
 
 
 def support_report(model: ThingsModel, device_model: str | None = None) -> dict[str, Any]:

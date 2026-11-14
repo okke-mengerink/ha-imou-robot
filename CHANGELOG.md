@@ -2,7 +2,7 @@
 
 ## 0.7.1b1 (beta)
 
-This beta is for testing on RV1 models; the stable release is 0.7.0. Not verified yet: no user has confirmed this on a real robot.
+This beta is for testing on RV1 models; the stable release is 0.7.0. Not verified yet: no user has confirmed the learned rooms on a real robot.
 
 Learn rooms from the room cleans you start in the Imou app, for RV1 robots that report no room list at all (empty `sequence`, no room properties, a whole-house schedule).
 
@@ -13,6 +13,13 @@ Learn rooms from the room cleans you start in the Imou app, for RV1 robots that 
 - Diagnostics show `learned_rooms` and the raw `partition_area`. The learned rooms of a removed config entry are deleted with it.
 - No change for the RV-L11-A: its model has no `partition_area` property, so no extra poll ref, no learning, no store writes (it only reads an empty store at startup) and no new menu item.
 - Docs: the README rooms section explains the learning and that it is not verified yet.
+
+Consumables for the RV1 models, after feedback from an RV1L Pro user: Reset filter, Reset main brush and Reset side brush work there, the Imou app has no sensor counter (the integration always shows 0 for it), and the app also shows the mop cloth, the main brush cover and the battery.
+
+- New: usage sensors **Mop cloth usage**, **Main brush cover usage** and **Battery usage**, only on a model whose `life` struct has `mop_time`, `cover_time` and `battery_time` (the RV1 models). Same unit (hours) and diagnostic category as the other usage sensors, enabled by default, read-only. The unit of these three counters is assumed to be minutes, like the others; that is not verified on an RV1 robot. The RV-L11-A gets nothing new.
+- New: buttons **Reset mop**, **Reset main brush cover** and **Reset battery**, only when the `reset_parts` list of the model has the parts mop, main brush cover and battery. They are disabled by default on every model, because none of them is confirmed.
+- Changed: whether a reset button is enabled by default now depends on the robot model and the part. Enabled: side brush, main brush, filter and sensors on the RV-L11-A (tested by the owner); side brush, main brush and filter on the RV1L Pro (confirmed by a user). Every other combination stays disabled, as before (this changes nothing for the RV-L11-A; the RV1L Pro's three confirmed buttons are now enabled for new entities). Entities that already exist keep their enabled state.
+- Docs: the README entity lists are updated.
 
 ## 0.7.0
 

@@ -195,6 +195,27 @@ def test_support_report_of_the_known_models() -> None:
     assert support.VERIFIED_MODELS == {"L11-A"} and support.PARTLY_VERIFIED_MODELS == {"RV1 Pro Max"}
 
 
+def test_confirmed_resets_per_model() -> None:
+    # only what is confirmed on a real robot is enabled by default; the rest is data, not code
+    assert support.CONFIRMED_RESETS == {
+        "L11-A": {"side_brush", "main_brush", "filter", "sensors"},
+        "RV1L Pro": {"side_brush", "main_brush", "filter"},
+    }
+    for name in ("L11-A", "Imou RV-L11-A", " l11a "):
+        for part in ("side_brush", "main_brush", "filter", "sensors"):
+            assert support.reset_confirmed(name, part), (name, part)
+        for part in ("mop", "main_brush_cover", "battery"):
+            assert not support.reset_confirmed(name, part), (name, part)
+    for name in ("RV1L Pro", "Imou RV1L-Pro", "rv1l pro"):
+        for part in ("side_brush", "main_brush", "filter"):
+            assert support.reset_confirmed(name, part), (name, part)
+        for part in ("sensors", "mop", "main_brush_cover", "battery"):
+            assert not support.reset_confirmed(name, part), (name, part)
+    for name in ("RV1 Pro Max", "RV1L Pro Max", "RV1 Pro", "L11-A Pro", "", None):
+        for part in ("side_brush", "main_brush", "filter", "sensors", "mop", "main_brush_cover", "battery"):
+            assert not support.reset_confirmed(name, part), (name, part)
+
+
 def test_missing_core_functions_are_listed() -> None:
     def edit(data: dict[str, Any]) -> None:
         data["properties"] = [

@@ -24,8 +24,11 @@ from .const import (
     DUST_BAG_KEYS,
     DUST_BAG_LABEL_KEYS,
     ERROR_CODE,
+    LIFE_BATTERY,
     LIFE_FILTER,
     LIFE_MAIN_BRUSH,
+    LIFE_MAIN_BRUSH_COVER,
+    LIFE_MOP,
     LIFE_RAW_PER_HOUR,
     LIFE_SENSORS,
     LIFE_SIDE_BRUSH,
@@ -150,6 +153,10 @@ SENSORS: tuple[ImouSensorDescription, ...] = (
     _consumable("main_brush", LIFE_MAIN_BRUSH),
     _consumable("filter", LIFE_FILTER),
     _consumable("sensors", LIFE_SENSORS),
+    # only on a model whose life struct has the member (the RV1 models, not the L11-A)
+    _consumable("mop", LIFE_MOP),
+    _consumable("main_brush_cover", LIFE_MAIN_BRUSH_COVER),
+    _consumable("battery_usage", LIFE_BATTERY),
 )
 
 ENUM_SENSORS: tuple[ImouEnumSensorDescription, ...] = (

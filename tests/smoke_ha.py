@@ -414,6 +414,23 @@ def test_entities() -> None:
     check("raw values are coerced; unusable ones give no value", [s.native_value for s in consumables] == [1.5, None, None, 10.0], str([s.native_value for s in consumables]))
     coordinator.set_values(life={"brush_time": 0, "main_brush_time": 0, "rosebox_time": 0, "sensor_time": 0})
 
+    # RV1 models: usage sensors for the mop cloth, the main brush cover and the battery
+    extra = ("mop", "main_brush_cover", "battery_usage")
+    check("L11-A has no mop, main brush cover or battery usage sensor", not set(extra) & set(sensors), str(sorted(sensors)))
+    for json_model, name in ((RV1_MODEL_JSON, "RV1 Pro Max"), (RV1LPRO_MODEL_JSON, "RV1L Pro")):
+        rv1_sensors = by_key(make_entities(FakeCoordinator(json_model, RV1_VALUES_JSON["properties"], device_model=name))["sensor"])
+        new_sensors = [rv1_sensors[k] for k in extra]
+        check(f"{name}: mop, main brush cover and battery usage sensors exist", all(k in rv1_sensors for k in extra), str(sorted(rv1_sensors)))
+        check(f"{name}: new usage sensors: hours, duration, measurement, diagnostic, precision 1, enabled by default", all(s.native_unit_of_measurement == "h" and s.device_class == SensorDeviceClass.DURATION and s.state_class == SensorStateClass.MEASUREMENT and s.entity_category == EntityCategory.DIAGNOSTIC and s.suggested_display_precision == 1 and s.entity_registry_enabled_default for s in new_sensors))
+        check(f"{name}: new usage sensors use the translation keys", [s.translation_key for s in new_sensors] == list(extra), str([s.translation_key for s in new_sensors]))
+        check(f"{name}: battery usage is a separate entity from the battery level", rv1_sensors["battery_usage"].unique_id == "TESTDEVICE0001_battery_usage" and rv1_sensors["battery"].unique_id == "TESTDEVICE0001_battery")
+        rv1_coordinator = rv1_sensors["mop"].coordinator
+        rv1_coordinator.set_values(life={"brush_time": 0, "main_brush_time": 0, "rosebox_time": 0, "sensor_time": 0, "mop_time": 90, "cover_time": 30, "battery_time": 600})
+        check(f"{name}: mop 90, cover 30, battery 600 raw give 1.5, 0.5, 10.0 h", [s.native_value for s in new_sensors] == [1.5, 0.5, 10.0], str([s.native_value for s in new_sensors]))
+        rv1_coordinator.set_values(life={"mop_time": "x"})
+        check(f"{name}: unusable and absent members give no value", [s.native_value for s in new_sensors] == [None, None, None], str([s.native_value for s in new_sensors]))
+    check("sensor texts and icons exist for the new usage sensors", all(json.loads((ROOT / "custom_components/imou_vacuum" / f).read_text("utf-8"))["entity"]["sensor"][k] for f in ("strings.json", "icons.json") for k in extra))
+
     # unknown enum values: unknown_<n> + model label
     raw_model = copy.deepcopy(MODEL_JSON)
     for prop in raw_model["properties"]:
@@ -611,18 +628,33 @@ def test_reset_buttons() -> None:
     coordinator.calls.clear()
     asyncio.run(l11a["TESTDEVICE0001_reset_side_brush"].async_press())
     check("pressing Reset side brush sends type 0", coordinator.calls[0] == ("control", "reset_parts", {"type": 0}), str(coordinator.calls))
+    rv1_parts = (*parts, "mop", "main_brush_cover", "battery")
+    rv1_ids = [f"TESTDEVICE0001_reset_{part}" for part in rv1_parts]
+    # enabled by default only where the reset is confirmed on a real robot of that model
+    confirmed = {"RV1 Pro Max": set(), "RV1L Pro": {"side_brush", "main_brush", "filter"}}
     for json_model, name in ((RV1_MODEL_JSON, "RV1 Pro Max"), (RV1LPRO_MODEL_JSON, "RV1L Pro")):
         rv1_coordinator, rv1 = reset_buttons(json_model, name)
-        check(f"{name}: four reset buttons, all disabled by default", sorted(rv1) == sorted(ids) and not any(b.entity_registry_enabled_default for b in rv1.values()), str({k: b.entity_registry_enabled_default for k, b in rv1.items()}))
+        check(f"{name}: seven reset buttons (the four plus mop, main brush cover, battery)", sorted(rv1) == sorted(rv1_ids), str(sorted(rv1)))
+        enabled = {k.removeprefix("TESTDEVICE0001_reset_") for k, b in rv1.items() if b.entity_registry_enabled_default}
+        check(f"{name}: enabled by default are exactly the confirmed parts {sorted(confirmed[name])}", enabled == confirmed[name], str(sorted(enabled)))
+        check(f"{name}: mop, main brush cover and battery resets are disabled by default", not any(rv1[f"TESTDEVICE0001_reset_{p}"].entity_registry_enabled_default for p in ("mop", "main_brush_cover", "battery")))
+        check(f"{name}: new reset buttons are configuration category with translation key reset_<part>", all(rv1[f"TESTDEVICE0001_reset_{p}"].entity_category is EntityCategory.CONFIG and rv1[f"TESTDEVICE0001_reset_{p}"].translation_key == f"reset_{p}" for p in ("mop", "main_brush_cover", "battery")))
         asyncio.run(rv1["TESTDEVICE0001_reset_sensors"].async_press())
         check(f"{name}: a reset button still sends type 3 (its enum value)", rv1_coordinator.calls[0] == ("control", "reset_parts", {"type": 3}), str(rv1_coordinator.calls))
+        for part, value in (("mop", 4), ("main_brush_cover", 7), ("battery", 8)):
+            rv1_coordinator.calls.clear()
+            asyncio.run(rv1[f"TESTDEVICE0001_reset_{part}"].async_press())
+            check(f"{name}: Reset {part} sends type {value}", rv1_coordinator.calls == [("control", "reset_parts", {"type": value})], str(rv1_coordinator.calls))
+    other = reset_buttons(RV1LPRO_MODEL_JSON, "Some Other RV1")[1]
+    check("an unlisted model: all seven reset buttons are disabled by default", len(other) == 7 and not any(b.entity_registry_enabled_default for b in other.values()))
+    check("L11-A: no mop, main brush cover or battery reset button", not {f"TESTDEVICE0001_reset_{p}" for p in ("mop", "main_brush_cover", "battery")} & set(l11a))
     no_service = copy.deepcopy(MODEL_JSON)
     no_service["services"] = [s for s in no_service["services"] if s["identifier"] != "reset_parts"]
     check("a model without reset_parts gets no reset buttons", not reset_buttons(no_service, "L11-A")[1])
     unknown_labels = copy.deepcopy(MODEL_JSON)
     next(s for s in unknown_labels["services"] if s["identifier"] == "reset_parts")["inputData"][0]["dataType"]["specs"]["list"] = [{"value": "0", "desc": "Brush"}]
     check("reset_parts without a matching label gets no button (no numeric fallback)", not reset_buttons(unknown_labels, "L11-A")[1])
-    check("reset button texts and icons exist", all(json.loads((ROOT / "custom_components/imou_vacuum" / f).read_text("utf-8"))["entity"]["button"][f"reset_{p}"] for f in ("strings.json", "icons.json") for p in parts))
+    check("reset button texts and icons exist", all(json.loads((ROOT / "custom_components/imou_vacuum" / f).read_text("utf-8"))["entity"]["button"][f"reset_{p}"] for f in ("strings.json", "icons.json") for p in rv1_parts))
 
 
 def test_model_adaptive_entities() -> None:

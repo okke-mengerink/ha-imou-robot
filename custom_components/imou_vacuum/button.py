@@ -14,7 +14,7 @@ from .const import INPUT_TYPE, SERVICE_DUST, SERVICE_RESET_PARTS
 from .coordinator import ImouConfigEntry, ImouCoordinator, default_room_name
 from .entity import ImouEntity
 from .rooms import room_button_name, room_key
-from .support import VERIFIED_MODELS, model_in
+from .support import reset_confirmed
 
 PARALLEL_UPDATES = 1
 
@@ -117,8 +117,8 @@ class ImouButton(ImouEntity, ButtonEntity):
 class ImouResetButton(ImouButton):
     """Resets the usage counter of one consumable.
 
-    Enabled by default only on a verified robot model: nobody has confirmed that the
-    reset works on the others.
+    Enabled by default only for a part whose reset is confirmed on this robot model
+    (``support.CONFIRMED_RESETS``): nobody has confirmed the other combinations.
     """
 
     def __init__(
@@ -130,8 +130,8 @@ class ImouResetButton(ImouButton):
         """Initialize the button with the enum value of its part."""
         super().__init__(coordinator, description)
         self._value = value
-        self._attr_entity_registry_enabled_default = model_in(
-            coordinator.device.model, VERIFIED_MODELS
+        self._attr_entity_registry_enabled_default = reset_confirmed(
+            coordinator.device.model, description.key.removeprefix("reset_")
         )
 
     @override

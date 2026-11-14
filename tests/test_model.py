@@ -259,8 +259,15 @@ def test_consumable_counters_are_minutes_per_identifier() -> None:
         "main_brush_time": 60,
         "rosebox_time": 60,
         "sensor_time": 60,
+        "mop_time": 60,
+        "cover_time": 60,
+        "battery_time": 60,
     }
-    assert set(const.LIFE_RAW_PER_HOUR) == set(life.children)  # every member has a divisor
+    assert set(life.children) <= set(const.LIFE_RAW_PER_HOUR)  # every L11-A member has a divisor
+    # the RV1 models also have mop, main brush cover and battery counters; the L11-A has none
+    for model in (rv1(), rv1lpro()):
+        assert {"mop_time", "cover_time", "battery_time"} <= set(model.prop("life").children)
+    assert not {"mop_time", "cover_time", "battery_time"} & set(life.children)
 
 
 def test_parse_values_on_observed_data() -> None:
@@ -485,12 +492,16 @@ def test_array_item_members_and_member_refs() -> None:
 
 def test_reset_parts_map_by_label() -> None:
     parts = {"side_brush": 0, "main_brush": 1, "filter": 2, "sensors": 3}
+    rv1_parts = {**parts, "mop": 4, "main_brush_cover": 7, "battery": 8}
     assert const.RESET_PART_LABEL_KEYS == {
         "边刷": "side_brush", "滚刷": "main_brush", "滤芯": "filter", "传感器": "sensors",
+        "拖布": "mop", "主刷盖板": "main_brush_cover", "电池": "battery",
     }  # fmt: skip
-    # the L11-A has four labels; the RV1 models have more (mop, dust bag, ...) that get no button
-    for model in (l11a(), rv1(), rv1lpro()):
-        assert model.reset_parts() == parts
+    # the L11-A has four labels; the RV1 models also have mop, main brush cover and battery
+    # (dust bag and cleaning fluid have no button)
+    assert l11a().reset_parts() == parts
+    for model in (rv1(), rv1lpro()):
+        assert model.reset_parts() == rv1_parts
     assert l11a().service("reset_parts").input_enums["type"][3] == "传感器"
     assert rv1().service("reset_parts").input_enums["type"][8] == "电池"
 
@@ -516,7 +527,7 @@ def test_reset_parts_follow_the_label_not_the_number() -> None:
         edit(data)
         return model_mod.ThingsModel.from_api(data)
 
-    assert build(renumber).reset_parts() == {"sensors": 7, "side_brush": 5}
+    assert build(renumber).reset_parts() == {"sensors": 7, "side_brush": 5, "mop": 9}
     assert build(drop_service).reset_parts() == {}
     assert not build(drop_service).has_service("reset_parts")
     assert build(unknown_labels).reset_parts() == {}  # no label match, no numeric fallback

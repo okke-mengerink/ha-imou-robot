@@ -26,6 +26,15 @@
       },
       "reset_sensors": {
         "default": "mdi:radar"
+      },
+      "reset_mop": {
+        "default": "mdi:water-opacity"
+      },
+      "reset_main_brush_cover": {
+        "default": "mdi:brush"
+      },
+      "reset_battery": {
+        "default": "mdi:battery-sync"
       }
     },
     "select": {
@@ -69,6 +78,15 @@
       },
       "sensors": {
         "default": "mdi:radar"
+      },
+      "mop": {
+        "default": "mdi:water-opacity"
+      },
+      "main_brush_cover": {
+        "default": "mdi:brush"
+      },
+      "battery_usage": {
+        "default": "mdi:battery-clock"
       },
       "wifi_signal": {
         "default": "mdi:wifi"
