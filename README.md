@@ -111,7 +111,7 @@ The **Clean <room>** buttons work on every Home Assistant version. The `vacuum.c
 
 The Imou Open Platform API does not report the robot's map or room list, not even while it cleans. The room ids do appear in the robot's schedules, and a model with the property `sequence` (the cleaning order, for example the RV1 Pro Max) also reports the ids of its rooms there. The integration reads the rooms from both, together with the schedules once an hour. A room that is only in the cleaning order has no name from the Imou app and is called, for example, "Room -127" (room ids can be negative). That `sequence` lists all rooms was seen in the diagnostics of one robot and is not verified for others, so do not rely on it: if a room is missing, use a schedule as described below. Zeros in the cleaning order are ignored.
 
-On the RV1 models (RV1 Pro Max, RV1L Pro) the integration also reads the robot's room configuration, cleaning plans and cleaning order, when the cloud reports them, in the same read as `sequence` (no extra call). Rooms found there are added, without a name from the Imou app. When the robot has several maps, only the rooms of the current map are used if that map is known: the map of your schedules, else the only map the robot lists. This is not verified yet: no user has confirmed that these properties hold your rooms. Without them you still need a schedule, as described below. The L11-A does not have these properties and still needs a schedule.
+On the RV1 models (RV1 Pro Max, RV1L Pro) the integration also reads the robot's room configuration, cleaning plans and cleaning order, when the cloud reports them, in the same read as `sequence` (no extra call). Rooms found there are added, without a name from the Imou app. When the robot lists one map, only the rooms of that map are used. This is not verified yet for every robot: a user confirmed that the rooms of an RV1L Pro appear, but a robot may report none (an RV1 Pro Max reported an empty cleaning order and no room configuration, even though its app shows rooms). Without them you still need a schedule, as described below. The L11-A does not have these properties and still needs a schedule.
 
 To get your rooms:
 
@@ -128,6 +128,17 @@ data:
   cleaning_area_id:
     - office
 ```
+
+**A robot that reports no rooms.** If your robot's app shows rooms but the integration finds none, put the rooms in a schedule (step 1 above). The schedule may stay switched off: the integration only reads which rooms it holds.
+
+**A robot with several maps (beta).** When the robot's map list (`map_name`) has two or more maps, the same room id can exist on every map ("Room -127" on both floors). Such a robot can only clean the rooms of the map that is active in the Imou app, so the integration only shows those:
+
+- The active map is taken from the property `sweeper_sequence` when it has a map id, else from the map whose cleaning order equals the robot's current `sequence`, else from the only map in `map_name`. If none of these tells, the map is unknown.
+- The rooms are those of the active map: its cleaning order, its room properties and the schedules of that map. Rooms and schedules of other maps are not added. While the active map is unknown, only the rooms of `sequence` and the schedules without a usable map are used.
+- Names and links to areas are kept per map: renaming "Room -127" on one map does not rename it on the other. The segment ids are `<map id>:<room id>` and the Clean buttons are named after the map too, for example "Clean room -127 (Ground floor)". After you switch the map in the Imou app, the buttons of the other map become unavailable and the new map's buttons appear (the integration notices this at its next hourly read, or when you open **Link rooms to areas**). **Link rooms to areas** and **Rename rooms (advanced)** show the rooms of the active map, labelled with the map name.
+- Before a room is cleaned (a Clean button or `vacuum.clean_area`), the integration reads the active map again (one extra call, the cache is bypassed) and checks the room's map. A room of another map is refused with "This room is on another map; switch the map in the Imou app first." When that read fails or the active map is still unknown, it is refused with "Could not confirm the robot's active map; try again." A plain room id without a map (for example an older area link) is refused too: link the rooms again under **Configure** → **Link rooms to areas**. No Clean buttons are created until the active map is known.
+- A robot with one map keeps plain room ids, names and buttons, so nothing changes for it. Names saved before this version are plain: on a robot with several maps they are only used while its active map is unknown, so name those rooms again.
+- This is a beta and not verified on a real robot with several maps yet. Two assumptions are not verified on a real robot: that `sweeper_sequence` and `sequence` give the active map, and that a map switch is only noticed at a refresh (the hourly read, opening **Link rooms to areas**, or the check before cleaning).
 
 On Home Assistant 2026.3 or newer, a new room id that appears in your schedules, in the robot's room properties or in its cleaning order gives a repair notice, so that you can map it.
 

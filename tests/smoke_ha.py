@@ -137,6 +137,15 @@ class FakeCoordinator:
     def room_names(self) -> dict[int, str]:
         return {}  # no schedules read yet, so no rooms
 
+    def room_map(self) -> None:
+        return None  # a robot with one map: plain room ids
+
+    def is_multi_map(self) -> bool:
+        return False
+
+    async def async_check_rooms(self, map_ids: Any) -> None:
+        self.checked_maps = list(map_ids)
+
     def set_values(self, **values: Any) -> None:
         self.data.values.update(values)
 
@@ -812,7 +821,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.0b1"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.0b2"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -822,7 +831,7 @@ def test_files() -> None:
     from awesomeversion import AwesomeVersion, AwesomeVersionStrategy  # noqa: PLC0415
 
     version = AwesomeVersion(manifest["version"])
-    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.0", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b1" and AwesomeVersion("0.6.3") < version < AwesomeVersion("0.7.0"), f"{version.strategy} {version.modifier}")
+    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.0", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b2" and AwesomeVersion("0.6.4") < version < AwesomeVersion("0.7.0"), f"{version.strategy} {version.modifier}")
     hacs = json.loads((ROOT / "hacs.json").read_text("utf-8"))
     check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True, "zip_release": True, "filename": "imou_vacuum.zip"}, str(hacs))
     # the release workflow zips exactly this folder; the archive name must match hacs.json
@@ -1225,7 +1234,9 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("empty bin -> control 2300 {}", client.calls == [("control", "TESTDEVICE0001", "2300", {})], str(client.calls))
     check("room buttons are named 'Clean <room>' (the room's name, with the id suffix of a duplicate name)", [state(f"clean_room_{r}").name for r in (2, 3, 4)] == ["RV-L11-A-TEST Clean Kantoor", "RV-L11-A-TEST Clean Slaapkamer (3)", "RV-L11-A-TEST Clean Slaapkamer (4)"], str([state(f"clean_room_{r}").name for r in (2, 3, 4)]))
     check("room buttons: unique id, translation key, no entity category, broom icon", all((ent_reg.async_get(ids[f"clean_room_{r}"]).unique_id, ent_reg.async_get(ids[f"clean_room_{r}"]).translation_key, ent_reg.async_get(ids[f"clean_room_{r}"]).entity_category) == (f"TESTDEVICE0001_clean_room_{r}", "clean_room", None) for r in (2, 3, 4)) and ICONS_JSON["entity"]["button"]["clean_room"]["default"] == "mdi:broom")
+    reads_before = client.sequence_reads
     await call("button", "press", "clean_room_3")
+    check("single map (L11-A): pressing a room button makes no extra room-property read", client.sequence_reads == reads_before, f"{reads_before} {client.sequence_reads}")
     check("pressing 'Clean Slaapkamer (3)' sends a clean of room 3 only (mode 1, partition_area [3])", client.calls == [("control", "TESTDEVICE0001", "2700", {"2701": 1, "2702": 1, "2703": 0, "2704": "[3]"})], str(client.calls))
     check("... the press is recorded as the last command", coordinator.last_command is not None and coordinator.last_command["inputs"]["partition_area"] == {"type": "json", "value": [3]}, str(coordinator.last_command))
     await hass.async_block_till_done()
@@ -1579,7 +1590,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
 
     real_session_getter = diagnostics.async_get_clientsession
     diagnostics.async_get_clientsession = lambda hass: FakeSession()
-    check("L11-A: no room property call (no sequence, room sources or map_name in its model), so no extra call and no extra entity", client.room_read_refs == [] and coordinator._room_property_identifiers() == [] and coordinator.sequence_rooms is None and coordinator.source_entries is None and coordinator.listed_map_ids == [])  # noqa: SLF001
+    check("L11-A: no room property call (no sequence, room sources or map_name in its model), so no extra call and no extra entity", client.room_read_refs == [] and coordinator._room_property_identifiers() == [] and coordinator.sequence_rooms is None and coordinator.source_entries is None and coordinator.listed_map_ids == [] and coordinator.active_map() is None and not coordinator.is_multi_map() and coordinator.room_map() is None)  # noqa: SLF001
     client.probe_service_calls.clear()  # (the schedules were read during setup)
     probe_polls_before, polled_refs_before = client.poll_count, getattr(client, "last_refs", None)
     calls_before, health_before = len(client.calls), coordinator.health.failures
@@ -2794,6 +2805,372 @@ def test_rv1lpro_setup() -> None:
     run_fresh(RV1LProClient, rv1lpro_checks)
 
 
+# --- 0.7.0b2: rooms per active map -----------------------------------------------------------------
+MAP_A, MAP_B = 1001, 1002
+ORDER_A = [-127, -128, -126, -125]
+ORDER_B = [-127, -126, -128]
+
+
+class RV1TwoMapClient(RV1LProClient):
+    """An RV1 robot with two maps. Map A is active (its cleaning order is the top-level ``sequence``).
+    Room ids repeat on both maps. The schedules hold a room of map A and a schedule of map B."""
+
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
+        super().__init__(session, app_id, app_secret, host)
+        area_config = [{"147401": MAP_A, "147402": room, "147403": 0} for room in ORDER_A]
+        area_config += [{"147401": MAP_B, "147402": room, "147403": 0} for room in (*ORDER_B, -129)]
+        self.props.update(
+            {
+                "122300": [{"122302": "Map A", "122301": MAP_A}, {"122302": "Map B", "122301": MAP_B}],
+                "120600": list(ORDER_A),
+                "146000": [{"146001": MAP_A, "146002": json.dumps(ORDER_A)}, {"146001": MAP_B, "146002": json.dumps(ORDER_B)}],
+                "147400": area_config,
+            }
+        )
+
+        def schedule(map_id: int, timer: int, rooms: list[Any]) -> dict[str, Any]:
+            return {"201661": map_id, "201662": timer, "201663": 1, "201665": 1, "201666": rooms, "201667": 0, "201668": [1], "201669": 3600}
+
+        self.clean_list_output = {
+            "201621": [
+                schedule(MAP_A, 1, [-127, -128]),
+                schedule(MAP_B, 2, [{"id": -130, "name": "Attic"}, {"id": -127, "name": "Study"}]),  # rooms of map B
+            ]
+        }
+
+
+async def rv1_two_map_checks(hass: Any, entry: Any) -> None:
+    from homeassistant.components import button as button_component, vacuum as vacuum_component  # noqa: PLC0415
+    from homeassistant.exceptions import ServiceValidationError  # noqa: PLC0415
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    registry = er.async_get(hass)
+    device = "TESTDEVICE0004"
+
+    def clean_ids() -> set[str]:
+        return {e.unique_id.split("_", 1)[1] for e in er.async_entries_for_config_entry(registry, entry.entry_id) if e.unique_id.split("_", 1)[1].startswith("clean_room_")}
+
+    def entity_id(key: str) -> str:
+        return registry.async_get_entity_id("button", "imou_vacuum", f"{device}_{key}")
+
+    async def refresh() -> None:
+        coordinator._schedules_fetched_at = None  # noqa: SLF001
+        await coordinator.async_refresh_schedules()
+        await hass.async_block_till_done()
+
+    # 1. the active map: no sweeper_sequence, so the map whose cleaning order equals the top-level sequence
+    check("two maps: the robot has several maps", coordinator.is_multi_map() and coordinator.listed_map_ids == [MAP_A, MAP_B], str(coordinator.listed_map_ids))
+    check("two maps: the active map is the one whose cleaning order equals sequence (b)", coordinator.active_map() == MAP_A and coordinator.room_map() == MAP_A, str(coordinator.active_map()))
+    # 2. only the rooms of the active map: not -129 of map B, not the schedule of map B
+    check("two maps: map A gives the rooms of map A only (a room of map B and its schedule are not added)", coordinator.room_names() == {-128: "Room -128", -127: "Room -127", -126: "Room -126", -125: "Room -125"}, str(coordinator.room_names()))
+    check("two maps: the names of a schedule of map B do not appear (Study, Attic)", "Study" not in coordinator.room_names().values() and -130 not in coordinator.room_names())
+    check("two maps: segment ids carry the map", set(coordinator.room_segments()) == {f"{MAP_A}:{room}" for room in ORDER_A}, str(coordinator.room_segments()))
+    # 3. buttons: unique ids with map and room, none for the rooms of map B
+    check("two maps: the Clean buttons are keyed by map and room", clean_ids() == {f"clean_room_{MAP_A}_{room}" for room in ORDER_A}, str(sorted(clean_ids())))
+    button = entity_id(f"clean_room_{MAP_A}_-127")
+    check("two maps: a button is named after the room and its map and is available", hass.states.get(button).state != "unavailable" and hass.states.get(button).attributes["friendly_name"].endswith("Clean room -127 (Map A)"), str(hass.states.get(button)))
+    # 4. cleaning
+    client.calls.clear()
+    reads = client.sequence_reads
+    await hass.services.async_call("button", "press", {"entity_id": button}, blocking=True)
+    check("two maps: pressing a button forces one fresh read of the room properties first", client.sequence_reads == reads + 1, f"{reads} {client.sequence_reads}")
+    check("two maps: pressing a button of the active map cleans that room", client.calls == [("control", device, "200900", {"200901": 1, "200902": 1, "200903": [-127]})], str(client.calls))
+    vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(registry.async_get_entity_id("vacuum", "imou_vacuum", f"{device}_vacuum"))
+    client.calls.clear()
+    await vac_entity.async_clean_segments([f"{MAP_A}:-126"])
+    check("two maps: a segment of the active map is cleaned", client.calls == [("control", device, "200900", {"200901": 1, "200902": 1, "200903": [-126]})], str(client.calls))
+    client.calls.clear()
+    try:
+        await vac_entity.async_clean_segments([f"{MAP_A}:-126", f"{MAP_B}:-127"])
+    except ServiceValidationError as err:
+        check("two maps: a room of the other map raises the translated error", err.translation_key == "room_on_other_map" and "switch the map in the Imou app first" in str(err), f"{err.translation_key} {err}")
+    else:
+        check("two maps: a room of the other map raises the translated error", False)
+    check("two maps: ... and nothing was sent to the robot", client.calls == [], str(client.calls))
+    # a plain id (no map) on a multi-map robot whose active map is known is refused
+    for plain in ("-127", "5"):
+        try:
+            await vac_entity.async_clean_segments([plain])
+        except ServiceValidationError as err:
+            check(f"two maps: a plain segment id {plain!r} is refused with the re-link message", err.translation_key == "room_without_map" and "Link rooms to areas" in str(err), f"{err.translation_key} {err}")
+        else:
+            check(f"two maps: a plain segment id {plain!r} is refused with the re-link message", False)
+    check("two maps: ... and nothing was sent to the robot (plain ids)", client.calls == [], str(client.calls))
+    # the check bypasses the cache: the map switched in the app is noticed at once
+    client.props["160700"] = {"160701": MAP_B, "160702": json.dumps(ORDER_B)}
+    client.props["120600"] = list(ORDER_B)
+    client.calls.clear()
+    reads = client.sequence_reads
+    check("two maps: (cache is fresh) the coordinator still thinks map A is active", coordinator.active_map() == MAP_A)
+    try:
+        await vac_entity.async_clean_segments([f"{MAP_A}:-126"])
+    except ServiceValidationError as err:
+        check("two maps: a map switched since the last read is caught by the fresh read", err.translation_key == "room_on_other_map" and client.sequence_reads == reads + 1 and client.calls == [], f"{err.translation_key} {client.sequence_reads - reads} {client.calls}")
+    else:
+        check("two maps: a map switched since the last read is caught by the fresh read", False)
+    check("two maps: ... and the coordinator now knows map B", coordinator.active_map() == MAP_B)
+    client.props["160700"] = {"160701": MAP_A, "160702": json.dumps(ORDER_A)}
+    client.props["120600"] = list(ORDER_A)
+    await refresh()
+    check("two maps: back on map A", coordinator.active_map() == MAP_A)
+    # a failed fresh read or an unknown active map refuses the clean, with its own translated error
+    client.fail_sequence_with = mod("api").ImouApiError("OP1001", "boom")
+    client.calls.clear()
+    try:
+        await vac_entity.async_clean_segments([f"{MAP_A}:-126"])
+    except ServiceValidationError as err:
+        check("two maps: a failed fresh read refuses the clean (active_map_unconfirmed, translated)", err.translation_key == "active_map_unconfirmed" and "Could not confirm the robot's active map" in str(err) and client.calls == [], f"{err.translation_key} {err} {client.calls}")
+    else:
+        check("two maps: a failed fresh read refuses the clean (active_map_unconfirmed, translated)", False)
+    try:
+        await hass.data[button_component.DATA_COMPONENT].get_entity(button).async_press()
+    except ServiceValidationError as err:
+        check("two maps: ... a button press too", err.translation_key == "active_map_unconfirmed" and client.calls == [], f"{err.translation_key} {client.calls}")
+    else:
+        check("two maps: ... a button press too", False)
+    client.fail_sequence_with = None
+    # a fresh read with only ``sequence`` (the extra refs failed) leaves the active map unknown
+    client.fail_extras_with = mod("api").ImouApiError("OP1001", "extras")
+    try:
+        await vac_entity.async_clean_segments([f"{MAP_A}:-126"])
+    except ServiceValidationError as err:
+        check("two maps: a sequence-only fallback read makes the active map unknown and refuses the clean", err.translation_key == "active_map_unconfirmed" and coordinator.sweeper_map_id is None and coordinator.sequence_entries == [] and coordinator.active_map() is None, f"{err.translation_key} {coordinator.active_map()}")
+    else:
+        check("two maps: a sequence-only fallback read makes the active map unknown and refuses the clean", False)
+    check("two maps: ... and the buttons are not created or reused under another map meanwhile", not any(key.startswith("clean_room_-") for key in clean_ids()), str(sorted(clean_ids())))
+    client.fail_extras_with = None
+    coordinator._extra_failures = 0  # noqa: SLF001
+    coordinator._extras_disabled = False  # noqa: SLF001
+    await refresh()
+    check("two maps: the next full read finds map A again", coordinator.active_map() == MAP_A, str(coordinator.active_map()))
+    for bad in ("x", f"{MAP_A}:", "0:5"):
+        try:
+            await vac_entity.async_clean_segments([bad])
+        except ServiceValidationError as err:
+            check(f"two maps: an invalid segment id {bad!r} is refused", err.translation_key == "invalid_room", err.translation_key)
+        else:
+            check(f"two maps: an invalid segment id {bad!r} is refused", False)
+    if ha_clean_area() is not None:
+        segments = await vac_entity.async_get_segments()
+        check("two maps: the segments are the rooms of map A with map-qualified ids", sorted(seg.id for seg in segments) == sorted(f"{MAP_A}:{room}" for room in ORDER_A), str([(seg.id, seg.name) for seg in segments]))
+    # 5. names are kept per map: the same room id on both maps has two names
+    options = {"room_names": {device: {f"{MAP_A}:-127": "Kitchen", f"{MAP_B}:-127": "Study", "-127": "Plain", f"{MAP_B}:-130": "Attic"}}}
+    hass.config_entries.async_update_entry(entry, options=options)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators[device]  # the entry reloaded: a new coordinator, client and entities
+    client = FakeClient.instance
+    vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(registry.async_get_entity_id("vacuum", "imou_vacuum", f"{device}_vacuum"))
+    check("two maps: the name of -127 on map A is Kitchen; the name on map B and the plain name do not leak", coordinator.room_names()[-127] == "Kitchen" and "Study" not in coordinator.room_names().values() and "Plain" not in coordinator.room_names().values(), str(coordinator.room_names()))
+    check("two maps: a named room of map B is not remembered on map A", -130 not in coordinator.room_names())
+    check("two maps: the buttons of map A after the reload: Kitchen is named after its map", hass.states.get(entity_id(f"clean_room_{MAP_A}_-127")).attributes["friendly_name"].endswith("Clean Kitchen (Map A)"))
+    # the schedules sensor does not name the rooms of the schedule of map B after map A
+    schedules_state = hass.states.get(registry.async_get_entity_id("sensor", "imou_vacuum", f"{device}_schedules"))
+    rooms_attr = [item["rooms"] for item in schedules_state.attributes["schedules"]]
+    check("two maps: the schedules sensor names the rooms of map A, and shows default names for map B", rooms_attr == [["Kitchen", "Room -128"], ["Room -130", "Room -127"]], str(rooms_attr))
+    # the options flow shows the rooms of the active map, labelled with the map; saving keeps the names of the other map
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "room_areas"})
+    check("two maps: the area form labels the rooms of the active map with the map name", [str(key) for key in form["data_schema"].schema] == ["Room -128 (Map A)", "Room -127 (Map A): Kitchen", "Room -126 (Map A)", "Room -125 (Map A)"] and form["description_placeholders"]["robot"] == "RV1L-PRO-TEST (Map A)", f"{[str(key) for key in form['data_schema'].schema]} {form['description_placeholders']}")
+    hass.config_entries.options.async_abort(flow["flow_id"])
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "rooms"})
+    suggested = next(iter(form["data_schema"].schema)).description["suggested_value"]
+    check("two maps: the rename form lists the rooms of map A only", suggested == "-128 = Room -128\n-127 = Kitchen\n-126 = Room -126\n-125 = Room -125", repr(suggested))
+    done = await hass.config_entries.options.async_configure(flow["flow_id"], {"room_names": "-127 = Kitchen\n-126 = Hall\n-125 = Room -125"})
+    await hass.async_block_till_done()
+    check("two maps: saving the names of map A keeps those of map B and the plain names", done["data"]["room_names"][device] == {"-127": "Plain", f"{MAP_B}:-127": "Study", f"{MAP_B}:-130": "Attic", f"{MAP_A}:-127": "Kitchen", f"{MAP_A}:-126": "Hall"}, str(done["data"]["room_names"]))
+    coordinator = entry.runtime_data.coordinators[device]
+    client = FakeClient.instance
+    vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(registry.async_get_entity_id("vacuum", "imou_vacuum", f"{device}_vacuum"))
+    # the options forms refuse a submit after the map changed while they were open
+    async def switch_map(map_id: int, order: list[int]) -> None:
+        client.props["160700"] = {"160701": map_id, "160702": json.dumps(order)}
+        client.props["120600"] = list(order)
+        await refresh()
+
+    for step, user_input in (("room_areas", {}), ("rooms", {"room_names": "-127 = Hall"})):
+        flow = await hass.config_entries.options.async_init(entry.entry_id)
+        await hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": step})
+        await switch_map(MAP_B, ORDER_B)
+        before_options = dict(entry.options)
+        done = await hass.config_entries.options.async_configure(flow["flow_id"], user_input)
+        check(f"two maps: the {step} form aborts with map_changed when the map changed while it was open", done["type"] == "abort" and done["reason"] == "map_changed" and dict(entry.options) == before_options, str(done))
+        await switch_map(MAP_A, ORDER_A)
+    # a submit while the map is unchanged still works (the map of the form is the one that is used)
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(flow["flow_id"], {"next_step_id": "rooms"})
+    done = await hass.config_entries.options.async_configure(flow["flow_id"], {"room_names": "-127 = Kitchen\n-126 = Hall\n-125 = Room -125"})
+    await hass.async_block_till_done()
+    check("two maps: a rename with an unchanged map is stored under that map", done["type"] == "create_entry" and done["data"]["room_names"][device][f"{MAP_A}:-126"] == "Hall", str(done))
+    coordinator = entry.runtime_data.coordinators[device]
+    client = FakeClient.instance
+    vac_entity = hass.data[vacuum_component.DATA_COMPONENT].get_entity(registry.async_get_entity_id("vacuum", "imou_vacuum", f"{device}_vacuum"))
+    # the "new rooms" repair issue only compares with the rooms mapped on the active map
+    if ha_clean_area() is not None:
+        from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+        vacuum_id = registry.async_get_entity_id("vacuum", "imou_vacuum", f"{device}_vacuum")
+        issue_id = f"segments_changed_{registry.async_get(vacuum_id).id}"
+        issues = ir.async_get(hass)
+        mapped = [{"id": f"{MAP_A}:{r}", "name": f"A{r}", "group": None} for r in ORDER_A]
+        mapped += [{"id": f"{MAP_B}:{r}", "name": f"B{r}", "group": None} for r in (-130, -129, -128, -127, -126)]
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"last_seen_segments": mapped})
+        await hass.async_block_till_done()
+        await refresh()
+        check("two maps: no repair issue when every room of the active map was mapped", issues.async_get_issue("vacuum", issue_id) is None)
+        await switch_map(MAP_B, ORDER_B)
+        check("two maps: switching to another fully mapped map raises no repair issue", issues.async_get_issue("vacuum", issue_id) is None)
+        await switch_map(MAP_A, ORDER_A)
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"last_seen_segments": [m for m in mapped if m["id"] != f"{MAP_B}:-129"]})
+        await hass.async_block_till_done()
+        await refresh()
+        check("two maps: no repair issue on map A while only map B misses a mapped room", issues.async_get_issue("vacuum", issue_id) is None)
+        await switch_map(MAP_B, ORDER_B)
+        check("two maps: a room of the active map that was not mapped raises the issue", issues.async_get_issue("vacuum", issue_id) is not None)
+        ir.async_delete_issue(hass, "vacuum", issue_id)
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"last_seen_segments": []})
+        await switch_map(MAP_A, ORDER_A)
+    # 6. switch to map B (sweeper_sequence names the active map)
+    client.props["160700"] = {"160701": MAP_B, "160702": json.dumps(ORDER_B)}
+    client.props["120600"] = list(ORDER_B)
+    await refresh()
+    check("two maps: after the switch the active map is B (sweeper_sequence, (a))", coordinator.active_map() == MAP_B and coordinator.room_map() == MAP_B, str(coordinator.active_map()))
+    check("two maps: map B gives its own rooms (the schedule of map B and -129 included, none of map A's -125)", coordinator.room_names() == {-130: "Attic", -129: "Room -129", -128: "Room -128", -127: "Study", -126: "Room -126"}, str(coordinator.room_names()))
+    check("two maps: new buttons for map B exist; those of map A are unavailable", f"clean_room_{MAP_B}_-127" in clean_ids() and hass.states.get(entity_id(f"clean_room_{MAP_A}_-127")).state == "unavailable" and hass.states.get(entity_id(f"clean_room_{MAP_B}_-127")).state != "unavailable", str(sorted(clean_ids())))
+    check("two maps: the buttons of map A are not asked for again and the plain keys are not created", not any(key.startswith("clean_room_-") for key in clean_ids()))
+    client.calls.clear()
+    try:
+        await vac_entity.async_clean_segments([f"{MAP_A}:-127"])
+    except ServiceValidationError as err:
+        check("two maps: after the switch a room of map A raises", err.translation_key == "room_on_other_map", err.translation_key)
+    else:
+        check("two maps: after the switch a room of map A raises", False)
+    try:
+        button_entity = hass.data[button_component.DATA_COMPONENT].get_entity(entity_id(f"clean_room_{MAP_A}_-127"))
+        await button_entity.async_press()
+    except ServiceValidationError as err:
+        check("two maps: pressing a button of the other map raises too", err.translation_key == "room_on_other_map" and client.calls == [], f"{err.translation_key} {client.calls}")
+    else:
+        check("two maps: pressing a button of the other map raises too", False)
+    # 7. the active map is unknown: only the rooms of sequence (plain ids), schedules need a usable map
+    del client.props["160700"]
+    client.props["120600"] = [-5, -6]
+    await refresh()
+    check("two maps: no active map: the rooms of sequence, plus a room with a plain (older) name; no room of the schedules or sources", coordinator.active_map() is None and coordinator.room_map() is None and coordinator.room_names() == {-127: "Plain", -6: "Room -6", -5: "Room -5"}, f"{coordinator.active_map()} {coordinator.room_names()}")
+    check("two maps: ... no plain Clean buttons are created while the map is unknown", not {f"clean_room_{room}" for room in (-5, -6)} & clean_ids(), str(sorted(clean_ids())))
+    check("two maps: ... the names of either map do not apply (only the plain name)", not {"Kitchen", "Study", "Attic"} & set(coordinator.room_names().values()))
+    client.calls.clear()
+    try:
+        await vac_entity.async_clean_segments(["-5"])
+    except ServiceValidationError as err:
+        check("two maps: ... a plain segment is refused while the map is unknown (active_map_unconfirmed)", err.translation_key == "active_map_unconfirmed" and client.calls == [], f"{err.translation_key} {client.calls}")
+    else:
+        check("two maps: ... a plain segment is refused while the map is unknown (active_map_unconfirmed)", False)
+    # the schedules sensor and the diagnostics know the active map
+    from homeassistant.components.diagnostics import async_redact_data  # noqa: F401, PLC0415
+
+    diagnostics = await importlib.import_module(f"{PKG}.diagnostics").async_get_config_entry_diagnostics(hass, entry)
+    check("two maps: the diagnostics show the active map", diagnostics["robots"][0]["active_map"] is None and diagnostics["robots"][0]["multi_map"] is True, str({k: diagnostics["robots"][0][k] for k in ("active_map", "multi_map")}))
+    client.props["160700"] = {"160701": MAP_A, "160702": "[]"}
+    await refresh()
+    diagnostics = await importlib.import_module(f"{PKG}.diagnostics").async_get_config_entry_diagnostics(hass, entry)
+    check("two maps: ... and the active map once it is known", diagnostics["robots"][0]["active_map"] == MAP_A, str(diagnostics["robots"][0]["active_map"]))
+
+
+class RV1SingleMapClient(RV1LProClient):
+    """The RV1L Pro of a real beta report (one map, ids neutralised): ``sequence``, ``swp_cleansequence`` and
+    ``sweeper_sequence`` hold the same 9 rooms and ``swp_allareaConfig`` 5 of them."""
+
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
+        super().__init__(session, app_id, app_secret, host)
+        order = [-128, -126, -125, -124, -123, -127, -121, -120, -119]
+        self.props.update(
+            {
+                "122300": [{"122302": "Map A", "122301": MAP_A}],
+                "120600": list(order),
+                "146000": [{"146001": MAP_A, "146002": json.dumps(order)}],
+                "160700": {"160701": MAP_A, "160702": json.dumps(order)},
+                "147400": [{"147401": MAP_A, "147402": room, "147403": 0} for room in order[:5]],
+            }
+        )
+
+
+async def rv1_single_map_checks(hass: Any, entry: Any) -> None:
+    from homeassistant.components import vacuum as vacuum_component  # noqa: PLC0415
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    registry = er.async_get(hass)
+    wanted = [-128, -126, -125, -124, -123, -127, -121, -120, -119]
+    keys = {e.unique_id.split("_", 1)[1] for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+    check("single map: the active map is known, but the robot has one map", coordinator.active_map() == MAP_A and not coordinator.is_multi_map() and coordinator.room_map() is None, f"{coordinator.active_map()} {coordinator.is_multi_map()}")
+    check("single map: the 9 rooms appear with plain ids and plain names", coordinator.room_names() == {room: f"Room {room}" for room in sorted(wanted)} and set(coordinator.room_segments()) == {str(room) for room in wanted}, str(coordinator.room_names()))
+    check("single map: Clean buttons keep the plain unique ids", {k for k in keys if k.startswith("clean_room_")} == {f"clean_room_{room}" for room in wanted}, str(sorted(keys)))
+    reads = client.sequence_reads
+    client.calls.clear()
+    await hass.services.async_call("button", "press", {"entity_id": registry.async_get_entity_id("button", "imou_vacuum", "TESTDEVICE0004_clean_room_-127")}, blocking=True)
+    vac_single = hass.data[vacuum_component.DATA_COMPONENT].get_entity(registry.async_get_entity_id("vacuum", "imou_vacuum", "TESTDEVICE0004_vacuum"))
+    await vac_single.async_clean_segments(["-126"])
+    check("single map: a button and a plain segment id clean without any extra read of the room properties", client.sequence_reads == reads and [c[3]["200903"] for c in client.calls] == [[-127], [-126]], f"{client.sequence_reads - reads} {client.calls}")
+    check("single map: the button is named without a map", hass.states.get(registry.async_get_entity_id("button", "imou_vacuum", "TESTDEVICE0004_clean_room_-127")).attributes["friendly_name"].endswith("Clean room -127"))
+    # a robot that reports no rooms (empty sequence and lists, no room configuration): nothing breaks
+    client.props["120600"] = []
+    client.props["146000"] = [{"146001": MAP_A, "146002": "[]"}]
+    client.props["160700"] = {"160701": MAP_A, "160702": "[]"}
+    del client.props["147400"]
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    check("single map: a robot with an empty cleaning order has no rooms and no failure", await coordinator.async_refresh_schedules() is True and coordinator.room_names() == {} and coordinator.active_map() == MAP_A, str(coordinator.room_names()))
+    # the stored names are plain ones; a qualified name of an earlier two-map state is not used
+    hass.config_entries.async_update_entry(entry, options={"room_names": {"TESTDEVICE0004": {"-127": "Plain", f"{MAP_A}:-127": "Qualified"}}})
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    check("single map: only the plain room names apply", coordinator.room_overrides() == {-127: "Plain"}, str(coordinator.room_overrides()))
+
+
+def test_rv1_two_maps() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1TwoMapClient, rv1_two_map_checks)
+
+
+class RV1TwoMapUnknownClient(RV1TwoMapClient):
+    """Two maps, but nothing tells which one is active: the order of ``sequence`` matches neither map."""
+
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
+        super().__init__(session, app_id, app_secret, host)
+        self.props["120600"] = [-5, -6]
+
+
+async def rv1_two_map_unknown_checks(hass: Any, entry: Any) -> None:
+    from homeassistant.helpers import entity_registry as er  # noqa: PLC0415
+
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    registry = er.async_get(hass)
+    keys = {e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+    check("two maps, active map unknown at setup: multi-map and no active map", coordinator.is_multi_map() and coordinator.active_map() is None, str(coordinator.active_map()))
+    check("two maps, active map unknown at setup: rooms are known (plain ids) but no Clean button is created", bool(coordinator.room_names()) and not any("_clean_room_" in key for key in keys), str(sorted(keys)))
+    # once the map is known the buttons appear, qualified with the map
+    FakeClient.instance.props["160700"] = {"160701": MAP_A, "160702": json.dumps(ORDER_A)}
+    FakeClient.instance.props["120600"] = list(ORDER_A)
+    coordinator._schedules_fetched_at = None  # noqa: SLF001
+    await coordinator.async_refresh_schedules()
+    await hass.async_block_till_done()
+    keys = {e.unique_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
+    check("two maps: the Clean buttons appear, with the map, once the active map is known", {f"TESTDEVICE0004_clean_room_{MAP_A}_{room}" for room in ORDER_A} <= keys and not any(k.startswith("TESTDEVICE0004_clean_room_-") for k in keys), str(sorted(keys)))
+
+
+def test_rv1_two_maps_unknown_at_setup() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1TwoMapUnknownClient, rv1_two_map_unknown_checks)
+
+
+def test_rv1_single_map_with_room_properties() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1SingleMapClient, rv1_single_map_checks)
+
+
 def test_optional_entities_of_a_late_robot() -> None:
     FakeClient.initial_status, RV1LProClient.drop_station = "offline", False
     try:
@@ -2954,7 +3331,7 @@ def test_issue_translations() -> None:
 
 
 def main() -> int:
-    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_reset_buttons, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
+    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_reset_buttons, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_rv1_two_maps, test_rv1_two_maps_unknown_at_setup, test_rv1_single_map_with_room_properties, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
         print(f"\n=== {func.__name__} ===")
         try:
             func()

@@ -39,14 +39,16 @@ from .const import (
     REGION_HOSTS,
 )
 from .coordinator import ImouCoordinator, default_room_name
-from .model import to_int
 from .rooms import (
     areas_by_room,
     format_room_names,
     new_area_mapping,
     new_last_seen_segments,
     parse_room_names,
+    replace_room_names,
     room_area_labels,
+    room_key,
+    room_overrides_for,
     segment_names,
 )
 from .vacuum import CLEAN_AREA
@@ -184,6 +186,9 @@ class ImouOptionsFlow(OptionsFlow):
         self._device_id: str | None = None
         # form label -> room id of the "link rooms to areas" form
         self._area_labels: dict[str, int] = {}
+        # the map of the rooms in the form that was shown (``None``: plain room ids);
+        # a submit is only valid while the robot's room map is still this one
+        self._form_map: int | None = None
 
     @property
     def _coordinators(self) -> dict[str, ImouCoordinator]:
@@ -231,6 +236,13 @@ class ImouOptionsFlow(OptionsFlow):
             description_placeholders={"robot": coordinator.device.name},
         )
 
+    @staticmethod
+    def _robot_label(coordinator: ImouCoordinator) -> str:
+        """Return the robot's name, with the name of its active map on a robot with several maps."""
+        map_id = coordinator.room_map()
+        name = coordinator.device.name
+        return name if map_id is None else f"{name} ({coordinator.map_label(map_id)})"
+
     def _vacuum_entity_id(self, coordinator: ImouCoordinator) -> str | None:
         """Return the entity id of the robot's vacuum, if it is in the entity registry."""
         return er.async_get(self.hass).async_get_entity_id(
@@ -246,6 +258,8 @@ class ImouOptionsFlow(OptionsFlow):
             return self.async_abort(reason="no_rooms")
         if user_input is None:
             await coordinator.async_refresh_schedules()  # pick up new schedules
+        elif coordinator.room_map() != self._form_map:
+            return self.async_abort(reason="map_changed")
         known = coordinator.known_room_tags()
         if not known:
             return self.async_abort(reason="no_rooms")
@@ -257,14 +271,17 @@ class ImouOptionsFlow(OptionsFlow):
         vacuum_entry = entity_registry.async_get(vacuum_id) if vacuum_id else None
         vacuum_options = dict(vacuum_entry.options.get("vacuum", {})) if vacuum_entry else {}
 
+        map_id = self._form_map if user_input is not None else coordinator.room_map()
         if user_input is None:
-            labels = room_area_labels(known, coordinator.room_overrides(), default_room_name)
+            self._form_map = map_id  # with several maps: the rooms of the active map
+            labels = room_area_labels(known, coordinator.room_overrides(), coordinator.room_label)
             self._area_labels = labels
             schema = vol.Schema({vol.Optional(label): AreaSelector() for label in labels})
             current = areas_by_room(
                 vacuum_options.get("area_mapping"),
                 known,
                 {area.id for area in area_registry.async_list_areas()},
+                map_id,
             )
             return self.async_show_form(
                 step_id="room_areas",
@@ -276,7 +293,7 @@ class ImouOptionsFlow(OptionsFlow):
                         if room_id in current
                     },
                 ),
-                description_placeholders={"robot": coordinator.device.name},
+                description_placeholders={"robot": self._robot_label(coordinator)},
             )
 
         # the area of every room that was in the form; an unknown area counts as none
@@ -294,16 +311,12 @@ class ImouOptionsFlow(OptionsFlow):
         # a. the room takes the name of its area; rooms without an area keep their name
         stored = dict(self.config_entry.options.get(CONF_ROOM_NAMES, {}))
         device_names = dict(stored.get(device_id, {}))
-        device_names.update({str(room_id): name for room_id, name in area_names.items()})
+        device_names.update({room_key(map_id, room_id): name for room_id, name in area_names.items()})
         stored[device_id] = device_names
 
         # b. the link to the area (Home Assistant 2026.3 and newer, for "Clean area")
         if CLEAN_AREA is not None and vacuum_id is not None:
-            overrides = {
-                room_id: name
-                for key, name in device_names.items()
-                if (room_id := to_int(key)) is not None and isinstance(name, str) and name
-            }
+            overrides = room_overrides_for(device_names, map_id)
             # the names the coordinator will show once these options are saved
             new_names = segment_names(known, known, overrides, default_room_name)
             entity_registry.async_update_entity_options(
@@ -315,10 +328,11 @@ class ImouOptionsFlow(OptionsFlow):
                         vacuum_options.get("area_mapping"),
                         chosen,
                         {area.id for area in area_registry.async_list_areas()},
+                        map_id,
                     ),
                     "last_seen_segments": new_last_seen_segments(
                         vacuum_options.get("last_seen_segments"),
-                        {room_id: new_names[room_id] for room_id in chosen},
+                        {room_key(map_id, room_id): new_names[room_id] for room_id in chosen},
                     ),
                 },
             )
@@ -337,6 +351,9 @@ class ImouOptionsFlow(OptionsFlow):
             return self.async_abort(reason="no_rooms")
         if user_input is None:
             await coordinator.async_refresh_schedules()  # pick up new schedules
+            self._form_map = coordinator.room_map()
+        elif coordinator.room_map() != self._form_map:
+            return self.async_abort(reason="map_changed")
         known = coordinator.known_room_tags()
         if not known:
             return self.async_abort(reason="no_rooms")
@@ -356,11 +373,16 @@ class ImouOptionsFlow(OptionsFlow):
                     for room_id, tag in known.items()
                 }
                 stored = dict(self.config_entry.options.get(CONF_ROOM_NAMES, {}))
-                stored[coordinator.device.device_id] = {
-                    str(room_id): name
-                    for room_id, name in names.items()
-                    if name not in (default_room_name(room_id), automatic.get(room_id))
-                }
+                # the names of the active map are replaced, those of other maps are kept
+                stored[coordinator.device.device_id] = replace_room_names(
+                    stored.get(coordinator.device.device_id, {}),
+                    self._form_map,
+                    {
+                        room_id: name
+                        for room_id, name in names.items()
+                        if name not in (default_room_name(room_id), automatic.get(room_id))
+                    },
+                )
                 return self.async_create_entry(
                     data={**self.config_entry.options, CONF_ROOM_NAMES: stored}
                 )
@@ -383,6 +405,6 @@ class ImouOptionsFlow(OptionsFlow):
             data_schema=self.add_suggested_values_to_schema(
                 schema, {CONF_ROOM_NAMES: suggested}
             ),
-            description_placeholders={"robot": coordinator.device.name},
+            description_placeholders={"robot": self._robot_label(coordinator)},
             errors=errors,
         )

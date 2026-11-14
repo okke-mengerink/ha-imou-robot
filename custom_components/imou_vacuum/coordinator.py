@@ -12,7 +12,11 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -43,12 +47,16 @@ from .const import (
     INPUT_WIND,
     MAP_NAME,
     MAP_NAME_MEMBER_ID,
+    MAP_NAME_MEMBER_NAME,
     MAX_EXTRA_FAILURES,
     MEMBER_MAP_ID,
+    MULTI_MAP_MINIMUM,
     OUTPUT_TIMER,
     PART_ROOM_PROPERTIES,
+    PROP_ALL_CLEAN_SEQUENCE,
     PROP_ERROR_INFO,
     PROP_SEQUENCE,
+    PROP_SWEEPER_SEQUENCE,
     PROP_WATER,
     PROP_WIND_POWER,
     PROP_WORK_STATUS,
@@ -68,17 +76,24 @@ from .model import ReportTracker, ThingsModel, to_bool, to_int
 from .probe import redact, summarize
 from .rooms import (
     RoomEntry,
+    Schedule,
     ScheduleList,
+    active_map_id,
     current_map_id,
     known_rooms,
     map_ids,
+    map_names,
+    map_rooms,
     parse_schedules,
     partition_area,
     remembered_rooms,
     room_entries,
+    room_key,
+    room_overrides_for,
     rooms_on_map,
     segment_names,
     sequence_room_ids,
+    valid_map_id,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -196,6 +211,11 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         self.sequence_rooms: list[int] | None = None
         self.source_entries: list[RoomEntry] | None = None
         self.listed_map_ids: list[int] = []
+        # for the active map (``active_map``): the map of ``sweeper_sequence``, the cleaning
+        # order of each map (``swp_cleansequence``) and the names of the listed maps
+        self.sweeper_map_id: int | None = None
+        self.sequence_entries: list[RoomEntry] = []
+        self.map_names: dict[int, str] = {}
         self._schedules_due = 0.0  # time.monotonic() of the next fetch
         # the parts (``clean_list``, PART_ROOM_PROPERTIES) whose last read failed: only
         # those are retried, so one part's failure does not repeat the other's call
@@ -502,6 +522,10 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         if self.model.prop(PROP_SEQUENCE) is not None:
             self.sequence_rooms = sequence_room_ids(values.get(PROP_SEQUENCE))
         if not with_sources:
+            # only ``sequence`` was read: it may be the order of another map now, so the
+            # active map is unknown until the next full read
+            self.sweeper_map_id = None
+            self.sequence_entries = []
             if self.source_entries is None:
                 self.source_entries = []
             return
@@ -516,9 +540,19 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                     MEMBER_MAP_ID,
                 )
         self.source_entries = entries
+        if (prop := self.model.prop(PROP_ALL_CLEAN_SEQUENCE)) is not None:
+            self.sequence_entries = room_entries(
+                values.get(PROP_ALL_CLEAN_SEQUENCE), prop.member_refs, None, "list", MEMBER_MAP_ID
+            )
+        if (prop := self.model.prop(PROP_SWEEPER_SEQUENCE)) is not None:
+            found = map_ids(values.get(PROP_SWEEPER_SEQUENCE), prop.member_refs, MEMBER_MAP_ID)
+            self.sweeper_map_id = found[0] if len(found) == 1 else None
         if (prop := self.model.prop(MAP_NAME)) is not None:
             self.listed_map_ids = map_ids(
                 values.get(MAP_NAME), prop.member_refs, MAP_NAME_MEMBER_ID
+            )
+            self.map_names = map_names(
+                values.get(MAP_NAME), prop.member_refs, MAP_NAME_MEMBER_ID, MAP_NAME_MEMBER_NAME
             )
 
     def current_map(self) -> int | None:
@@ -530,13 +564,116 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         )
         return current_map_id(scheduled, self.listed_map_ids)
 
+    def is_multi_map(self) -> bool:
+        """Whether ``map_name`` lists several maps (room ids then repeat per map)."""
+        return len(self.listed_map_ids) >= MULTI_MAP_MINIMUM
+
+    def active_map(self) -> int | None:
+        """Return the id of the map the robot has active, if it can be told, else None.
+
+        See ``active_map_id`` for the order of the sources.
+        """
+        return active_map_id(
+            self.sweeper_map_id,
+            self.sequence_entries,
+            self.sequence_rooms or (),
+            self.listed_map_ids,
+        )
+
+    def room_map(self) -> int | None:
+        """Return the map that room keys, names and buttons are qualified with.
+
+        Only a robot with several maps qualifies them, and only while its active map is
+        known; otherwise rooms keep their plain ids (the single-map behaviour).
+        """
+        return self.active_map() if self.is_multi_map() else None
+
+    def map_label(self, map_id: int | None) -> str:
+        """Return the name of a map (its id when it has no name)."""
+        return "" if map_id is None else self.map_names.get(map_id, str(map_id))
+
+    def room_label(self, room_id: int) -> str:
+        """Return the default name of a room, with its map on a robot with several maps."""
+        name = default_room_name(room_id)
+        map_id = self.room_map()
+        return name if map_id is None else f"{name} ({self.map_label(map_id)})"
+
+    def schedule_on_active_map(self, schedule: Schedule) -> bool:
+        """Whether the rooms of a schedule belong to the rooms shown for this robot.
+
+        Always true for a robot with one map. With several maps: the schedule's map must
+        be the active map, or, while that is unknown, the schedule has no usable map.
+        """
+        if not self.is_multi_map():
+            return True
+        schedule_map = valid_map_id(schedule.map_id)
+        active = self.active_map()
+        return schedule_map is None if active is None else schedule_map == active
+
+    def check_room_map(self, map_id: int | None) -> None:
+        """Raise a translated error for a room that cannot be cleaned on the active map.
+
+        A room of another map is refused. On a robot with several maps whose active map
+        is known, a room without a map (an older plain id) is refused too. A robot
+        whose active map is unknown passes.
+        """
+        active = self.active_map()
+        if active is None:
+            return
+        if map_id is not None and map_id != active:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="room_on_other_map"
+            )
+        if map_id is None and self.is_multi_map():
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="room_without_map"
+            )
+
+    async def async_check_rooms(self, map_ids: Iterable[int | None]) -> None:
+        """Check the maps of rooms about to be cleaned; see ``check_room_map``.
+
+        A robot with several maps first gets a fresh read of its room properties (the
+        cache is bypassed): the map may have been switched in the Imou app since the
+        last read. When that read fails or the active map is still unknown, the
+        rooms are refused too. A robot with one map makes no extra call.
+        """
+        wanted = list(map_ids)
+        if self.is_multi_map():
+            read = await self._async_fetch_schedules({PART_ROOM_PROPERTIES})
+            self.async_update_listeners()
+            if not read or self.active_map() is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN, translation_key="active_map_unconfirmed"
+                )
+        for map_id in wanted:
+            self.check_room_map(map_id)
+
     def property_rooms(self) -> list[int]:
         """Return the rooms from the properties: the cleaning order and the rooms of
-        the current map from the other room properties."""
+        the current map from the other room properties.
+
+        With several maps, ``sequence`` is the order of the active map, and the other
+        properties only count for the active map.
+        """
+        if self.is_multi_map():
+            return [
+                *(self.sequence_rooms or ()),
+                *map_rooms(self.source_entries or (), self.active_map()),
+            ]
         return [
             *(self.sequence_rooms or ()),
             *rooms_on_map(self.source_entries or (), self.current_map()),
         ]
+
+    def room_schedules(self) -> ScheduleList | None:
+        """Return the schedules whose rooms count: all of them, or with several maps
+        those of the active map (see ``schedule_on_active_map``)."""
+        if self.schedules is None or not self.is_multi_map():
+            return self.schedules
+        return ScheduleList(
+            tz_offset=self.schedules.tz_offset,
+            schedules=[s for s in self.schedules.schedules if self.schedule_on_active_map(s)],
+        )
 
     async def async_refresh_schedules(self) -> bool:
         """Read the schedules and cleaning order now and update the entities; False if
@@ -570,14 +707,10 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         )
 
     def room_overrides(self) -> dict[int, str]:
-        """Return the room names the user chose for this robot, by room id."""
+        """Return the room names the user chose for this robot (and its active map), by room id."""
         options = self.config_entry.options.get(CONF_ROOM_NAMES, {})
         stored = options.get(self.device.device_id, {}) if isinstance(options, Mapping) else {}
-        overrides: dict[int, str] = {}
-        for key, name in (stored.items() if isinstance(stored, Mapping) else ()):
-            if (room_id := to_int(key)) is not None and isinstance(name, str) and name:
-                overrides[room_id] = name
-        return overrides
+        return room_overrides_for(stored, self.room_map())
 
     def known_room_tags(self) -> dict[int, str | None]:
         """Return every room (ascending) with its label from the Imou app, if any.
@@ -588,7 +721,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         lists it any more.
         """
         return remembered_rooms(
-            known_rooms(self.schedules, self.property_rooms()), self.room_overrides()
+            known_rooms(self.room_schedules(), self.property_rooms()), self.room_overrides()
         )
 
     def room_names(self) -> dict[int, str]:
@@ -600,6 +733,11 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         """
         known = self.known_room_tags()
         return segment_names(known, known, self.room_overrides(), default_room_name)
+
+    def room_segments(self) -> dict[str, str]:
+        """Return the name of every known room by segment id (see ``room_key``)."""
+        map_id = self.room_map()
+        return {room_key(map_id, room_id): name for room_id, name in self.room_names().items()}
 
     async def async_clean_rooms(self, room_ids: list[int]) -> None:
         """Clean these rooms (ids as found in the schedules or the cleaning order)."""

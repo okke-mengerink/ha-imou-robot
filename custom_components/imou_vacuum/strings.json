@@ -79,7 +79,8 @@
       "invalid_room_names": "Every line must look like `3 = Blue room`: a room number, an equals sign and a name."
     },
     "abort": {
-      "no_rooms": "No rooms are known yet. The robot reveals its rooms in the cleaning schedules (and on some models in its cleaning order). Create a schedule in the Imou app that selects the rooms (you may switch it off afterwards), then try again."
+      "no_rooms": "No rooms are known yet. The robot reveals its rooms in the cleaning schedules (and on some models in its cleaning order). Create a schedule in the Imou app that selects the rooms (you may switch it off afterwards), then try again.",
+      "map_changed": "The robot's active map changed while this form was open. Open Configure again."
     }
   },
   "entity": {
@@ -311,6 +312,15 @@
     },
     "invalid_room": {
       "message": "{room} is not a valid room id. Use the room number from the schedules, for example 3."
+    },
+    "room_on_other_map": {
+      "message": "This room is on another map; switch the map in the Imou app first."
+    },
+    "room_without_map": {
+      "message": "This room id has no map, which is not allowed on a robot with several maps. Link the rooms to areas again under Configure → Link rooms to areas."
+    },
+    "active_map_unconfirmed": {
+      "message": "Could not confirm the robot's active map; try again."
     }
   }
 }

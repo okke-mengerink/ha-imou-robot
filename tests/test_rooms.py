@@ -749,5 +749,134 @@ def test_sources_of_the_models() -> None:
     assert model.ThingsModel.from_api(fixture("l11a_model.json")).prop("swp_allareaconfig") is None
 
 
+# --- 0.7.0b2: rooms per active map (neutral ids: maps 1001 and 1002) -------------------------------
+ORDER_A = (-127, -128, -126, -125)
+ORDER_B = (-127, -126, -128)
+SEQUENCE_ENTRIES = [(1001, ORDER_A), (1002, ORDER_B)]
+
+
+def test_active_map_id_sources_in_order() -> None:
+    # (a) the map of sweeper_sequence wins over everything
+    assert rooms.active_map_id(1002, SEQUENCE_ENTRIES, ORDER_A, [1001, 1002]) == 1002
+    assert rooms.active_map_id("1002", [], [], [1001, 1002]) == 1002  # ids are compared as ints
+    # (b) the one map whose cleaning order equals the top-level sequence
+    assert rooms.active_map_id(None, SEQUENCE_ENTRIES, list(ORDER_A), [1001, 1002]) == 1001
+    assert rooms.active_map_id(None, SEQUENCE_ENTRIES, list(ORDER_B), [1001, 1002]) == 1002
+    # (c) the one map of map_name
+    assert rooms.active_map_id(None, [], [], [1001]) == 1001
+    assert rooms.active_map_id(None, SEQUENCE_ENTRIES, [-1], [1001, 1001]) == 1001
+    # (d) unknown
+    assert rooms.active_map_id(None, [], [], []) is None
+    assert rooms.active_map_id(None, SEQUENCE_ENTRIES, [-1], [1001, 1002]) is None
+
+
+def test_active_map_id_edge_cases() -> None:
+    # an unusable sweeper map falls through to the next source
+    for odd in (-1, 0, None, "x", True, 1.5):
+        assert rooms.active_map_id(odd, SEQUENCE_ENTRIES, ORDER_B, [1001, 1002]) == 1002, odd
+    # an empty order matches nothing (a robot with an empty sequence and empty lists)
+    assert rooms.active_map_id(None, [(1001, ()), (1002, ())], [], [1001, 1002]) is None
+    # the match must be unique: two maps with the same order tell nothing
+    assert rooms.active_map_id(None, [(1001, ORDER_A), (1002, ORDER_A)], ORDER_A, [1001, 1002]) is None
+    # ... but one map listed twice is still one map
+    assert rooms.active_map_id(None, [(1001, ORDER_A), (1001, ORDER_A), (1002, ORDER_B)], ORDER_A, [1001, 1002]) == 1001
+    # the order is compared as a whole, including its order
+    assert rooms.active_map_id(None, SEQUENCE_ENTRIES, [-128, -127, -126, -125], [1001, 1002]) is None
+    # an entry without a map cannot be the active map
+    assert rooms.active_map_id(None, [(None, ORDER_A)], ORDER_A, [1001, 1002]) is None
+
+
+def test_active_map_id_from_the_property_values() -> None:
+    """The path of the coordinator: parse_values and the model's refs, then the order."""
+    pro_max = model.ThingsModel.from_api(fixture("rv1promax_model.json"))
+    lpro = model.ThingsModel.from_api(fixture("rv1lpro_model.json"))
+    sequences = pro_max.prop("swp_cleansequence")
+    values = pro_max.parse_values(
+        {
+            sequences.ref: [
+                {"146001": 1001, "146002": "[-127,-128,-126,-125]"},
+                {"146001": 1002, "146002": "[-127,-126,-128]"},
+            ],
+        }
+    )
+    entries = rooms.room_entries(values["swp_cleansequence"], sequences.member_refs, None, "list", const.MEMBER_MAP_ID)
+    assert entries == SEQUENCE_ENTRIES
+    assert rooms.active_map_id(None, entries, rooms.sequence_room_ids("[-127,-126,-128]"), [1001, 1002]) == 1002
+    sweeper = lpro.prop("sweeper_sequence")
+    found = rooms.map_ids(lpro.parse_values({sweeper.ref: {"160701": 1001, "160702": "[]"}})["sweeper_sequence"], sweeper.member_refs, const.MEMBER_MAP_ID)
+    assert found == [1001]  # an empty list does not hide the map of the struct
+
+
+def test_map_rooms() -> None:
+    entries = [(1001, (-128, -127)), (1002, (-5,)), (None, (9,)), (1001, (-127, 4)), (1002, (4,))]
+    assert rooms.map_rooms(entries, 1001) == [-128, -127, 9, 4]  # other maps are not added, no map id is kept
+    assert rooms.map_rooms(entries, 1002) == [-5, 9, 4]
+    assert rooms.map_rooms(entries, None) == [9]  # unknown map: only what has no map
+    assert rooms.map_rooms([], 1001) == []
+
+
+def test_map_names() -> None:
+    refs = {"map_id": "122301", "name": "122302"}
+    value = [{"122301": 1001, "122302": " Map A "}, {"map_id": 1002, "name": "Map B"}, {"map_id": 1003}, {"name": "x"}, {"map_id": -1, "name": "y"}]
+    assert rooms.map_names(value, refs, "map_id", "name") == {1001: "Map A", 1002: "Map B"}
+    assert rooms.map_names(None, refs, "map_id", "name") == {}
+
+
+def test_room_keys() -> None:
+    assert rooms.room_key(None, -127) == "-127"
+    assert rooms.room_key(1001, -127) == "1001:-127"
+    assert rooms.parse_room_key("-127") == (None, -127)
+    assert rooms.parse_room_key(" 3 ") == (None, 3)
+    assert rooms.parse_room_key("1001:-127") == (1001, -127)
+    assert rooms.parse_room_key(5) == (None, 5)
+    for bad in ("", "x", "1001:", ":3", "x:3", "0:3", "-1:3", "1:2:3", "3.5", "1001:x"):
+        try:
+            rooms.parse_room_key(bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+
+def test_room_names_are_kept_per_map() -> None:
+    stored = {"-127": "Plain", "1001:-127": "Kitchen", "1002:-127": "Study", "junk": "x", "1001:-126": ""}
+    assert rooms.room_overrides_for(stored, 1001) == {-127: "Kitchen"}  # the other map and the plain key do not leak
+    assert rooms.room_overrides_for(stored, 1002) == {-127: "Study"}
+    assert rooms.room_overrides_for(stored, None) == {-127: "Plain"}
+    assert rooms.room_overrides_for(None, 1001) == {} and rooms.room_overrides_for("x", None) == {}
+    # saving the names of one map keeps those of the other map
+    assert rooms.replace_room_names(stored, 1001, {-126: "Hall"}) == {"-127": "Plain", "1002:-127": "Study", "1001:-126": "Hall"}
+    assert rooms.replace_room_names({"1001:-127": "Kitchen"}, None, {3: "Blue"}) == {"1001:-127": "Kitchen", "3": "Blue"}
+    assert rooms.replace_room_names({"3": "Old"}, None, {}) == {}  # a single-map robot: as before
+    assert rooms.replace_room_names({}, 1001, {-127: "Kitchen"}) == {"1001:-127": "Kitchen"}
+
+
+def test_areas_per_map() -> None:
+    mapping = {"kitchen": ["1001:-127", "1002:-126"], "study": ["1002:-127", "-128", "x"]}
+    assert rooms.areas_by_room(mapping, [-127, -126, -128], None, 1001) == {-127: "kitchen"}
+    assert rooms.areas_by_room(mapping, [-127, -126, -128], None, 1002) == {-126: "kitchen", -127: "study"}
+    assert rooms.areas_by_room(mapping, [-127, -126, -128]) == {-128: "study"}  # plain ids only: unchanged
+    # an area chosen for a room of map 1002 leaves the rooms of map 1001 alone
+    result = rooms.new_area_mapping(mapping, {-127: "hall", -126: "kitchen"}, None, 1002)
+    assert result == {"kitchen": ["1001:-127", "1002:-126"], "study": ["-128", "x"], "hall": ["1002:-127"]}
+    # the segments are sorted by map, then room
+    assert rooms.new_area_mapping({}, {5: "a", -1: "a", 3: "a"}, None, 1001) == {"a": ["1001:-1", "1001:3", "1001:5"]}
+    assert rooms.new_area_mapping({}, {5: "a", -1: "a", 3: "a"}) == {"a": ["-1", "3", "5"]}
+    seen = rooms.new_last_seen_segments([{"id": "1001:-127", "name": "Old", "group": None}], {"1001:-127": "Kitchen", "1001:-126": "Hall"})
+    assert [(e["id"], e["name"]) for e in seen] == [("1001:-127", "Kitchen"), ("1001:-126", "Hall")]
+
+
+def test_new_last_seen_segments_sort_numerically() -> None:
+    # plain ids: by number (not as text), as before
+    new = rooms.new_last_seen_segments([], {10: "Ten", 9: "Nine", 2: "Two", -3: "Minus"})
+    assert [e["id"] for e in new] == ["-3", "2", "9", "10"]
+    assert [e["id"] for e in rooms.new_last_seen_segments([], {"10": "Ten", "9": "Nine"})] == ["9", "10"]
+    # ids of a map: by map, then by room number
+    new = rooms.new_last_seen_segments([], {"1002:10": "a", "1001:9": "b", "1001:10": "c", "1001:-5": "d"})
+    assert [e["id"] for e in new] == ["1001:-5", "1001:9", "1001:10", "1002:10"]
+    # entries of old stay first, in their order
+    old = [{"id": "10", "name": "x", "group": None}]
+    assert [e["id"] for e in rooms.new_last_seen_segments(old, {9: "Nine", 2: "Two"})] == ["10", "2", "9"]
+
+
 if __name__ == "__main__":
     sys.exit(run_all(globals()))

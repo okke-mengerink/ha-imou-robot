@@ -37,8 +37,17 @@ from .const import (
 from .coordinator import ImouConfigEntry, ImouCoordinator, default_room_name
 from .entity import ImouEntity
 from .model import level_key, to_int
+from .rooms import parse_room_key, segment_sort_key
 
 PARALLEL_UPDATES = 1
+
+
+def _segment_map(segment_id: str) -> int | None:
+    """Return the map of a segment id (``None``: a plain id, or one that is not a room key)."""
+    try:
+        return parse_room_key(segment_id)[0]
+    except ValueError:
+        return None
 
 # Room cleaning exists in Home Assistant 2026.3 and newer only.
 CLEAN_AREA = getattr(VacuumEntityFeature, "CLEAN_AREA", None)
@@ -161,7 +170,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
     @override
     def _handle_coordinator_update(self) -> None:
         """Check for new rooms, then update the state."""
-        self._async_check_segments_issue(self.coordinator.room_names())
+        self._async_check_segments_issue(self.coordinator.room_segments())
         super()._handle_coordinator_update()
 
     def _last_seen_segments(self) -> list[Any] | None:
@@ -171,15 +180,22 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         except RuntimeError:  # not in the entity registry (yet)
             return None
 
-    def _async_check_segments_issue(self, names: dict[int, str]) -> None:
+    def _async_check_segments_issue(self, names: dict[str, str]) -> None:
         """Create the repair issue (once per set of ids) when a room is new."""
         if CLEAN_AREA is None or CLEAN_AREA not in self.supported_features:
             return
         last_seen = self._last_seen_segments()
         if last_seen is None:
             return
-        current = frozenset(str(room_id) for room_id in names)
-        if not current - {segment.id for segment in last_seen}:
+        current = frozenset(names)
+        seen_ids = {segment.id for segment in last_seen}
+        if self.coordinator.is_multi_map():
+            # only the rooms mapped on the active map count (or the plain ones while it is unknown)
+            map_id = self.coordinator.room_map()
+            seen_ids = {
+                segment_id for segment_id in seen_ids if _segment_map(segment_id) == map_id
+            }
+        if not current - seen_ids:
             return
         if current != self._issue_room_ids:
             self._issue_room_ids = current
@@ -191,38 +207,50 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
 
         The rooms are read from the robot's schedules (the robot reports no rooms
         otherwise). Rooms that were mapped earlier stay, so that deleting a
-        schedule does not make a room disappear.
+        schedule does not make a room disappear. On a robot with several maps the
+        segment ids are ``<map>:<room>`` and only the rooms of the active map are
+        returned, also of the rooms mapped before.
         """
         await self.coordinator.async_refresh_schedules()  # on failure: the cached ones
-        names = self.coordinator.room_names()
-        self._async_check_segments_issue(names)
-        segments = {str(room_id): name for room_id, name in names.items()}
+        segments = self.coordinator.room_segments()
+        self._async_check_segments_issue(segments)
+        map_id = self.coordinator.room_map()
+        multi_map = self.coordinator.is_multi_map()
         for seen in self._last_seen_segments() or []:
+            try:
+                seen_map, room_id = parse_room_key(seen.id)
+            except ValueError:
+                seen_map, room_id = None, 0
+            if multi_map and seen_map != map_id:
+                continue  # a room of another map is not shown (and its name must not leak)
             # a name that is only the default does not replace the one seen before
-            if seen.id not in segments or segments[seen.id] == default_room_name(
-                to_int(seen.id) or 0
-            ):
+            if seen.id not in segments or segments[seen.id] == default_room_name(room_id):
                 segments[seen.id] = seen.name
         return [
             Segment(id=segment_id, name=segments[segment_id])
-            for segment_id in sorted(
-                segments, key=lambda sid: (to_int(sid) is None, to_int(sid) or 0, sid)
-            )
+            for segment_id in sorted(segments, key=segment_sort_key)
         ]
 
     @override
     async def async_clean_segments(self, segment_ids: list[str], **kwargs: Any) -> None:
-        """Clean these rooms."""
+        """Clean these rooms; a room of a map that is not the active map is refused.
+
+        A robot with several maps gets a fresh read of its active map first.
+        """
         room_ids: list[int] = []
+        map_ids: list[int | None] = []
         for segment_id in segment_ids:
             try:
-                room_ids.append(int(str(segment_id).strip()))
+                map_id, room_id = parse_room_key(segment_id)
             except ValueError:
                 raise ServiceValidationError(
                     translation_domain=DOMAIN,
                     translation_key="invalid_room",
                     translation_placeholders={"room": str(segment_id)},
                 ) from None
+            map_ids.append(map_id)
+            room_ids.append(room_id)
+        await self.coordinator.async_check_rooms(map_ids)
         if room_ids:
             await self.coordinator.async_clean_rooms(room_ids)
 

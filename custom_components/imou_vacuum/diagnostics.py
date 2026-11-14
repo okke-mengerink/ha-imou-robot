@@ -146,6 +146,8 @@ async def async_get_config_entry_diagnostics(
                     "version": device.version,
                     "status": device.status,
                 },
+                "active_map": coordinator.active_map(),
+                "multi_map": coordinator.is_multi_map(),
                 "poll_refs": coordinator.poll_refs,
                 "reports": coordinator.reports.as_diagnostics(),
                 "failed_polls_in_a_row": coordinator.health.failures,

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0b2 (beta)
+
+This beta is for testing on RV1 models; the current stable release is 0.6.4. Not verified yet: no user has confirmed this on a real robot with several maps.
+
+Rooms per map, for a robot whose `map_name` lists two or more maps. Room ids repeat on every map, and the robot can only clean the rooms of its active map.
+
+- New: the integration works out the active map: the map id of `sweeper_sequence` when it is usable, else the one map in `swp_cleansequence` whose cleaning order equals `sequence`, else the one map of `map_name`; otherwise it is unknown. Diagnostics show `active_map` and `multi_map`.
+- Changed, several maps only: the rooms are those of the active map (its part of the room properties, its cleaning order and the schedules whose map is the active one). Rooms and schedules of another map are no longer added. A robot that reports no rooms of its own still needs a schedule for its rooms. While the active map is unknown, the rooms of `sequence` and the schedules without a usable map are used. A room property item without a map id is still used, as before.
+- Changed, several maps only: room names, the Clean button ids and the segment ids (`<map id>:<room id>`, buttons `<device>_clean_room_<map id>_<room id>`) include the map, so a name given to a room no longer shows up on the other map. The Clean buttons are also named after their map. The buttons of the map that is not active are unavailable. The room options (**Link rooms to areas**, **Rename rooms**) show the active map's rooms, labelled with the map name, and keep the names and area links of the other maps.
+- New: before a room is cleaned on a robot with several maps (a Clean button or `vacuum.clean_area`), the integration reads the room properties again, bypassing the cache (one extra call), and checks the room's map against the active map. A room of another map is refused with "This room is on another map; switch the map in the Imou app first." When that read fails or the active map is still unknown, cleaning is refused with "Could not confirm the robot's active map; try again." A plain room id (no map, for example an older area link) is refused too while the active map is known: link the rooms again under **Configure** → **Link rooms to areas**. Robots with one map, and the RV-L11-A, make no extra call and still accept plain ids.
+- Changed, several maps only: no Clean buttons are created until the active map is known. The options forms (**Link rooms to areas**, **Rename rooms**) are aborted with "map_changed" when the active map changed while they were open. The repair issue for new rooms only compares with the rooms mapped on the active map, so switching maps does not raise it. When only `sequence` could be read, the active map counts as unknown until the next full read.
+- The schedules sensor no longer uses the names of the active map for the rooms of a schedule of another map.
+- Room names that you saved before are plain (without a map). On a robot with several maps they are used only while the active map is unknown; name those rooms again. Robots with one map, and the RV-L11-A, are not changed: plain room ids, names and buttons.
+- Docs: the README describes the behaviour with several maps, and gives a tip for a robot that reports no rooms (put the rooms in a schedule, which may stay switched off).
+
 ## 0.7.0b1 (beta)
 
 This beta is for testing on RV1 models; the current stable release is 0.6.4.

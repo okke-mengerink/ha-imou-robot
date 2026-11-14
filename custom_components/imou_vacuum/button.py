@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import INPUT_TYPE, SERVICE_DUST, SERVICE_RESET_PARTS
 from .coordinator import ImouConfigEntry, ImouCoordinator, default_room_name
 from .entity import ImouEntity
-from .rooms import room_button_name
+from .rooms import room_button_name, room_key
 from .support import VERIFIED_MODELS, model_in
 
 PARALLEL_UPDATES = 1
@@ -71,17 +71,24 @@ def _async_track_rooms(
     coordinator: ImouCoordinator,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Create a "Clean <room>" button per room now and for every room that shows up later."""
-    known: set[int] = set()
+    """Create a "Clean <room>" button per room now and for every room that shows up later.
+
+    A robot with several maps gets buttons per map and room; only the rooms of the
+    active map get a button, the buttons of another map stay unavailable.
+    """
+    known: set[tuple[int | None, int]] = set()
 
     @callback
     def add_new() -> None:
+        map_id = coordinator.room_map()
+        if map_id is None and coordinator.is_multi_map():
+            return  # the active map is not known yet: a plain button would be orphaned later
         new = [
-            ImouRoomButton(coordinator, room_id, name)
+            ImouRoomButton(coordinator, map_id, room_id, name)
             for room_id, name in coordinator.room_names().items()
-            if room_id not in known
+            if (map_id, room_id) not in known
         ]
-        known.update(button.room_id for button in new)
+        known.update((button.map_id, button.room_id) for button in new)
         if new:
             async_add_entities(new)
 
@@ -136,25 +143,38 @@ class ImouResetButton(ImouButton):
 
 
 class ImouRoomButton(ImouEntity, ButtonEntity):
-    """Cleans one room. It is unavailable once the room is no longer in the schedules."""
+    """Cleans one room. It is unavailable once the room is no longer known (or, with
+    several maps, once its map is no longer the active map)."""
 
     _attr_translation_key = "clean_room"
 
-    def __init__(self, coordinator: ImouCoordinator, room_id: int, name: str) -> None:
-        """Initialize the button; it is named after the room (a default name in lower case)."""
-        super().__init__(coordinator, f"clean_room_{room_id}")
+    def __init__(
+        self, coordinator: ImouCoordinator, map_id: int | None, room_id: int, name: str
+    ) -> None:
+        """Initialize the button; it is named after the room (a default name in lower case).
+
+        ``map_id`` is the map of the room on a robot with several maps, else ``None``.
+        """
+        super().__init__(coordinator, f"clean_room_{room_key(map_id, room_id).replace(':', '_')}")
+        self.map_id = map_id
         self.room_id = room_id
-        self._attr_translation_placeholders = {
-            "room": room_button_name(name, default_room_name(room_id))
-        }
+        label = room_button_name(name, default_room_name(room_id))
+        if map_id is not None:
+            label = f"{label} ({coordinator.map_label(map_id)})"
+        self._attr_translation_placeholders = {"room": label}
 
     @property
     @override
     def available(self) -> bool:
         """Return whether the robot is reachable and the room is still known."""
-        return super().available and self.room_id in self.coordinator.room_names()
+        return (
+            super().available
+            and self.map_id == self.coordinator.room_map()
+            and self.room_id in self.coordinator.room_names()
+        )
 
     @override
     async def async_press(self) -> None:
         """Clean this room."""
+        await self.coordinator.async_check_rooms([self.map_id])
         await self.coordinator.async_clean_rooms([self.room_id])

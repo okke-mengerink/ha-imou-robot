@@ -365,7 +365,13 @@ class ImouSchedulesSensor(ImouEntity, SensorEntity):
         if schedules is None:
             return None
         names = self.coordinator.room_names()
-        return {"schedules": [_schedule_attributes(s, names) for s in schedules.schedules]}
+        return {
+            "schedules": [
+                # the names are those of the active map: not for a schedule of another map
+                _schedule_attributes(s, names if self.coordinator.schedule_on_active_map(s) else {})
+                for s in schedules.schedules
+            ]
+        }
 
 
 def _schedule_attributes(schedule: Schedule, names: Mapping[int, str]) -> dict[str, Any]:

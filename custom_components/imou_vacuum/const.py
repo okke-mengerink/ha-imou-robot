@@ -244,6 +244,10 @@ ROOM_SOURCES: Final[tuple[tuple[str, str | None, str | None], ...]] = (
 MAX_EXTRA_FAILURES: Final = 3
 MEMBER_MAP_ID: Final = "mapid"  # member of the ROOM_SOURCES structs
 MAP_NAME_MEMBER_ID: Final = "map_id"  # member of the ``map_name`` struct
+MAP_NAME_MEMBER_NAME: Final = "name"  # member of the ``map_name`` struct
+# A robot whose ``map_name`` lists this many maps (or more) has several maps; the room
+# ids repeat per map, so its rooms and room names are kept per map.
+MULTI_MAP_MINIMUM: Final = 2
 
 # ---------------------------------------------------------------------------
 # Documented fallback: the refs of the tested Imou RV-L11-A. They are used ONLY

@@ -535,6 +535,115 @@ def rooms_on_map(entries: Iterable[RoomEntry], current_map: Any) -> list[int]:
     return list(rooms)
 
 
+def active_map_id(
+    sweeper_map: Any,
+    sequence_entries: Iterable[RoomEntry],
+    sequence: Iterable[int],
+    listed_map_ids: Iterable[Any],
+) -> int | None:
+    """Return the id of the map the robot has active now, if it can be told, else ``None``.
+
+    In this order: (a) the map id of ``sweeper_sequence`` when it is usable, (b) the
+    one map whose cleaning order (``sequence_entries``, from ``swp_cleansequence``)
+    equals the top-level ``sequence``, which is the order of the active map (the
+    order must not be empty and exactly one map must match), (c) the one map of
+    ``map_name``, else (d) ``None``.
+    """
+    if (sweeper := valid_map_id(sweeper_map)) is not None:
+        return sweeper
+    order = tuple(sequence)
+    if order:
+        matches = {
+            map_id
+            for map_id, rooms in sequence_entries
+            if map_id is not None and rooms == order
+        }
+        if len(matches) == 1:
+            return next(iter(matches))
+    listed = {valid_map_id(item) for item in listed_map_ids} - {None}
+    return next(iter(listed)) if len(listed) == 1 else None
+
+
+def map_rooms(entries: Iterable[RoomEntry], map_id: int | None) -> list[int]:
+    """Return the rooms (in order, without duplicates) of one map.
+
+    Entries without a map id are kept (they cannot be told apart); entries of another
+    map are not. Without a ``map_id`` only the entries without a map id are kept.
+    """
+    rooms: dict[int, None] = {}
+    for entry_map, room_ids in entries:
+        if entry_map is None or entry_map == map_id:
+            rooms.update(dict.fromkeys(room_ids))
+    return list(rooms)
+
+
+def map_names(value: Any, refs: Mapping[str, str], id_member: str, name_member: str) -> dict[int, str]:
+    """Return the name of every map of ``map_name`` that has a usable id and a name."""
+    names: dict[int, str] = {}
+    for item in _value_items(value):
+        map_id = valid_map_id(_member(item, refs, id_member))
+        name = _member(item, refs, name_member)
+        if map_id is not None and isinstance(name, str) and name.strip():
+            names.setdefault(map_id, name.strip())
+    return names
+
+
+def room_key(map_id: int | None, room_id: int) -> str:
+    """Return the key of a room: ``<room>``, or ``<map>:<room>`` on a robot with several maps.
+
+    It is used as the segment id, in the stored room names and in the area mapping.
+    """
+    return str(room_id) if map_id is None else f"{map_id}:{room_id}"
+
+
+def parse_room_key(text: Any) -> tuple[int | None, int]:
+    """Parse a key made by ``room_key`` into ``(map id or None, room id)``.
+
+    Raises ``ValueError`` for anything else.
+    """
+    value = str(text).strip()
+    map_text, separator, room_text = value.rpartition(":")
+    map_id = None
+    if separator:
+        map_id = valid_map_id(map_text)
+        if map_id is None:
+            raise ValueError(f"not a room key: {value!r}")
+    return map_id, int(room_text)
+
+
+def room_overrides_for(stored: Any, map_id: int | None) -> dict[int, str]:
+    """Return the room names of the user for one map (``None``: the plain room keys)."""
+    overrides: dict[int, str] = {}
+    for key, name in stored.items() if isinstance(stored, Mapping) else ():
+        try:
+            key_map, room_id = parse_room_key(key)
+        except ValueError:
+            continue
+        if key_map == map_id and isinstance(name, str) and name:
+            overrides[room_id] = name
+    return overrides
+
+
+def replace_room_names(
+    stored: Any, map_id: int | None, names: Mapping[int, str]
+) -> dict[str, str]:
+    """Return the stored room names with those of one map replaced by ``names``.
+
+    The names of other maps are kept, and so are the plain names (older ones, or of a
+    robot whose map is unknown) while ``map_id`` is a map; names with an unusable key go.
+    """
+    result: dict[str, str] = {}
+    for key, name in stored.items() if isinstance(stored, Mapping) else ():
+        try:
+            key_map, _ = parse_room_key(key)
+        except ValueError:
+            continue
+        if key_map != map_id and isinstance(name, str):
+            result[str(key)] = name
+    result.update({room_key(map_id, room_id): name for room_id, name in names.items()})
+    return result
+
+
 def known_rooms(
     schedules: ScheduleList | None, sequence: Iterable[int] = ()
 ) -> dict[int, str | None]:
@@ -623,10 +732,13 @@ def segment_names(
     }
 
 
-def _segment_sort_key(segment_id: str) -> tuple[bool, int, str]:
-    """Sort numeric segment ids by number, other ids after them."""
-    number = to_int(segment_id)
-    return (number is None, number or 0, segment_id)
+def segment_sort_key(segment_id: str) -> tuple[bool, int, int, str]:
+    """Sort plain segment ids by number, then those of a map by map and number, other ids last."""
+    try:
+        map_id, room_id = parse_room_key(segment_id)
+    except ValueError:
+        return (True, 0, 0, segment_id)
+    return (False, map_id or 0, room_id, segment_id)
 
 
 def room_area_labels(
@@ -654,13 +766,17 @@ def room_button_name(name: str, default: str) -> str:
 
 
 def areas_by_room(
-    area_mapping: Any, room_ids: Iterable[int], valid_areas: Container[str] | None = None
+    area_mapping: Any,
+    room_ids: Iterable[int],
+    valid_areas: Container[str] | None = None,
+    map_id: int | None = None,
 ) -> dict[int, str]:
     """Return the area linked to each room, from a vacuum ``area_mapping``.
 
     ``area_mapping`` is ``{area_id: [segment_id, ...]}``. Rooms without an area, and
     areas that are not in ``valid_areas`` (when given), are left out. When a room is
-    in several areas the first area (by id) wins.
+    in several areas the first area (by id) wins. A segment id counts for the rooms
+    of ``map_id`` only (``None``: plain room ids, see ``room_key``).
     """
     result: dict[int, str] = {}
     if not isinstance(area_mapping, Mapping):
@@ -671,8 +787,11 @@ def areas_by_room(
             continue
         segments = area_mapping[area_id]
         for segment in segments if isinstance(segments, (list, tuple)) else ():
-            room_id = to_int(segment)
-            if room_id in wanted and room_id not in result:
+            try:
+                segment_map, room_id = parse_room_key(segment)
+            except ValueError:
+                continue
+            if segment_map == map_id and room_id in wanted and room_id not in result:
                 result[room_id] = area_id
     return result
 
@@ -681,6 +800,7 @@ def new_area_mapping(
     old: Any,
     shown: Mapping[int, str | None],
     valid_areas: Container[str] | None = None,
+    map_id: int | None = None,
 ) -> dict[str, list[str]]:
     """Return the vacuum ``area_mapping`` after the user chose areas for ``shown`` rooms.
 
@@ -689,11 +809,11 @@ def new_area_mapping(
     with ``valid_areas``) keeps all its links. The other shown rooms are removed from
     every area of ``old`` and added to their new area; segment ids that were not
     shown stay. Segment ids are strings, ascending and without duplicates;
-    areas without segments are dropped.
+    areas without segments are dropped. The segment ids are ``room_key(map_id, room)``.
     """
-    default = areas_by_room(old, shown, valid_areas)
+    default = areas_by_room(old, shown, valid_areas, map_id)
     shown = {room_id: area for room_id, area in shown.items() if area != default.get(room_id)}
-    shown_ids = {str(room_id) for room_id in shown}
+    shown_ids = {room_key(map_id, room_id) for room_id in shown}
     result: dict[str, set[str]] = {}
     for area_id, segments in (old.items() if isinstance(old, Mapping) else ()):
         for segment in segments if isinstance(segments, (list, tuple)) else ():
@@ -701,16 +821,16 @@ def new_area_mapping(
                 result.setdefault(str(area_id), set()).add(str(segment))
     for room_id, area_id in shown.items():
         if area_id:
-            result.setdefault(area_id, set()).add(str(room_id))
+            result.setdefault(area_id, set()).add(room_key(map_id, room_id))
     return {
-        area_id: sorted(segments, key=_segment_sort_key)
+        area_id: sorted(segments, key=segment_sort_key)
         for area_id, segments in result.items()
         if segments
     }
 
 
-def new_last_seen_segments(old: Any, names: Mapping[int, str]) -> list[dict[str, Any]]:
-    """Return the vacuum ``last_seen_segments`` with ``names`` (room id -> name) applied.
+def new_last_seen_segments(old: Any, names: Mapping[int | str, str]) -> list[dict[str, Any]]:
+    """Return the vacuum ``last_seen_segments`` with ``names`` (segment id -> name) applied.
 
     Entries of ``old`` keep their order and other keys; a listed room gets its new
     name. Rooms that are not in ``old`` are added at the end (ascending), with
@@ -730,7 +850,7 @@ def new_last_seen_segments(old: Any, names: Mapping[int, str]) -> list[dict[str,
         if segment_id in wanted:
             item["name"] = wanted[segment_id]
         result.append(item)
-    for room_id in sorted(names):
+    for room_id in sorted(names, key=lambda key: segment_sort_key(str(key))):
         if str(room_id) not in seen:
             result.append({"id": str(room_id), "name": names[room_id], "group": None})
     return result
