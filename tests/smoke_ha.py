@@ -143,8 +143,9 @@ class FakeCoordinator:
     def is_multi_map(self) -> bool:
         return False
 
-    async def async_check_rooms(self, map_ids: Any) -> None:
+    async def async_check_rooms(self, map_ids: Any, **kwargs: Any) -> list[bool]:
         self.checked_maps = list(map_ids)
+        return [True] * len(self.checked_maps)
 
     def set_values(self, **values: Any) -> None:
         self.data.values.update(values)
@@ -2951,12 +2952,16 @@ async def rv1_two_map_checks(hass: Any, entry: Any) -> None:
     await vac_entity.async_clean_segments([f"{MAP_A}:-126"])
     check("two maps: a segment of the active map is cleaned", client.calls == [("control", device, "200900", {"200901": 1, "200902": 1, "200903": [-126]})], str(client.calls))
     client.calls.clear()
-    try:
-        await vac_entity.async_clean_segments([f"{MAP_A}:-126", f"{MAP_B}:-127"])
-    except ServiceValidationError as err:
-        check("two maps: a room of the other map raises the translated error", err.translation_key == "room_on_other_map" and "switch to that map in the Imou app first" in str(err) and '"Map B"' in str(err), f"{err.translation_key} {err}")
-    else:
-        check("two maps: a room of the other map raises the translated error", False)
+    await vac_entity.async_clean_segments([f"{MAP_A}:-126", f"{MAP_B}:-127", f"{MAP_A}:-127"])
+    check("two maps: a request over several maps cleans only the rooms of the active map", client.calls == [("control", device, "200900", {"200901": 1, "200902": 1, "200903": [-126, -127]})], str(client.calls))
+    client.calls.clear()
+    for only_other in ([f"{MAP_B}:-127"], [f"{MAP_B}:-127", f"{MAP_B}:-126"]):
+        try:
+            await vac_entity.async_clean_segments(only_other)
+        except ServiceValidationError as err:
+            check(f"two maps: a request with only rooms of the other map {only_other} raises the translated error", err.translation_key == "room_on_other_map" and "switch to that map in the Imou app first" in str(err) and '"Map B"' in str(err), f"{err.translation_key} {err}")
+        else:
+            check(f"two maps: a request with only rooms of the other map {only_other} raises the translated error", False)
     check("two maps: ... and nothing was sent to the robot", client.calls == [], str(client.calls))
     # a plain id (no map) on a multi-map robot whose active map is known is refused
     for plain in ("-127", "5"):
@@ -3160,7 +3165,23 @@ async def rv1_two_map_checks(hass: Any, entry: Any) -> None:
         registry.async_update_entity_options(vacuum_id, "vacuum", {"last_seen_segments": []})
         await hass.async_block_till_done()
         check("areas: removing the link gives the default name back", coordinator.room_names()[-128] == "Room -128" and button_name(MAP_A, -128).endswith("Clean room -128 (Map A)"), f"{coordinator.room_names()} {button_name(MAP_A, -128)}")
+        # a name seen before that came from an area does not outlive the link or the area
+        seen_name = [{"id": f"{MAP_A}:-128", "name": "Area A", "group": None}]
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"area_mapping": {area_a.id: [f"{MAP_A}:-128"]}, "last_seen_segments": seen_name})
+        await hass.async_block_till_done()
+        by_id = {seg.id: seg.name for seg in await vac_entity.async_get_segments()}
+        check("areas: a linked room is named after its area in the segment and on the button", by_id[f"{MAP_A}:-128"] == "Area A" and button_name(MAP_A, -128).endswith("Clean Area A (Map A)"), f"{by_id} {button_name(MAP_A, -128)}")
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"area_mapping": {}, "last_seen_segments": seen_name})
+        await hass.async_block_till_done()
+        by_id = {seg.id: seg.name for seg in await vac_entity.async_get_segments()}
+        check("areas: link removed: the seen area name is not kept, the segment and the button have the default name", by_id[f"{MAP_A}:-128"] == "Room -128" and button_name(MAP_A, -128).endswith("Clean room -128 (Map A)"), f"{by_id} {button_name(MAP_A, -128)}")
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"area_mapping": {area_a.id: [f"{MAP_A}:-128"]}, "last_seen_segments": seen_name})
+        await hass.async_block_till_done()
         area_reg.async_delete(area_a.id)
+        await hass.async_block_till_done()
+        by_id = {seg.id: seg.name for seg in await vac_entity.async_get_segments()}
+        check("areas: area deleted: the seen area name is not kept either", by_id[f"{MAP_A}:-128"] == "Room -128" and button_name(MAP_A, -128).endswith("Clean room -128 (Map A)"), f"{by_id} {button_name(MAP_A, -128)}")
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"area_mapping": {}, "last_seen_segments": []})
         await hass.async_block_till_done()
 
     # 6. switch to map B (sweeper_sequence names the active map)

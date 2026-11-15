@@ -787,13 +787,19 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 translation_domain=DOMAIN, translation_key="room_without_map"
             )
 
-    async def async_check_rooms(self, map_ids: Iterable[int | None]) -> None:
+    async def async_check_rooms(
+        self, map_ids: Iterable[int | None], *, skip_other_maps: bool = False
+    ) -> list[bool]:
         """Check the maps of rooms about to be cleaned; see ``check_room_map``.
 
         A robot with several maps first gets a fresh read of its room properties (the
         cache is bypassed): the map may have been switched in the Imou app since the
         last read. When that read fails or the active map is still unknown, the
         rooms are refused too. A robot with one map makes no extra call.
+
+        Returns for every room whether it is to be cleaned. With ``skip_other_maps`` a
+        request that has rooms on the active map as well as on other maps keeps only
+        the former; a request with no room on the active map is refused all the same.
         """
         wanted = list(map_ids)
         if self.is_multi_map():
@@ -803,8 +809,13 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 raise ServiceValidationError(
                     translation_domain=DOMAIN, translation_key="active_map_unconfirmed"
                 )
-        for map_id in wanted:
-            self.check_room_map(map_id)
+        active = self.active_map()
+        other = [map_id is not None and active is not None and map_id != active for map_id in wanted]
+        keep = [not skipped for skipped in other] if skip_other_maps and not all(other) else [True] * len(wanted)
+        for map_id, kept in zip(wanted, keep, strict=True):
+            if kept:
+                self.check_room_map(map_id)
+        return keep
 
     def property_rooms(self) -> list[int]:
         """Return the rooms from the properties: the cleaning order, the rooms of
@@ -906,6 +917,21 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             if area is not None and area.name:
                 names[room_id] = area.name
         return names
+
+    def seen_name_from_area(self, segment_id: str, name: str) -> bool:
+        """Whether a segment name seen before may come from a Home Assistant area.
+
+        True when the name is the name of an area, or when the segment is (still) in
+        the area mapping: its area may have been deleted, so the name is stale.
+        """
+        if CLEAN_AREA is None:
+            return False
+        if name in {area.name for area in ar.async_get(self.hass).async_list_areas()}:
+            return True
+        mapping = self._vacuum_options().get("area_mapping")
+        return isinstance(mapping, Mapping) and any(
+            isinstance(ids, (list, tuple)) and segment_id in ids for ids in mapping.values()
+        )
 
     @callback
     def async_track_areas(self) -> CALLBACK_TYPE:

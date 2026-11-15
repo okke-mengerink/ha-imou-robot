@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Any, override
 
 from homeassistant.components.vacuum import (
@@ -42,6 +43,8 @@ from .coordinator import ImouConfigEntry, ImouCoordinator, default_room_name
 from .entity import ImouEntity
 from .model import level_key, to_int
 from .rooms import parse_room_key, segment_sort_key
+
+_LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 1
 
@@ -223,8 +226,13 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
                 seen_map, room_id = None, 0
             if multi_map and seen_map is None:
                 continue  # an older plain id: not allowed on a robot with several maps
-            # a name that is only the default does not replace the one seen before
-            if seen.id not in segments or segments[seen.id] == default_room_name(room_id):
+            if seen.id not in segments:
+                segments[seen.id] = seen.name
+            elif segments[seen.id] == default_room_name(room_id) and not (
+                self.coordinator.seen_name_from_area(seen.id, seen.name)
+            ):
+                # a default name does not replace a name seen before, unless that name
+                # came from an area (the link or the area is gone): then the default stays
                 segments[seen.id] = seen.name
         return [
             self._segment(segment_id, segments[segment_id], multi_map)
@@ -244,8 +252,9 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
 
         The segments list the rooms of every map, but the robot can only clean the
         active map: a robot with several maps gets a fresh read of its active map
-        first, and a room of another map raises an error that names its map and says
-        to switch to it in the Imou app.
+        first. Rooms of other maps are skipped (one info line) when the request also has
+        rooms of the active map; a request with none on the active map raises an error
+        that names the map and says to switch to it in the Imou app.
         """
         room_ids: list[int] = []
         map_ids: list[int | None] = []
@@ -260,7 +269,13 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
                 ) from None
             map_ids.append(map_id)
             room_ids.append(room_id)
-        await self.coordinator.async_check_rooms(map_ids)
+        keep = await self.coordinator.async_check_rooms(map_ids, skip_other_maps=True)
+        if skipped := [sid for sid, kept in zip(segment_ids, keep, strict=True) if not kept]:
+            _LOGGER.info(
+                "Not cleaning %s: these rooms are on another map than the active map",
+                ", ".join(skipped),
+            )
+        room_ids = [room_id for room_id, kept in zip(room_ids, keep, strict=True) if kept]
         if room_ids:
             await self.coordinator.async_clean_rooms(room_ids)
 
