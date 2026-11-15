@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.1b2 (beta)
+
+This beta is for testing on the RV1L Pro; the stable release is 0.7.0. Not verified yet: the unit of the usage counters on an RV1 robot.
+
+The Imou app does not show the used time of a consumable, it shows the remaining percentage of a fixed lifetime. This beta adds that percentage.
+
+- New: sensors **Side brush remaining**, **Main brush remaining**, **Filter remaining**, **Mop cloth remaining**, **Main brush cover remaining** and **Battery remaining** (%), only for a robot whose model has known lifetimes and whose `life` struct has the counter. The value is 100 minus the used time as a percentage of the lifetime, rounded and never below 0. Diagnostic category, enabled by default, read-only. No remaining sensor for the sensors: the app has no counter for it.
+- The lifetimes come from the Imou app of an RV1L Pro (all parts showed 100 % while every counter was 0): side brush 150 h, main brush 240 h, filter 150 h, mop cloth 180 h, main brush cover 200 h, battery 800 h. They are the table `PART_LIFETIME_HOURS` in `support.py`.
+- Still assumed: the counters are in minutes, like on the RV-L11-A. That is not verified on an RV1 robot, so compare the percentage with the app.
+- Other models (RV-L11-A, RV1 Pro Max) get no new sensor; they get it once their lifetimes are known.
+- Docs: the README sensor list is updated.
+
 ## 0.7.1b1 (beta)
 
 This beta is for testing on RV1 models; the stable release is 0.7.0. Not verified yet: no user has confirmed the learned rooms on a real robot.

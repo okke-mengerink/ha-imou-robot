@@ -216,6 +216,29 @@ def test_confirmed_resets_per_model() -> None:
             assert not support.reset_confirmed(name, part), (name, part)
 
 
+def test_part_lifetime_hours() -> None:
+    assert support.PART_LIFETIME_HOURS == {
+        "RV1L Pro": {
+            "side_brush": 150,
+            "main_brush": 240,
+            "filter": 150,
+            "mop": 180,
+            "main_brush_cover": 200,
+            "battery": 800,
+        }
+    }
+    for name in ("RV1L Pro", "Imou RV1L-Pro", "rv1l pro"):
+        got = {part: support.part_lifetime_hours(name, part) for part in support.PART_LIFETIME_HOURS["RV1L Pro"]}
+        assert got == support.PART_LIFETIME_HOURS["RV1L Pro"], (name, got)
+        assert support.part_lifetime_hours(name, "sensors") is None, name
+        assert support.part_lifetime_hours(name, "") is None, name
+        assert support.part_lifetime_hours(name, "dust_bag") is None, name
+    # other models and fail closed
+    for name in ("L11-A", "Imou RV-L11-A", "RV1 Pro Max", "RV1L Pro Max", "RV1 Pro", "", "  ", "IMOU", None):
+        for part in ("side_brush", "main_brush", "filter", "sensors", "mop", "main_brush_cover", "battery"):
+            assert support.part_lifetime_hours(name, part) is None, (name, part)
+
+
 def test_missing_core_functions_are_listed() -> None:
     def edit(data: dict[str, Any]) -> None:
         data["properties"] = [

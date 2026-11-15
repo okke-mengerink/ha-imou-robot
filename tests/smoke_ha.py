@@ -429,6 +429,27 @@ def test_entities() -> None:
         check(f"{name}: mop 90, cover 30, battery 600 raw give 1.5, 0.5, 10.0 h", [s.native_value for s in new_sensors] == [1.5, 0.5, 10.0], str([s.native_value for s in new_sensors]))
         rv1_coordinator.set_values(life={"mop_time": "x"})
         check(f"{name}: unusable and absent members give no value", [s.native_value for s in new_sensors] == [None, None, None], str([s.native_value for s in new_sensors]))
+    # 0.7.1b2: remaining-percentage sensors, only where the model's lifetimes are known (RV1L Pro)
+    remaining_keys = ("side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery")
+    remaining_names = [f"{k}_remaining" for k in remaining_keys]
+    check("L11-A has no remaining sensors", not [k for k in sensors if k.endswith("_remaining")], str(sorted(sensors)))
+    pro_max_sensors = by_key(make_entities(FakeCoordinator(RV1_MODEL_JSON, RV1_VALUES_JSON["properties"], device_model="RV1 Pro Max"))["sensor"])
+    check("RV1 Pro Max has no remaining sensors", not [k for k in pro_max_sensors if k.endswith("_remaining")], str(sorted(pro_max_sensors)))
+    lpro_sensors = by_key(make_entities(FakeCoordinator(RV1LPRO_MODEL_JSON, RV1_VALUES_JSON["properties"], device_model="RV1L Pro"))["sensor"])
+    remaining = [s for k, s in lpro_sensors.items() if k.endswith("_remaining")]
+    check("RV1L Pro has exactly 6 remaining sensors, enabled", sorted(s.entity_description.key for s in remaining) == sorted(remaining_names) and all(s.entity_registry_enabled_default for s in remaining), str(sorted(lpro_sensors)))
+    check("RV1L Pro has no sensors remaining sensor", "sensors_remaining" not in lpro_sensors)
+    check("remaining sensors: %, measurement, diagnostic, translation key", all(s.native_unit_of_measurement == "%" and s.state_class == SensorStateClass.MEASUREMENT and s.entity_category == EntityCategory.DIAGNOSTIC and s.translation_key == s.entity_description.key and s.device_class is None for s in remaining))
+    check("remaining unique ids are new", [lpro_sensors[k].unique_id for k in remaining_names] == [f"TESTDEVICE0001_{k}" for k in remaining_names] and len({s.unique_id for s in lpro_sensors.values()}) == len(lpro_sensors))
+    lpro_coordinator = lpro_sensors["side_brush_remaining"].coordinator
+    lpro_coordinator.set_values(life={"brush_time": 0, "main_brush_time": 0, "rosebox_time": 0, "mop_time": 0, "cover_time": 0, "battery_time": 0})
+    check("all counters 0 give 100 %", [lpro_sensors[k].native_value for k in remaining_names] == [100] * 6, str([lpro_sensors[k].native_value for k in remaining_names]))
+    lpro_coordinator.set_values(life={"brush_time": 4500, "main_brush_time": 7200, "rosebox_time": 9000, "mop_time": 5400, "cover_time": 6000, "battery_time": 24000})
+    check("4500 min on the side brush (150 h lifetime) gives 50; the others 50, 0, 50, 50, 50", [lpro_sensors[k].native_value for k in remaining_names] == [50, 50, 0, 50, 50, 50], str([lpro_sensors[k].native_value for k in remaining_names]))
+    lpro_coordinator.set_values(life={"brush_time": 10**9, "main_brush_time": "x", "rosebox_time": None})
+    check("a huge value gives 0, unusable ones no value", [lpro_sensors[k].native_value for k in remaining_names[:3]] == [0, None, None], str([lpro_sensors[k].native_value for k in remaining_names[:3]]))
+    lpro_coordinator.set_values(life={"brush_time": 0, "main_brush_time": 0, "rosebox_time": 0, "mop_time": 0, "cover_time": 0, "battery_time": 0})
+    check("sensor texts and icons exist for the remaining sensors", all(json.loads((ROOT / "custom_components/imou_vacuum" / f).read_text("utf-8"))["entity"]["sensor"][k] for f in ("strings.json", "icons.json") for k in remaining_names))
     check("sensor texts and icons exist for the new usage sensors", all(json.loads((ROOT / "custom_components/imou_vacuum" / f).read_text("utf-8"))["entity"]["sensor"][k] for f in ("strings.json", "icons.json") for k in extra))
 
     # unknown enum values: unknown_<n> + model label
@@ -853,7 +874,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.1b1"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.1b2"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -863,7 +884,7 @@ def test_files() -> None:
     from awesomeversion import AwesomeVersion, AwesomeVersionStrategy  # noqa: PLC0415
 
     version = AwesomeVersion(manifest["version"])
-    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.1", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b1" and AwesomeVersion("0.7.0") < version < AwesomeVersion("0.7.1"), f"{version.strategy} {version.modifier}")
+    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.1", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b2" and AwesomeVersion("0.7.0") < version < AwesomeVersion("0.7.1"), f"{version.strategy} {version.modifier}")
     hacs = json.loads((ROOT / "hacs.json").read_text("utf-8"))
     check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True, "zip_release": True, "filename": "imou_vacuum.zip"}, str(hacs))
     # the release workflow zips exactly this folder; the archive name must match hacs.json

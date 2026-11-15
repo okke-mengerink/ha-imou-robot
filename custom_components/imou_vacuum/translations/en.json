@@ -234,6 +234,24 @@
       "battery_usage": {
         "name": "Battery usage"
       },
+      "side_brush_remaining": {
+        "name": "Side brush remaining"
+      },
+      "main_brush_remaining": {
+        "name": "Main brush remaining"
+      },
+      "filter_remaining": {
+        "name": "Filter remaining"
+      },
+      "mop_remaining": {
+        "name": "Mop cloth remaining"
+      },
+      "main_brush_cover_remaining": {
+        "name": "Main brush cover remaining"
+      },
+      "battery_remaining": {
+        "name": "Battery remaining"
+      },
       "wifi_signal": {
         "name": "Wi-Fi signal",
         "state": {

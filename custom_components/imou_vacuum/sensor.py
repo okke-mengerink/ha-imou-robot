@@ -55,6 +55,7 @@ from .coordinator import (
 )
 from .entity import ImouEntity, async_add_after_first_poll, local_start, local_time
 from .model import ThingsModel, to_int
+from .support import part_lifetime_hours
 from .rooms import Schedule
 
 _LOGGER = logging.getLogger(__name__)
@@ -124,6 +125,31 @@ def _consumable(key: str, child: str) -> ImouSensorDescription:
         value_fn=_hours(child),
     )
 
+
+def _remaining(key: str, child: str) -> ImouSensorDescription:
+    """Remaining life in %; the lifetime comes from the robot model (see
+    ``support.PART_LIFETIME_HOURS``), so the value is made in ``ImouRemainingSensor``."""
+    return ImouSensorDescription(
+        key=f"{key}_remaining",
+        translation_key=f"{key}_remaining",
+        identifier=PROP_LIFE,
+        child=child,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    )
+
+
+# (part key as in support.PART_LIFETIME_HOURS, life member); no "sensors": the app has
+# no counter for it
+REMAINING_PARTS: tuple[tuple[str, str], ...] = (
+    ("side_brush", LIFE_SIDE_BRUSH),
+    ("main_brush", LIFE_MAIN_BRUSH),
+    ("filter", LIFE_FILTER),
+    ("mop", LIFE_MOP),
+    ("main_brush_cover", LIFE_MAIN_BRUSH_COVER),
+    ("battery", LIFE_BATTERY),
+)
 
 SENSORS: tuple[ImouSensorDescription, ...] = (
     ImouSensorDescription(
@@ -240,6 +266,12 @@ async def async_setup_entry(
             for description in SENSORS
             if model.member(description.identifier, description.child) is not None
         )
+        for part, child in REMAINING_PARTS:
+            lifetime = part_lifetime_hours(coordinator.device.model, part)
+            if lifetime is not None and model.member(PROP_LIFE, child) is not None:
+                entities.append(
+                    ImouRemainingSensor(coordinator, _remaining(part, child), lifetime)
+                )
         for enum_description in ENUM_SENSORS:
             definition = model.member(enum_description.identifier, enum_description.child)
             if definition is None:
@@ -283,6 +315,33 @@ class ImouSensor(ImouEntity, SensorEntity):
         if description.child is not None:
             raw = raw.get(description.child) if isinstance(raw, Mapping) else None
         return description.value_fn(raw)
+
+
+class ImouRemainingSensor(ImouSensor):
+    """Remaining life of a consumable in %, from its usage counter and the lifetime."""
+
+    def __init__(
+        self,
+        coordinator: ImouCoordinator,
+        description: ImouSensorDescription,
+        lifetime_hours: int,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, description)
+        self._lifetime_hours = lifetime_hours
+
+    @property
+    @override
+    def native_value(self) -> StateType:
+        """Return 100 - used / lifetime in %, not below 0 (None for an unusable value)."""
+        description = self.entity_description
+        raw = self.robot_values.get(description.identifier)
+        raw = raw.get(description.child) if isinstance(raw, Mapping) else None
+        used = to_int(raw)
+        if used is None:
+            return None
+        per_hour = LIFE_RAW_PER_HOUR[description.child]
+        return max(0, round(100 - used / per_hour / self._lifetime_hours * 100))
 
 
 class ImouEnumSensor(ImouEntity, SensorEntity):

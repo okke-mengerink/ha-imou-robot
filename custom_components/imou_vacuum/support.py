@@ -43,6 +43,21 @@ CONFIRMED_RESETS: dict[str, frozenset[str]] = {
     "RV1L Pro": frozenset({"side_brush", "main_brush", "filter"}),
 }
 
+# Lifetime in hours per consumable, as the Imou app of that model shows it (the app
+# shows the remaining percentage of this lifetime). Keys are robot model names
+# (matched like ``model_in``), values map the part keys of ``RESET_PART_LABEL_KEYS``
+# to hours. Only models whose app was read are listed.
+PART_LIFETIME_HOURS: dict[str, dict[str, int]] = {
+    "RV1L Pro": {
+        "side_brush": 150,
+        "main_brush": 240,
+        "filter": 150,
+        "mop": 180,
+        "main_brush_cover": 200,
+        "battery": 800,
+    },
+}
+
 NEW_MODEL_URL = (
     "https://github.com/okke-mengerink/ha-imou-robot/issues/new?template=new_model.yml"
 )
@@ -82,6 +97,14 @@ def reset_confirmed(device_model: str | None, part: str) -> bool:
         part in parts and model_in(device_model, frozenset({name}))
         for name, parts in CONFIRMED_RESETS.items()
     )
+
+
+def part_lifetime_hours(device_model: str | None, part: str) -> int | None:
+    """Return the lifetime in hours of ``part`` on this robot model, if it is known."""
+    for name, parts in PART_LIFETIME_HOURS.items():
+        if model_in(device_model, frozenset({name})):
+            return parts.get(part)
+    return None
 
 
 def support_report(model: ThingsModel, device_model: str | None = None) -> dict[str, Any]:

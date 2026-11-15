@@ -88,6 +88,24 @@
       "battery_usage": {
         "default": "mdi:battery-clock"
       },
+      "side_brush_remaining": {
+        "default": "mdi:brush"
+      },
+      "main_brush_remaining": {
+        "default": "mdi:brush"
+      },
+      "filter_remaining": {
+        "default": "mdi:air-filter"
+      },
+      "mop_remaining": {
+        "default": "mdi:water-opacity"
+      },
+      "main_brush_cover_remaining": {
+        "default": "mdi:brush"
+      },
+      "battery_remaining": {
+        "default": "mdi:battery-clock"
+      },
       "wifi_signal": {
         "default": "mdi:wifi"
       },
