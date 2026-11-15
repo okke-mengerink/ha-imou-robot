@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, override
 
 from homeassistant.components.vacuum import (
@@ -17,6 +18,9 @@ try:  # Home Assistant 2026.3 and newer
     from homeassistant.components.vacuum import Segment
 except ImportError:  # 2026.1: no native room cleaning
     Segment = None  # type: ignore[assignment,misc]
+
+# Segment.group (the map of a room) exists in newer versions only.
+SEGMENT_GROUP = Segment is not None and "group" in inspect.signature(Segment).parameters
 
 from .const import (
     CLEAN_CONTINUE,
@@ -170,7 +174,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
     @override
     def _handle_coordinator_update(self) -> None:
         """Check for new rooms, then update the state."""
-        self._async_check_segments_issue(self.coordinator.room_segments())
+        self._async_check_segments_issue(self.coordinator.all_room_segments())
         super()._handle_coordinator_update()
 
     def _last_seen_segments(self) -> list[Any] | None:
@@ -188,13 +192,8 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         if last_seen is None:
             return
         current = frozenset(names)
+        # every map counts, so a map switch (the same segments) gives no issue
         seen_ids = {segment.id for segment in last_seen}
-        if self.coordinator.is_multi_map():
-            # only the rooms mapped on the active map count (or the plain ones while it is unknown)
-            map_id = self.coordinator.room_map()
-            seen_ids = {
-                segment_id for segment_id in seen_ids if _segment_map(segment_id) == map_id
-            }
         if not current - seen_ids:
             return
         if current != self._issue_room_ids:
@@ -208,34 +207,45 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         The rooms are read from the robot's schedules (the robot reports no rooms
         otherwise). Rooms that were mapped earlier stay, so that deleting a
         schedule does not make a room disappear. On a robot with several maps the
-        segment ids are ``<map>:<room>`` and only the rooms of the active map are
-        returned, also of the rooms mapped before.
+        segment ids are ``<map>:<room>`` and the rooms of every map are returned,
+        each with the names of its own map and the map as its ``group``, so that a
+        map switch in the Imou app does not change the list. Cleaning a room of a map
+        that is not active is refused later (``async_clean_segments``).
         """
         await self.coordinator.async_refresh_schedules()  # on failure: the cached ones
-        segments = self.coordinator.room_segments()
+        segments = self.coordinator.all_room_segments()
         self._async_check_segments_issue(segments)
-        map_id = self.coordinator.room_map()
         multi_map = self.coordinator.is_multi_map()
         for seen in self._last_seen_segments() or []:
             try:
                 seen_map, room_id = parse_room_key(seen.id)
             except ValueError:
                 seen_map, room_id = None, 0
-            if multi_map and seen_map != map_id:
-                continue  # a room of another map is not shown (and its name must not leak)
+            if multi_map and seen_map is None:
+                continue  # an older plain id: not allowed on a robot with several maps
             # a name that is only the default does not replace the one seen before
             if seen.id not in segments or segments[seen.id] == default_room_name(room_id):
                 segments[seen.id] = seen.name
         return [
-            Segment(id=segment_id, name=segments[segment_id])
+            self._segment(segment_id, segments[segment_id], multi_map)
             for segment_id in sorted(segments, key=segment_sort_key)
         ]
+
+    def _segment(self, segment_id: str, name: str, multi_map: bool) -> Any:
+        """Build a segment; on a robot with several maps (and when supported) with its map as group."""
+        map_id = _segment_map(segment_id) if multi_map else None
+        if SEGMENT_GROUP and map_id is not None:
+            return Segment(id=segment_id, name=name, group=self.coordinator.map_group(map_id))
+        return Segment(id=segment_id, name=name)
 
     @override
     async def async_clean_segments(self, segment_ids: list[str], **kwargs: Any) -> None:
         """Clean these rooms; a room of a map that is not the active map is refused.
 
-        A robot with several maps gets a fresh read of its active map first.
+        The segments list the rooms of every map, but the robot can only clean the
+        active map: a robot with several maps gets a fresh read of its active map
+        first, and a room of another map raises an error that names its map and says
+        to switch to it in the Imou app.
         """
         room_ids: list[int] = []
         map_ids: list[int | None] = []

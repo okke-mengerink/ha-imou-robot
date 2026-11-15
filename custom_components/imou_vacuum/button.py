@@ -74,7 +74,8 @@ def _async_track_rooms(
     """Create a "Clean <room>" button per room now and for every room that shows up later.
 
     A robot with several maps gets buttons per map and room; only the rooms of the
-    active map get a button, the buttons of another map stay unavailable.
+    active map get a button, the buttons of another map stay unavailable (the
+    segments of ``vacuum.clean_area`` list the rooms of every map).
     """
     known: set[tuple[int | None, int]] = set()
 
@@ -143,8 +144,13 @@ class ImouResetButton(ImouButton):
 
 
 class ImouRoomButton(ImouEntity, ButtonEntity):
-    """Cleans one room. It is unavailable once the room is no longer known (or, with
-    several maps, once its map is no longer the active map)."""
+    """Cleans one room.
+
+    Its name is the room's name (the user's name, else the name of the area the room
+    is linked to, else the default) and follows changes. It is unavailable once the
+    room is no longer known (or, with several maps, once its map is no longer the
+    active map).
+    """
 
     _attr_translation_key = "clean_room"
 
@@ -158,10 +164,27 @@ class ImouRoomButton(ImouEntity, ButtonEntity):
         super().__init__(coordinator, f"clean_room_{room_key(map_id, room_id).replace(':', '_')}")
         self.map_id = map_id
         self.room_id = room_id
-        label = room_button_name(name, default_room_name(room_id))
-        if map_id is not None:
-            label = f"{label} ({coordinator.map_label(map_id)})"
-        self._attr_translation_placeholders = {"room": label}
+        self._attr_translation_placeholders = {"room": self._label(name)}
+
+    def _label(self, name: str) -> str:
+        """Return the room's name for the button, with its map on a robot with several maps."""
+        label = room_button_name(name, default_room_name(self.room_id))
+        if self.map_id is not None:
+            label = f"{label} ({self.coordinator.map_label(self.map_id)})"
+        return label
+
+    @callback
+    @override
+    def _handle_coordinator_update(self) -> None:
+        """Follow a new name (a room the user named, or the area it was linked to)."""
+        name = self.coordinator.room_names_on_map(self.map_id).get(self.room_id)
+        if name is not None:  # a room that is no longer known keeps its last name
+            placeholders = {"room": self._label(name)}
+            if placeholders != self._attr_translation_placeholders:
+                self._attr_translation_placeholders = placeholders
+                # ``name`` is a cached property: drop it so that it is built again
+                self.__dict__.pop("name", None)
+        super()._handle_coordinator_update()
 
     @property
     @override

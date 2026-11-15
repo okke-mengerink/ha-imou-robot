@@ -40,7 +40,9 @@ PARTLY_VERIFIED_MODELS: frozenset[str] = frozenset({"RV1 Pro Max"})
 # like ``model_in``), values the part keys of ``RESET_PART_LABEL_KEYS``.
 CONFIRMED_RESETS: dict[str, frozenset[str]] = {
     "L11-A": frozenset({"side_brush", "main_brush", "filter", "sensors"}),
-    "RV1L Pro": frozenset({"side_brush", "main_brush", "filter"}),
+    "RV1L Pro": frozenset(
+        {"side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery"}
+    ),
 }
 
 # Lifetime in hours per consumable, as the Imou app of that model shows it (the app

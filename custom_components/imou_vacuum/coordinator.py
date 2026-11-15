@@ -11,6 +11,7 @@ import logging
 import time
 from typing import Any
 
+from homeassistant.components.vacuum import VacuumEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import (
@@ -18,6 +19,7 @@ from homeassistant.exceptions import (
     HomeAssistantError,
     ServiceValidationError,
 )
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -87,6 +89,7 @@ from .rooms import (
     Schedule,
     ScheduleList,
     active_map_id,
+    areas_by_room,
     clean_learned,
     current_map_id,
     known_rooms,
@@ -112,6 +115,8 @@ _LOGGER = logging.getLogger(__name__)
 
 ASLEEP_CODE = "DV1030"  # the device is asleep (an error code, not a failure)
 UNSUPPORTED_CODE = "DV1026"  # "device does not support this function"
+# The link of rooms to areas (the vacuum's area mapping) exists in Home Assistant 2026.3 and newer only.
+CLEAN_AREA = getattr(VacuumEntityFeature, "CLEAN_AREA", None)
 
 
 @dataclass
@@ -151,6 +156,17 @@ class ImouRuntimeData:
 
 
 type ImouConfigEntry = ConfigEntry[ImouRuntimeData]
+
+
+def _combine(*unsubscribers: CALLBACK_TYPE) -> CALLBACK_TYPE:
+    """Return one function that calls all of ``unsubscribers``."""
+
+    @callback
+    def unsubscribe() -> None:
+        for stop in unsubscribers:
+            stop()
+
+    return unsubscribe
 
 
 def default_room_name(room_id: int) -> str:
@@ -728,6 +744,10 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         """Return the name of a map (its id when it has no name)."""
         return "" if map_id is None else self.map_names.get(map_id, str(map_id))
 
+    def map_group(self, map_id: int) -> str:
+        """Return the group of the segments of a map: its name, or ``Map <id>``."""
+        return self.map_names.get(map_id) or f"Map {map_id}"
+
     def room_label(self, room_id: int) -> str:
         """Return the default name of a room, with its map on a robot with several maps."""
         name = default_room_name(room_id)
@@ -758,7 +778,9 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             return
         if map_id is not None and map_id != active:
             raise ServiceValidationError(
-                translation_domain=DOMAIN, translation_key="room_on_other_map"
+                translation_domain=DOMAIN,
+                translation_key="room_on_other_map",
+                translation_placeholders={"map": self.map_label(map_id)},
             )
         if map_id is None and self.is_multi_map():
             raise ServiceValidationError(
@@ -844,11 +866,76 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             and control.input_ref(INPUT_PARTITION_AREA) is not None
         )
 
-    def room_overrides(self) -> dict[int, str]:
-        """Return the room names the user chose for this robot (and its active map), by room id."""
+    def _stored_room_names(self) -> Mapping[str, Any]:
+        """Return the room names the user chose for this robot, by room key."""
         options = self.config_entry.options.get(CONF_ROOM_NAMES, {})
         stored = options.get(self.device.device_id, {}) if isinstance(options, Mapping) else {}
-        return room_overrides_for(stored, self.room_map())
+        return stored if isinstance(stored, Mapping) else {}
+
+    def room_overrides(self) -> dict[int, str]:
+        """Return the room names the user chose for this robot (and its active map), by room id."""
+        return room_overrides_for(self._stored_room_names(), self.room_map())
+
+    def _vacuum_options(self) -> Mapping[str, Any]:
+        """Return the vacuum options of this robot's vacuum entity (area mapping, last seen segments)."""
+        registry = er.async_get(self.hass)
+        entity_id = registry.async_get_entity_id(
+            "vacuum", DOMAIN, f"{self.device.device_id}_vacuum"
+        )
+        entry = registry.async_get(entity_id) if entity_id else None
+        options = entry.options.get("vacuum") if entry is not None else None
+        return options if isinstance(options, Mapping) else {}
+
+    def area_names(self, map_id: int | None, room_ids: Iterable[int]) -> dict[int, str]:
+        """Return the name of the Home Assistant area each room of a map is linked to.
+
+        The link is the vacuum's area mapping (``{area_id: [segment id, ...]}``, set in
+        Home Assistant's own mapping dialog or by **Link rooms to areas**). A room in
+        several areas takes the first area by id; an area that no longer exists is
+        skipped. Rooms without an area are left out. Home Assistant versions without room
+        cleaning (before 2026.3) have no area mapping: no names then.
+        """
+        mapping = self._vacuum_options().get("area_mapping") if CLEAN_AREA is not None else None
+        if not mapping:
+            return {}
+        registry = ar.async_get(self.hass)
+        valid = {area.id for area in registry.async_list_areas()}
+        names: dict[int, str] = {}
+        for room_id, area_id in areas_by_room(mapping, room_ids, valid, map_id).items():
+            area = registry.async_get_area(area_id)
+            if area is not None and area.name:
+                names[room_id] = area.name
+        return names
+
+    @callback
+    def async_track_areas(self) -> CALLBACK_TYPE:
+        """Update the entities when the area mapping or an area name changes.
+
+        Returns the function that stops listening. The names are resolved on every
+        read (``room_names``), so this only has to tell the entities to look again.
+        """
+
+        @callback
+        def update(_event: Any) -> None:
+            self.async_update_listeners()
+
+        @callback
+        def vacuum_changed(event_data: Mapping[str, Any]) -> bool:
+            registry = er.async_get(self.hass)
+            vacuum_id = registry.async_get_entity_id(
+                "vacuum", DOMAIN, f"{self.device.device_id}_vacuum"
+            )
+            return vacuum_id is not None and vacuum_id in (
+                event_data.get("entity_id"),
+                event_data.get("old_entity_id"),
+            )
+
+        return _combine(
+            self.hass.bus.async_listen(ar.EVENT_AREA_REGISTRY_UPDATED, update),
+            self.hass.bus.async_listen(
+                er.EVENT_ENTITY_REGISTRY_UPDATED, update, event_filter=vacuum_changed
+            ),
+        )
 
     def known_room_tags(self) -> dict[int, str | None]:
         """Return every room (ascending) with its label from the Imou app, if any.
@@ -866,16 +953,71 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         """Return the name of every known room, by room id.
 
         The rooms are those of the schedules, of the room properties and those the
-        user named. The user's name, else the room type label from the Imou app, else
-        ``Room <id>``; rooms with the same name get their id appended.
+        user named. The name is the one the user gave the room, else the name of the
+        Home Assistant area its segment is linked to, else the room type label from
+        the Imou app, else ``Room <id>``; rooms with the same name get their id
+        appended.
         """
         known = self.known_room_tags()
-        return segment_names(known, known, self.room_overrides(), default_room_name)
+        overrides = {
+            **self.area_names(self.room_map(), known),
+            **self.room_overrides(),
+        }
+        return segment_names(known, known, overrides, default_room_name)
+
+    def _other_map_room_tags(self, map_id: int) -> dict[int, str | None]:
+        """Return the rooms of a map that is not the active one, with their app labels.
+
+        The rooms of the schedules of that map, of its room properties, the rooms
+        learned on it and the rooms the user named on it (not ``sequence``: that is
+        the order of the active map). Entries without a map id are not counted.
+        """
+        schedules = None
+        if self.schedules is not None:
+            schedules = ScheduleList(
+                tz_offset=self.schedules.tz_offset,
+                schedules=[
+                    s for s in self.schedules.schedules if valid_map_id(s.map_id) == map_id
+                ],
+            )
+        entries = [entry for entry in self.source_entries or () if entry[0] == map_id]
+        rooms = [*map_rooms(entries, map_id), *learned_for(self.learned_rooms, map_id)]
+        overrides = room_overrides_for(self._stored_room_names(), map_id)
+        return remembered_rooms(known_rooms(schedules, rooms), overrides)
+
+    def room_names_on_map(self, map_id: int | None) -> dict[int, str]:
+        """Return the names of the rooms of any known map, by room id (see ``room_names``)."""
+        if map_id == self.room_map():
+            return self.room_names()
+        known = self._other_map_room_tags(map_id) if map_id is not None else {}
+        overrides = {
+            **self.area_names(map_id, known),
+            **room_overrides_for(self._stored_room_names(), map_id),
+        }
+        return segment_names(known, known, overrides, default_room_name)
 
     def room_segments(self) -> dict[str, str]:
-        """Return the name of every known room by segment id (see ``room_key``)."""
+        """Return the name of every known room of the rooms' map by segment id (see ``room_key``)."""
         map_id = self.room_map()
         return {room_key(map_id, room_id): name for room_id, name in self.room_names().items()}
+
+    def all_room_segments(self) -> dict[str, str]:
+        """Return the name of every known room by segment id, of all maps on a robot with several.
+
+        A robot with one map: the same as ``room_segments``. With several maps the keys are
+        ``<map>:<room>`` for the rooms of every listed map (and the active one), each with
+        the names of its own map; the segments then do not change when the map is switched.
+        """
+        if not self.is_multi_map():
+            return self.room_segments()
+        maps = dict.fromkeys(
+            map_id for map_id in (self.room_map(), *self.listed_map_ids) if map_id is not None
+        )
+        return {
+            room_key(map_id, room_id): name
+            for map_id in maps
+            for room_id, name in self.room_names_on_map(map_id).items()
+        }
 
     async def async_clean_rooms(self, room_ids: list[int]) -> None:
         """Clean these rooms (ids as found in the schedules or the cleaning order)."""

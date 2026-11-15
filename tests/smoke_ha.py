@@ -652,13 +652,14 @@ def test_reset_buttons() -> None:
     rv1_parts = (*parts, "mop", "main_brush_cover", "battery")
     rv1_ids = [f"TESTDEVICE0001_reset_{part}" for part in rv1_parts]
     # enabled by default only where the reset is confirmed on a real robot of that model
-    confirmed = {"RV1 Pro Max": set(), "RV1L Pro": {"side_brush", "main_brush", "filter"}}
+    confirmed = {"RV1 Pro Max": set(), "RV1L Pro": {"side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery"}}
     for json_model, name in ((RV1_MODEL_JSON, "RV1 Pro Max"), (RV1LPRO_MODEL_JSON, "RV1L Pro")):
         rv1_coordinator, rv1 = reset_buttons(json_model, name)
         check(f"{name}: seven reset buttons (the four plus mop, main brush cover, battery)", sorted(rv1) == sorted(rv1_ids), str(sorted(rv1)))
         enabled = {k.removeprefix("TESTDEVICE0001_reset_") for k, b in rv1.items() if b.entity_registry_enabled_default}
         check(f"{name}: enabled by default are exactly the confirmed parts {sorted(confirmed[name])}", enabled == confirmed[name], str(sorted(enabled)))
-        check(f"{name}: mop, main brush cover and battery resets are disabled by default", not any(rv1[f"TESTDEVICE0001_reset_{p}"].entity_registry_enabled_default for p in ("mop", "main_brush_cover", "battery")))
+        check(f"{name}: mop, main brush cover and battery resets are enabled by default only where confirmed (RV1L Pro)", all(rv1[f"TESTDEVICE0001_reset_{p}"].entity_registry_enabled_default == (name == "RV1L Pro") for p in ("mop", "main_brush_cover", "battery")))
+        check(f"{name}: the sensors reset stays disabled by default", not rv1["TESTDEVICE0001_reset_sensors"].entity_registry_enabled_default)
         check(f"{name}: new reset buttons are configuration category with translation key reset_<part>", all(rv1[f"TESTDEVICE0001_reset_{p}"].entity_category is EntityCategory.CONFIG and rv1[f"TESTDEVICE0001_reset_{p}"].translation_key == f"reset_{p}" for p in ("mop", "main_brush_cover", "battery")))
         asyncio.run(rv1["TESTDEVICE0001_reset_sensors"].async_press())
         check(f"{name}: a reset button still sends type 3 (its enum value)", rv1_coordinator.calls[0] == ("control", "reset_parts", {"type": 3}), str(rv1_coordinator.calls))
@@ -857,7 +858,7 @@ def test_files() -> None:
         check(f"[{lang}] every exception translation_key exists", used and used <= set(data["exceptions"]), str(used - set(data["exceptions"])))
         for key, item in data["exceptions"].items():
             placeholders = set(re.findall(r"\{(\w+)\}", item["message"]))
-            check(f"[{lang}] exception '{key}' placeholders are known", placeholders <= {"error", "feature", "fan_speed", "option", "command", "params", "room"}, str(placeholders))
+            check(f"[{lang}] exception '{key}' placeholders are known", placeholders <= {"error", "feature", "fan_speed", "option", "command", "params", "room", "map"}, str(placeholders))
     check("sensor name Schedules", en["entity"]["sensor"]["schedules"]["name"] == "Schedules")
     check("English suction/water labels", en["entity"]["select"]["suction_level"]["state"] == {"off": "Off", "quiet": "Quiet", "standard": "Standard", "strong": "Strong", "max": "Max"} and en["entity"]["select"]["mop_water_level"]["state"] == {"low": "Low", "medium": "Medium", "high": "High"})
     check("no number entities are left in the translations", "number" not in en["entity"])
@@ -874,7 +875,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.1b2"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.1b3"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -884,7 +885,7 @@ def test_files() -> None:
     from awesomeversion import AwesomeVersion, AwesomeVersionStrategy  # noqa: PLC0415
 
     version = AwesomeVersion(manifest["version"])
-    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.1", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b2" and AwesomeVersion("0.7.0") < version < AwesomeVersion("0.7.1"), f"{version.strategy} {version.modifier}")
+    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.1", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b3" and AwesomeVersion("0.7.0") < version < AwesomeVersion("0.7.1"), f"{version.strategy} {version.modifier}")
     hacs = json.loads((ROOT / "hacs.json").read_text("utf-8"))
     check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True, "zip_release": True, "filename": "imou_vacuum.zip"}, str(hacs))
     # the release workflow zips exactly this folder; the archive name must match hacs.json
@@ -2055,6 +2056,18 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     else:
         check("room areas (no CLEAN_AREA, Home Assistant 2026.1): the vacuum registry options are not touched", vacuum_options() == seeded, str(vacuum_options()))
 
+    # 0.7.1b3 (L11-A, plain ids): the user's names (options) keep winning; a room without a user name takes its area's name
+    # (Home Assistant 2026.3 and newer; before that there is no area mapping and nothing changes)
+    saved_options = vacuum_options()
+    ent_reg.async_update_entity_options(ids["vacuum"], "vacuum", {**saved_options, "area_mapping": {kitchen.id: ["3"], living.id: ["4"]}})
+    await hass.async_block_till_done()
+    area_room_3 = "Kitchen" if ha_clean_area() is not None else "Slaapkamer"
+    check("L11-A areas: a user name wins over the linked area, a room without a user name takes the area's name", coordinator.room_names() == {2: "Living room", 3: area_room_3, 4: "Bathroom"}, str(coordinator.room_names()))
+    check("L11-A areas: ... the buttons follow (no reload), the ids stay plain", [state(f"clean_room_{r}").name for r in (2, 3, 4)] == ["RV-L11-A-TEST Clean Living room", f"RV-L11-A-TEST Clean {area_room_3}", "RV-L11-A-TEST Clean Bathroom"], str([state(f"clean_room_{r}").name for r in (2, 3, 4)]))
+    ent_reg.async_update_entity_options(ids["vacuum"], "vacuum", saved_options)
+    await hass.async_block_till_done()
+    check("L11-A areas: without the link the names are as before", coordinator.room_names() == {2: "Living room", 3: "Slaapkamer", 4: "Bathroom"}, str(coordinator.room_names()))
+
     # the labels follow the new names; the links are the defaults; clearing every room removes the links but keeps the names
     result = await options_step("room_areas")
     suggestions = {str(k): k.description.get("suggested_value") if k.description else None for k in result["data_schema"].schema}
@@ -2941,7 +2954,7 @@ async def rv1_two_map_checks(hass: Any, entry: Any) -> None:
     try:
         await vac_entity.async_clean_segments([f"{MAP_A}:-126", f"{MAP_B}:-127"])
     except ServiceValidationError as err:
-        check("two maps: a room of the other map raises the translated error", err.translation_key == "room_on_other_map" and "switch the map in the Imou app first" in str(err), f"{err.translation_key} {err}")
+        check("two maps: a room of the other map raises the translated error", err.translation_key == "room_on_other_map" and "switch to that map in the Imou app first" in str(err) and '"Map B"' in str(err), f"{err.translation_key} {err}")
     else:
         check("two maps: a room of the other map raises the translated error", False)
     check("two maps: ... and nothing was sent to the robot", client.calls == [], str(client.calls))
@@ -3010,7 +3023,15 @@ async def rv1_two_map_checks(hass: Any, entry: Any) -> None:
             check(f"two maps: an invalid segment id {bad!r} is refused", False)
     if ha_clean_area() is not None:
         segments = await vac_entity.async_get_segments()
-        check("two maps: the segments are the rooms of map A with map-qualified ids", sorted(seg.id for seg in segments) == sorted(f"{MAP_A}:{room}" for room in ORDER_A), str([(seg.id, seg.name) for seg in segments]))
+        # 0.7.1b3: the segments are the rooms of every map, each under the names of its own map
+        expected = {f"{MAP_A}:{room}": f"Room {room}" for room in ORDER_A}
+        expected |= {f"{MAP_B}:-130": "Attic", f"{MAP_B}:-129": "Room -129", f"{MAP_B}:-128": "Room -128", f"{MAP_B}:-127": "Study", f"{MAP_B}:-126": "Room -126"}
+        check("two maps: the segments are the rooms of all maps with map-qualified ids and the names of their own map", {seg.id: seg.name for seg in segments} == expected, str([(seg.id, seg.name) for seg in segments]))
+        check("two maps: ... sorted by map, then room", [seg.id for seg in segments] == sorted(expected, key=lambda key: (int(key.split(":")[0]), int(key.split(":")[1]))), str([seg.id for seg in segments]))
+        check("two maps: ... the group of a segment is the name of its map", all(seg.group == ("Map A" if seg.id.startswith(f"{MAP_A}:") else "Map B") for seg in segments), str([(seg.id, seg.group) for seg in segments]))
+        coordinator.map_names.pop(MAP_B)
+        check("two maps: ... a map without a name is grouped as 'Map <id>'", {seg.group for seg in await vac_entity.async_get_segments() if seg.id.startswith(f"{MAP_B}:")} == {f"Map {MAP_B}"})
+        coordinator.map_names[MAP_B] = "Map B"
     # 5. names are kept per map: the same room id on both maps has two names
     options = {"room_names": {device: {f"{MAP_A}:-127": "Kitchen", f"{MAP_B}:-127": "Study", "-127": "Plain", f"{MAP_B}:-130": "Attic"}}}
     hass.config_entries.async_update_entry(entry, options=options)
@@ -3079,15 +3100,69 @@ async def rv1_two_map_checks(hass: Any, entry: Any) -> None:
         await switch_map(MAP_B, ORDER_B)
         check("two maps: switching to another fully mapped map raises no repair issue", issues.async_get_issue("vacuum", issue_id) is None)
         await switch_map(MAP_A, ORDER_A)
+        # a room that is really new (on any map) still raises the issue, also while another map is active
         registry.async_update_entity_options(vacuum_id, "vacuum", {"last_seen_segments": [m for m in mapped if m["id"] != f"{MAP_B}:-129"]})
         await hass.async_block_till_done()
         await refresh()
-        check("two maps: no repair issue on map A while only map B misses a mapped room", issues.async_get_issue("vacuum", issue_id) is None)
-        await switch_map(MAP_B, ORDER_B)
-        check("two maps: a room of the active map that was not mapped raises the issue", issues.async_get_issue("vacuum", issue_id) is not None)
+        check("two maps: a new room (of map B) raises the repair issue, even while map A is active", issues.async_get_issue("vacuum", issue_id) is not None)
         ir.async_delete_issue(hass, "vacuum", issue_id)
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"last_seen_segments": mapped})
+        await hass.async_block_till_done()
+        await switch_map(MAP_B, ORDER_B)
+        await switch_map(MAP_A, ORDER_A)
+        check("two maps: ... and switching maps back and forth afterwards raises nothing more", issues.async_get_issue("vacuum", issue_id) is None)
+        segments = await vac_entity.async_get_segments()
+        check("two maps: previously seen segments of every map stay listed, with a seen name over a default name", {seg.id: seg.name for seg in segments}[f"{MAP_B}:-129"] == "B-129" and {seg.id: seg.name for seg in segments}[f"{MAP_A}:-125"] == "A-125", str([(seg.id, seg.name) for seg in segments]))
         registry.async_update_entity_options(vacuum_id, "vacuum", {"last_seen_segments": []})
         await switch_map(MAP_A, ORDER_A)
+        ir.async_delete_issue(hass, "vacuum", issue_id)
+        await hass.async_block_till_done()
+    # 5b. 0.7.1b3: the name of a room: the user's name, else the area its segment is linked to, else the default
+    from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+
+    area_reg = ar.async_get(hass)
+    area_a, area_b = area_reg.async_create("Area A"), area_reg.async_create("Area B")
+    vacuum_id = registry.async_get_entity_id("vacuum", "imou_vacuum", f"{device}_vacuum")
+
+    def button_name(map_id: int, room: int) -> str:
+        return hass.states.get(entity_id(f"clean_room_{map_id}_{room}")).attributes["friendly_name"]
+
+    check("areas: without links the names are unchanged (user names, else the default)", coordinator.room_names() == {-128: "Room -128", -127: "Kitchen", -126: "Hall", -125: "Room -125"}, str(coordinator.room_names()))
+    same_coordinator = entry.runtime_data.coordinators[device]
+    if ha_clean_area() is None:  # Home Assistant 2026.1: no area mapping, so a mapping in the registry changes nothing
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"area_mapping": {area_a.id: [f"{MAP_A}:-128"]}})
+        await hass.async_block_till_done()
+        check("areas (no CLEAN_AREA, Home Assistant 2026.1): a mapping in the vacuum options does not rename rooms", coordinator.room_names()[-128] == "Room -128", str(coordinator.room_names()))
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"last_seen_segments": []})
+        area_reg.async_delete(area_a.id)
+        area_reg.async_delete(area_b.id)
+    else:
+        registry.async_update_entity_options(
+            vacuum_id,
+            "vacuum",
+            {"area_mapping": {area_a.id: [f"{MAP_A}:-127", f"{MAP_A}:-128", f"{MAP_B}:-129"], area_b.id: [f"{MAP_A}:-128", f"{MAP_A}:-125", "-125", f"{MAP_B}:-125"]}, "last_seen_segments": []},
+        )
+        await hass.async_block_till_done()
+        check("areas: a linked room takes the name of its area (first area by id when linked twice), a user name wins, other maps and plain ids do not apply", coordinator.room_names() == {-128: "Area A", -127: "Kitchen", -126: "Hall", -125: "Area B"}, str(coordinator.room_names()))
+        check("areas: the names update at once, without a reload (the Clean button of a linked room is named after the area and the map)", entry.runtime_data.coordinators[device] is same_coordinator and button_name(MAP_A, -128).endswith("Clean Area A (Map A)") and button_name(MAP_A, -125).endswith("Clean Area B (Map A)"), f"{button_name(MAP_A, -128)} {button_name(MAP_A, -125)}")
+        check("areas: ... a user name keeps its button name, an unlinked room its default", button_name(MAP_A, -127).endswith("Clean Kitchen (Map A)") and button_name(MAP_A, -126).endswith("Clean Hall (Map A)"), f"{button_name(MAP_A, -127)} {button_name(MAP_A, -126)}")
+        check("areas: ... also for the rooms of another map (names per map)", coordinator.room_names_on_map(MAP_B)[-129] == "Area A" and coordinator.room_names_on_map(MAP_B)[-127] == "Study", str(coordinator.room_names_on_map(MAP_B)))
+        check("areas: the entity ids and unique ids are not changed", entity_id(f"clean_room_{MAP_A}_-128") is not None and f"clean_room_{MAP_A}_-128" in clean_ids())
+        if ha_clean_area() is not None:
+            by_id = {seg.id: seg for seg in await vac_entity.async_get_segments()}
+            check("areas: the segment name follows the area, on every map, with the map as group", by_id[f"{MAP_A}:-128"].name == "Area A" and by_id[f"{MAP_B}:-129"].name == "Area A" and by_id[f"{MAP_B}:-129"].group == "Map B", str([(k, v.name, v.group) for k, v in by_id.items()]))
+        area_reg.async_update(area_b.id, name="Area C")
+        await hass.async_block_till_done()
+        check("areas: renaming the area renames the button and the room at once", button_name(MAP_A, -125).endswith("Clean Area C (Map A)") and coordinator.room_names()[-125] == "Area C", f"{button_name(MAP_A, -125)} {coordinator.room_names()}")
+        area_reg.async_delete(area_b.id)
+        await hass.async_block_till_done()
+        check("areas: a deleted area is skipped (the next area by id, else the default)", coordinator.room_names()[-125] == "Room -125" and coordinator.room_names()[-128] == "Area A" and button_name(MAP_A, -125).endswith("Clean room -125 (Map A)"), f"{coordinator.room_names()} {button_name(MAP_A, -125)}")
+        registry.async_update_entity_options(vacuum_id, "vacuum", {"last_seen_segments": []})
+        await hass.async_block_till_done()
+        check("areas: removing the link gives the default name back", coordinator.room_names()[-128] == "Room -128" and button_name(MAP_A, -128).endswith("Clean room -128 (Map A)"), f"{coordinator.room_names()} {button_name(MAP_A, -128)}")
+        area_reg.async_delete(area_a.id)
+        await hass.async_block_till_done()
+
     # 6. switch to map B (sweeper_sequence names the active map)
     client.props["160700"] = {"160701": MAP_B, "160702": json.dumps(ORDER_B)}
     client.props["120600"] = list(ORDER_B)

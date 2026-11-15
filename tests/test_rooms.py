@@ -920,5 +920,36 @@ def test_clean_learned() -> None:
         assert rooms.clean_learned(stored) == {}
 
 
+# --- 0.7.1b3: segments of all maps, names from linked areas (neutral ids) --------------------------
+def test_area_names_per_map_and_precedence() -> None:
+    mapping = {
+        "area_b": ["1001:-127", "1002:-127", "1001:-128"],
+        "area_a": ["1001:-128", "-127", "1002:-126", "x:y", 7],
+    }
+    # per map: only the segments of that map; a room in two areas takes the first area by id
+    assert rooms.areas_by_room(mapping, [-128, -127, -126], None, 1001) == {-128: "area_a", -127: "area_b"}
+    assert rooms.areas_by_room(mapping, [-128, -127, -126], None, 1002) == {-127: "area_b", -126: "area_a"}
+    assert rooms.areas_by_room(mapping, [-128, -127, -126], None, None) == {-127: "area_a"}  # a plain id
+    # an area that no longer exists is skipped: the next area takes the room
+    assert rooms.areas_by_room(mapping, [-128], {"area_b"}, 1001) == {-128: "area_b"}
+    for bad in (None, [], "x", 3):
+        assert rooms.areas_by_room(bad, [-128], None, 1001) == {}
+    # name precedence (the coordinator merges the area names under the user's names): user, area, app label, default
+    area_names = {-128: "Area A", -127: "Area B"}
+    user = {-127: "Mine"}
+    tags = {-128: "Bedroom", -127: "Office", -126: "Hall", -125: None}
+    names = rooms.segment_names(tags, tags, {**area_names, **user}, lambda room_id: f"Room {room_id}")
+    assert names == {-128: "Area A", -127: "Mine", -126: "Hall", -125: "Room -125"}
+    # the same area name on two rooms gets the room id appended
+    clash = rooms.segment_names([-128, -127], {}, {-128: "Area A", -127: "Area A"}, lambda room_id: f"Room {room_id}")
+    assert clash == {-128: "Area A (-128)", -127: "Area A (-127)"}
+
+
+def test_segment_ids_of_all_maps_sort_by_map_then_room() -> None:
+    ids = ["1002:-126", "1001:-127", "1002:-128", "1001:-128"]
+    assert sorted(ids, key=rooms.segment_sort_key) == ["1001:-128", "1001:-127", "1002:-128", "1002:-126"]
+    assert rooms.parse_room_key("1002:-128") == (1002, -128) and rooms.parse_room_key("-128") == (None, -128)
+
+
 if __name__ == "__main__":
     sys.exit(run_all(globals()))

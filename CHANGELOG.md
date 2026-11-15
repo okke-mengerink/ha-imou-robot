@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.1b3 (beta)
+
+This beta is for testing on the RV1L Pro with several maps; the stable release is 0.7.0. Not verified yet: the new segment list and the area names in Home Assistant itself.
+
+After feedback from an RV1L Pro user with three maps: every map switch in the Imou app gave the repair notice "vacuum segments changed" and the new map was only used after opening Home Assistant's area mapping again, and rooms linked to areas there still had their old button names.
+
+- Changed: on a robot with several maps, the segments of `vacuum.clean_area` (Home Assistant's room mapping) are now the rooms of **all** maps, not only the active one. The ids stay `<map id>:<room id>` and every room keeps the names of its own map. Where Home Assistant supports segment groups (2026.10 has `group`; 2026.1 has no segments at all), the group is the map's name, or "Map <id>" when it has none. The rooms of a map are read from its schedules, its room properties, the rooms learned on it and the rooms you named on it; the cleaning order only belongs to the active map.
+- Fixed: a map switch no longer gives the "segments changed" repair notice: the list of segments does not change any more. The comparison with the mapped rooms no longer filters on the active map, so the notice still appears for a room that is really new, on any map. Rooms that were mapped before stay listed on every map, and a name that is only the default does not replace a name seen before.
+- Changed: a room of a map that is not active is still refused, now with a message that names the map: "This room is on the map "<map>"; switch to that map in the Imou app first." The Clean buttons are still created for the active map only.
+- New: a room takes the name of the Home Assistant area its segment is linked to (the vacuum's `area_mapping` in the entity registry options, set in Home Assistant's mapping dialog or by **Link rooms to areas**). The name of a room is, in this order: the name you gave it under **Configure**, the area (the first area by id when several link it; an area that no longer exists is skipped), the room type from the Imou app, "Room <id>". This applies to the Clean buttons (the map name stays as a suffix, for example "Clean Kitchen (Ground floor)") and to the segment names. Names update without a restart when the mapping or an area name changes. Entity ids and unique ids do not change.
+- No change for the RV-L11-A and other robots with one map: plain ids, no groups, and the names you gave the rooms keep winning. **Link rooms to areas** still stores the area's name as your own name and writes the same `area_mapping` as Home Assistant's dialog, so a later rename of the area does not rename those rooms.
+- Changed: Reset mop cloth, Reset main brush cover and Reset battery are confirmed on the RV1L Pro (the counters in the Imou app went back to 100 %), so with side brush, main brush and filter all six reset buttons of that model are enabled by default (`CONFIRMED_RESETS` in `support.py`). The sensors reset stays unconfirmed and disabled there, and nothing changes for other models.
+- Docs: the README sections on rooms, segments, map switching, area names and the reset defaults are updated.
+
 ## 0.7.1b2 (beta)
 
 This beta is for testing on the RV1L Pro; the stable release is 0.7.0. Not verified yet: the unit of the usage counters on an RV1 robot.

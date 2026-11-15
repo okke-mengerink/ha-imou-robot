@@ -207,6 +207,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool
         await coordinator.async_load_learned_rooms()
         await coordinator.async_config_entry_first_refresh()
         coordinators[device.device_id] = coordinator
+        # names follow the areas the rooms are linked to (no reload needed)
+        entry.async_on_unload(coordinator.async_track_areas())
         _async_report_support(hass, entry, device, model)
 
     entry.runtime_data = ImouRuntimeData(

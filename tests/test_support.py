@@ -199,7 +199,7 @@ def test_confirmed_resets_per_model() -> None:
     # only what is confirmed on a real robot is enabled by default; the rest is data, not code
     assert support.CONFIRMED_RESETS == {
         "L11-A": {"side_brush", "main_brush", "filter", "sensors"},
-        "RV1L Pro": {"side_brush", "main_brush", "filter"},
+        "RV1L Pro": {"side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery"},
     }
     for name in ("L11-A", "Imou RV-L11-A", " l11a "):
         for part in ("side_brush", "main_brush", "filter", "sensors"):
@@ -207,10 +207,10 @@ def test_confirmed_resets_per_model() -> None:
         for part in ("mop", "main_brush_cover", "battery"):
             assert not support.reset_confirmed(name, part), (name, part)
     for name in ("RV1L Pro", "Imou RV1L-Pro", "rv1l pro"):
-        for part in ("side_brush", "main_brush", "filter"):
+        # 0.7.1b3: all six parts are confirmed on the RV1L Pro; the sensors stay unconfirmed
+        for part in ("side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery"):
             assert support.reset_confirmed(name, part), (name, part)
-        for part in ("sensors", "mop", "main_brush_cover", "battery"):
-            assert not support.reset_confirmed(name, part), (name, part)
+        assert not support.reset_confirmed(name, "sensors"), name
     for name in ("RV1 Pro Max", "RV1L Pro Max", "RV1 Pro", "L11-A Pro", "", None):
         for part in ("side_brush", "main_brush", "filter", "sensors", "mop", "main_brush_cover", "battery"):
             assert not support.reset_confirmed(name, part), (name, part)
