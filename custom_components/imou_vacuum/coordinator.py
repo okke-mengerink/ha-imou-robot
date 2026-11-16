@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -19,10 +19,11 @@ from homeassistant.exceptions import (
     HomeAssistantError,
     ServiceValidationError,
 )
-from homeassistant.helpers import area_registry as ar, entity_registry as er
+from homeassistant.helpers import area_registry as ar, entity_registry as er, issue_registry as ir
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import (
     ImouApiError,
@@ -31,6 +32,8 @@ from .api import (
     ImouDevice,
     ImouDeviceOfflineError,
     ImouError,
+    ImouQuotaError,
+    api_purpose,
 )
 from .const import (
     ACTIVE_STATUS_KEYS,
@@ -51,6 +54,7 @@ from .const import (
     INPUT_WATER,
     INPUT_WIND,
     LEARNED_SAVE_DELAY,
+    LEARNING_TRACE_SIZE,
     LEARNED_STORAGE_VERSION,
     MAP_NAME,
     MAP_NAME_MEMBER_ID,
@@ -68,6 +72,7 @@ from .const import (
     PROP_WATER,
     PROP_WIND_POWER,
     PROP_WORK_STATUS,
+    QUOTA_RETRY_INTERVAL,
     ROOM_CLEAN_KEY,
     ROOM_SOURCES,
     SCAN_INTERVAL_ACTIVE,
@@ -274,6 +279,14 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         self._schedules_fetched_at: float | None = None  # monotonic, last success
         self._boost_until = 0.0
         self._command_refresh_cancel: CALLBACK_TYPE | None = None
+        # whether the API quota of the App ID is used up (the last call that told said so):
+        # polling slows down and the schedule, room and learn reads are skipped meanwhile
+        self.quota_exhausted = False
+        # whether the last read of the room properties reported ``sequence`` (an empty
+        # order that was reported differs from one that was not reported at all)
+        self.sequence_reported = False
+        # the last learning observations (see ``_record_learning``), for diagnostics
+        self.learning_trace: deque[dict[str, Any]] = deque(maxlen=LEARNING_TRACE_SIZE)
 
     # -- polling -------------------------------------------------------------
     async def _async_update_data(self) -> ImouRobotState:
@@ -287,7 +300,8 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         """
         asleep = False
         try:
-            result = await self._async_poll_properties()
+            with api_purpose("poll"):
+                result = await self._async_poll_properties()
         except ImouDeviceOfflineError as err:
             if err.code.upper() != ASLEEP_CODE:
                 return self._poll_failed("the robot is offline")
@@ -297,7 +311,12 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 translation_domain=DOMAIN, translation_key="auth_failed"
             ) from err
         except ImouError as err:
+            if isinstance(err, ImouQuotaError):
+                self._quota_hit()
             return self._poll_failed(str(err), err)
+
+        if self.quota_exhausted:
+            self._quota_restored()
 
         # A missing status is treated as online.
         status = "sleep" if asleep else (result.status or "online").lower()
@@ -340,16 +359,17 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             return await self.client.async_get_properties(
                 self.device.product_id, self.device.device_id, refs
             )
-        except (ImouAuthError, ImouDeviceOfflineError):
+        except (ImouAuthError, ImouDeviceOfflineError, ImouQuotaError):
             raise
         except ImouApiError as err:
             prop = self.model.prop(PROP_PARTITION_AREA)
             if prop is None or prop.ref not in refs:
                 raise
             without = [ref for ref in refs if ref != prop.ref]
-            result = await self.client.async_get_properties(
-                self.device.product_id, self.device.device_id, without
-            )
+            with api_purpose("poll_without_partition_area"):
+                result = await self.client.async_get_properties(
+                    self.device.product_id, self.device.device_id, without
+                )
             self.poll_refs = without
             _LOGGER.info(
                 "Reading %s failed with partition_area (%s) but works without it; "
@@ -367,7 +387,9 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         """
         keep = self.health.failure()
         self.update_interval = timedelta(
-            seconds=self.health.retry_interval(self._interval_seconds())
+            seconds=QUOTA_RETRY_INTERVAL
+            if isinstance(err, ImouQuotaError)
+            else self.health.retry_interval(self._interval_seconds())
         )
         if keep and self.data is not None:
             if self.health.failures == 1:  # one warning, not one per failed poll
@@ -386,6 +408,40 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         return ImouRobotState(
             online=False, values=self.data.values if self.data is not None else {}
         )
+
+    def _quota_issue_id(self) -> str:
+        return f"api_quota_exhausted_{self.config_entry.entry_id}"
+
+    def _quota_hit(self) -> None:
+        """Remember that the API quota is used up; tell the user once per config entry.
+
+        The repair issue (and the one log warning) exists once for the entry, however
+        many robots or polls see the error.
+        """
+        self.quota_exhausted = True
+        if ir.async_get(self.hass).async_get_issue(DOMAIN, self._quota_issue_id()) is not None:
+            return
+        _LOGGER.warning(
+            "The Imou API quota of this App ID is used up; polling %s only every %d minutes "
+            "until calls work again",
+            self.device.name,
+            QUOTA_RETRY_INTERVAL // 60,
+        )
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._quota_issue_id(),
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="api_quota_exhausted",
+            data={"entry_id": self.config_entry.entry_id},
+        )
+
+    def _quota_restored(self) -> None:
+        """A call worked again: delete the repair issue and poll normally."""
+        self.quota_exhausted = False
+        _LOGGER.info("Imou API calls work again for %s", self.device.name)
+        ir.async_delete_issue(self.hass, DOMAIN, self._quota_issue_id())
 
     def _interval_seconds(self) -> float:
         if self.update_interval is None:
@@ -494,17 +550,22 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         make a poll fail. Returns whether anything new was read. A part that fails
         is retried sooner than the hour, and alone.
         """
+        if self.quota_exhausted:
+            return False  # the quota is used up: do not hammer the API (nothing is marked failed)
         read = False
         if (
             parts is None or SERVICE_CLEAN_LIST in parts
         ) and (service := self.model.service(SERVICE_CLEAN_LIST)) is not None:
             self._failed_parts.add(SERVICE_CLEAN_LIST)
             try:
-                response = await self.async_query_service(SERVICE_CLEAN_LIST)
+                with api_purpose("schedules", keep_outer=True):
+                    response = await self.async_query_service(SERVICE_CLEAN_LIST)
             except ImouError as err:
                 _LOGGER.debug(
                     "Could not read the schedules of %s: %s", self.device.name, err
                 )
+                if isinstance(err, ImouQuotaError):
+                    self._quota_hit()
             else:
                 parsed = parse_schedules(
                     response,
@@ -521,18 +582,23 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                     self._failed_parts.discard(SERVICE_CLEAN_LIST)
                     read = True
         if (
-            parts is None or PART_ROOM_PROPERTIES in parts
-        ) and (identifiers := self._room_property_identifiers()):
+            not self.quota_exhausted
+            and (parts is None or PART_ROOM_PROPERTIES in parts)
+            and (identifiers := self._room_property_identifiers())
+        ):
             self._failed_parts.add(PART_ROOM_PROPERTIES)
             values: dict[str, Any] | None = None
             with_sources = len(identifiers) > 1 or identifiers[0] != PROP_SEQUENCE
             try:
-                values = await self.async_read_identifiers(identifiers)
+                with api_purpose("room_properties", keep_outer=True):
+                    values = await self.async_read_identifiers(identifiers)
             except ImouError as err:
                 _LOGGER.debug(
                     "Could not read the rooms of %s: %s", self.device.name, err
                 )
-                if with_sources and PROP_SEQUENCE in identifiers:
+                if isinstance(err, ImouQuotaError):
+                    self._quota_hit()  # and no second call to try ``sequence`` alone
+                elif with_sources and PROP_SEQUENCE in identifiers:
                     # the extra refs may be the cause: keep the ``sequence`` rooms
                     values = await self._async_read_sequence_only(err)
                     with_sources = False
@@ -601,6 +667,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         """
         if self.model.prop(PROP_SEQUENCE) is not None:
             self.sequence_rooms = sequence_room_ids(values.get(PROP_SEQUENCE))
+            self.sequence_reported = values.get(PROP_SEQUENCE) is not None
         if not with_sources:
             # only ``sequence`` was read: it may be the order of another map now, so the
             # active map is unknown until the next full read
@@ -655,26 +722,69 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         or docked robot learns nothing. On a robot with several maps the room properties
         are read fresh once per clean (unless this poll just read them, ``fetched``), and
         nothing is learned while the active map is unknown; the rooms are filed under the
-        active map. Saves (delayed) only when a room is new.
+        active map. Saves (delayed) only when a room is new. Every outcome goes into the
+        learning trace (``_record_learning``).
         """
+        result = await self._async_learn_result(values, fetched)
+        if self.can_learn_rooms():
+            self._record_learning(values, result)
+
+    async def _async_learn_result(self, values: Mapping[str, Any], fetched: bool) -> str:
+        """Do the learning of ``_async_learn_partition_area``; return what came of it:
+        ``not_room_clean``, ``empty``, ``active_map_unknown``, ``map_read_failed``,
+        ``learned`` or ``nothing_new``."""
         if not self._is_room_clean(values):
             self._map_confirmed = False
-            return
+            return "not_room_clean"
         found = partition_room_ids(values.get(PROP_PARTITION_AREA))
         if not found:
-            return
+            return "empty"
         if self.is_multi_map():
             if not self._map_confirmed:
                 if not fetched:
-                    await self._async_fetch_schedules({PART_ROOM_PROPERTIES})
+                    if self.quota_exhausted:
+                        return "map_read_failed"
+                    with api_purpose("learn"):
+                        await self._async_fetch_schedules({PART_ROOM_PROPERTIES})
                 self._map_confirmed = PART_ROOM_PROPERTIES not in self._failed_parts
-            if not self._map_confirmed or self.active_map() is None:
-                return
+            if not self._map_confirmed:
+                return "map_read_failed"
+            if self.active_map() is None:
+                return "active_map_unknown"
         learned = learn_rooms(self.learned_rooms, self.room_map(), found)
-        if learned is not None:
-            self.learned_rooms = learned
-            _LOGGER.debug("Learned %d room(s) of %s", len(found), self.device.name)
-            self._save_learned_rooms()
+        if learned is None:
+            return "nothing_new"
+        self.learned_rooms = learned
+        _LOGGER.debug("Learned %d room(s) of %s", len(found), self.device.name)
+        self._save_learned_rooms()
+        return "learned"
+
+    def _record_learning(self, values: Mapping[str, Any], result: str) -> None:
+        """Add one observation to the learning trace (the last ``LEARNING_TRACE_SIZE``).
+
+        An observation has the time (UTC), the work status (number and key), the
+        ``partition_area`` room ids, the active map id (or None), whether the robot has
+        several maps and the result. It is only added when it differs from the previous
+        one (a changed status or ``partition_area``, or another outcome), so polls
+        that see the same thing every 30 s do not push the useful ones out. Room ids
+        only, no names.
+        """
+        status = to_int(values.get(PROP_WORK_STATUS))
+        observation: dict[str, Any] = {
+            "work_status": status,
+            "work_status_key": None
+            if status is None
+            else self.model.work_status_keys().get(status),
+            "partition_area": partition_room_ids(values.get(PROP_PARTITION_AREA)),
+            "active_map": self.active_map(),
+            "multi_map": self.is_multi_map(),
+            "result": result,
+        }
+        if self.learning_trace:
+            last = {k: v for k, v in self.learning_trace[-1].items() if k != "time"}
+            if last == observation:
+                return
+        self.learning_trace.append({"time": dt_util.utcnow().isoformat(), **observation})
 
     def _save_learned_rooms(self) -> None:
         """Save the learned rooms after a delay."""
@@ -728,7 +838,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         return active_map_id(
             self.sweeper_map_id,
             self.sequence_entries,
-            self.sequence_rooms or (),
+            self.sequence_rooms if self.sequence_reported else None,
             self.listed_map_ids,
         )
 
@@ -863,8 +973,9 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             and time.monotonic() - fetched_at < SCHEDULE_MIN_REFRESH_SECONDS
         ):
             return True
-        if not await self._async_fetch_schedules():
-            return False
+        with api_purpose("on_demand"):
+            if not await self._async_fetch_schedules():
+                return False
         self.async_update_listeners()
         return True
 
@@ -1103,7 +1214,8 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
     async def _async_command(self, call: Awaitable[Any]) -> Any:
         """Run a command; map API errors and schedule a quick refresh."""
         try:
-            return await call
+            with api_purpose("command"):
+                return await call
         except ImouError as err:
             if err.code.upper() == UNSUPPORTED_CODE:
                 raise SettingNotSupportedError(

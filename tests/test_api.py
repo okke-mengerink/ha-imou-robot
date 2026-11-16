@@ -6,6 +6,7 @@ Run: python3 -I tests/test_api.py
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta
 import logging
 from pathlib import Path
 import sys
@@ -413,6 +414,175 @@ def test_command_payloads() -> None:
     assert locate[1]["params"]["content"] == {}
     assert setter[0] == "setIotDeviceProperties"
     assert setter[1]["params"]["properties"] == {"1019": 1}
+
+
+# --- 0.7.1b4: API call counter and used-up quota -----------------------------------------------------
+class Clock:
+    """A local clock the test can move (the client gets it as ``now``)."""
+
+    def __init__(self) -> None:
+        self.value = datetime(2026, 11, 9, 23, 59).astimezone()
+
+    def __call__(self) -> datetime:
+        return self.value
+
+
+def counting_handler(method: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    if method == "accessToken":
+        return ok({"accessToken": "tok", "expireTime": 259200})
+    return ok({"properties": {"1": 1}, "status": "online", "deviceList": []})
+
+
+def test_counter_per_method_purpose_and_day() -> None:
+    clock = Clock()
+    session = FakeSession(counting_handler)
+    client = api.ImouClient(session, APP_ID, APP_SECRET, "example.invalid", now=clock)
+    assert client.api_calls()["total"] == 0 and client.api_calls()["per_day"] == {}
+
+    async def go() -> None:
+        with api.api_purpose("setup"):
+            await client.async_list_devices()  # accessToken + listDeviceDetailsByPage
+        with api.api_purpose("poll"):
+            await client.async_get_properties("p", DEVICE_ID, ["1"])
+            await client.async_get_properties("p", DEVICE_ID, ["1"])
+        await client.async_get_properties("p", DEVICE_ID, ["1"])  # no tag
+        with api.api_purpose("command"):
+            await client.async_set_properties("p", DEVICE_ID, {"1": 1})
+
+    run(go())
+    calls = client.api_calls()
+    assert calls["total"] == len(session.requests) == 6
+    assert calls["per_method"] == {
+        "accessToken": 1,
+        "getIotDeviceProperties": 3,
+        "listDeviceDetailsByPage": 1,
+        "setIotDeviceProperties": 1,
+    }
+    # the token call is counted as "token" whatever the tag around it
+    assert calls["per_purpose"] == {"command": 1, "other": 1, "poll": 2, "setup": 1, "token": 1}
+    assert calls["per_day"] == {"2026-11-09": 6}
+    assert calls["per_day_per_purpose"]["2026-11-09"]["poll"] == 2
+    assert calls["since"] == clock.value.isoformat()
+    # the tag is gone outside the block
+    assert api._purpose.get() is None
+
+
+def test_purpose_nesting_and_keep_outer() -> None:
+    with api.api_purpose("on_demand"):
+        with api.api_purpose("schedules", keep_outer=True):
+            assert api._purpose.get() == "on_demand"  # the caller's reason wins
+        with api.api_purpose("poll_without_partition_area"):
+            assert api._purpose.get() == "poll_without_partition_area"
+        assert api._purpose.get() == "on_demand"
+    with api.api_purpose("schedules", keep_outer=True):
+        assert api._purpose.get() == "schedules"  # no outer tag: the default applies
+    assert api._purpose.get() is None
+
+
+def test_counter_day_rollover_and_eight_days() -> None:
+    clock = Clock()
+    session = FakeSession(counting_handler)
+    client = api.ImouClient(session, APP_ID, APP_SECRET, "example.invalid", now=clock)
+
+    async def poll() -> None:
+        await client.async_get_properties("p", DEVICE_ID, ["1"])
+
+    run(poll())  # 23:59 on the 9th: accessToken + poll
+    clock.value += timedelta(minutes=2)  # past midnight, local time
+    run(poll())
+    assert client.api_calls()["per_day"] == {"2026-11-09": 2, "2026-11-10": 1}
+    for _ in range(12):  # twelve more days, one call each
+        clock.value += timedelta(days=1)
+        run(poll())
+    days = client.api_calls()["per_day"]
+    assert len(days) == api.DAYS_KEPT == 8
+    assert "2026-11-09" not in days and max(days) == "2026-11-22"
+    assert client.api_calls()["total"] == 2 + 1 + 12  # the totals keep counting
+
+
+def test_every_request_is_counted_even_when_it_fails() -> None:
+    def handler(method: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return 500, {}
+
+    client, session = make_client(handler)
+    try:
+        run(client.async_validate())
+    except api.ImouConnectionError:
+        pass
+    assert client.api_calls()["total"] == 1 and client.api_calls()["per_purpose"] == {"token": 1}
+
+
+def test_quota_error_detection() -> None:
+    for code, msg in (
+        ("OP1013", "call interface times exceed limit"),
+        ("op1013", ""),
+        ("OP1013", "anything"),
+        ("XX9999", "Call interface times exceed limit."),
+        ("XX9999", "The number of calls exceeds the limit"),
+        ("XX9999", "API quota exceed limit"),
+    ):
+        assert api._looks_like_quota_error(code, msg), (code, msg)
+    for code, msg in (
+        ("OP1001", "param error"),
+        ("TK1002", "Token expired or does not exist, please get token again."),
+        ("OP1010", "request too frequent"),
+        ("OP1012", "server busy"),
+        ("DV1007", "device offline"),
+        ("XX9999", "exceed"),
+        ("XX9999", "limit"),
+    ):
+        assert not api._looks_like_quota_error(code, msg), (code, msg)
+    assert issubclass(api.ImouQuotaError, api.ImouApiError) and not issubclass(api.ImouQuotaError, api.ImouAuthError)
+
+
+def test_quota_error_is_raised_by_a_call() -> None:
+    def handler(method: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        if method == "accessToken":
+            return ok({"accessToken": "tok", "expireTime": 259200})
+        return err("OP1013", "call interface times exceed limit")
+
+    client, session = make_client(handler)
+    try:
+        run(client.async_get_properties("p", DEVICE_ID, ["1"]))
+    except api.ImouQuotaError as error:
+        assert error.code == "OP1013"
+    else:
+        raise AssertionError("no ImouQuotaError")
+    assert session.methods() == ["accessToken", "getIotDeviceProperties"]  # no retry
+
+
+def test_quota_error_on_the_token_call_is_not_an_auth_error() -> None:
+    def handler(method: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return err("OP1013", "call interface times exceed limit")
+
+    for strict in (True, False):
+        client, _ = make_client(handler)
+        try:
+            if strict:
+                run(client.async_validate())
+            else:
+                run(client.async_get_properties("p", DEVICE_ID, ["1"]))
+        except api.ImouQuotaError:
+            pass
+        except api.ImouAuthError:
+            raise AssertionError("a used-up quota is no authentication failure") from None
+        else:
+            raise AssertionError("no error")
+
+
+def test_other_rate_limit_messages_keep_their_type() -> None:
+    def handler(method: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return err("OP1010", "request too frequent")
+
+    client, _ = make_client(handler)
+    try:
+        run(client.async_validate())
+    except api.ImouQuotaError:
+        raise AssertionError("too frequent is not a used-up quota") from None
+    except api.ImouAuthError:
+        raise AssertionError("a rate limit stays an ApiError (no re-authentication)") from None
+    except api.ImouApiError as error:
+        assert error.code == "OP1010"
 
 
 if __name__ == "__main__":

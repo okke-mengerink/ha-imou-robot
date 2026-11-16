@@ -315,6 +315,10 @@
     "model_not_fully_supported": {
       "title": "{model} is not fully supported yet",
       "description": "The robot model {model} differs from the models this integration was verified on. Missing core functions: {missing}. Values that are not recognised: {unknown}. Other functions may work, but the missing or unknown parts may not show or react correctly.\n\nPlease help to support this model: select Learn more to open a prefilled GitHub issue, and attach the diagnostics download of this integration (Settings > Devices & services > Imou Vacuum (Open Platform) > the three dots > Download diagnostics). Check the file before you attach it."
+    },
+    "api_quota_exhausted": {
+      "title": "Imou API quota used up",
+      "description": "Imou refused the calls of this integration because the API quota of your App ID is used up (error OP1013). The free quota is 30,000 calls per month per App ID and renews on the 1st of the month. You can check your usage in the Imou developer console (Open Platform > your app). Other integrations or tools that use the same App ID count against the same quota.\n\nUntil calls work again the integration only polls every 30 minutes, so the entities may show the last values or become unavailable. This notice goes away by itself once a call works again."
     }
   },
   "exceptions": {

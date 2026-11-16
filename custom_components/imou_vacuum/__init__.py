@@ -20,6 +20,7 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import dt as dt_util
 
 from .api import (
     ImouApiError,
@@ -28,6 +29,8 @@ from .api import (
     ImouConnectionError,
     ImouDevice,
     ImouError,
+    ImouQuotaError,
+    api_purpose,
 )
 from .const import (
     CONF_APP_ID,
@@ -83,7 +86,7 @@ async def _async_discover_robots(
                 models[device.product_id] = ThingsModel.from_api(
                     await client.async_get_product_model(device.product_id)
                 )
-            except (ImouConnectionError, ImouAuthError):
+            except (ImouConnectionError, ImouAuthError, ImouQuotaError):
                 raise
             except ImouApiError as err:
                 _LOGGER.warning(
@@ -166,10 +169,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool
         entry.data[CONF_APP_ID],
         entry.data[CONF_APP_SECRET],
         REGION_HOSTS[entry.data.get(CONF_REGION, DEFAULT_REGION)],
+        now=dt_util.now,  # the local calendar day of the call counter
     )
 
     try:
-        robots, model_errors = await _async_discover_robots(client)
+        with api_purpose("setup"):
+            robots, model_errors = await _async_discover_robots(client)
     except ImouAuthError as err:
         raise ConfigEntryAuthFailed(
             translation_domain=DOMAIN, translation_key="auth_failed"

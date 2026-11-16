@@ -538,7 +538,7 @@ def rooms_on_map(entries: Iterable[RoomEntry], current_map: Any) -> list[int]:
 def active_map_id(
     sweeper_map: Any,
     sequence_entries: Iterable[RoomEntry],
-    sequence: Iterable[int],
+    sequence: Iterable[int] | None,
     listed_map_ids: Iterable[Any],
 ) -> int | None:
     """Return the id of the map the robot has active now, if it can be told, else ``None``.
@@ -546,12 +546,18 @@ def active_map_id(
     In this order: (a) the map id of ``sweeper_sequence`` when it is usable, (b) the
     one map whose cleaning order (``sequence_entries``, from ``swp_cleansequence``)
     equals the top-level ``sequence``, which is the order of the active map (the
-    order must not be empty and exactly one map must match), (c) the one map of
-    ``map_name``, else (d) ``None``.
+    order must not be empty and exactly one map must match), (c) when the robot
+    reported an empty ``sequence`` (an active map without a cleaning order): the one
+    listed map that has no order in ``sequence_entries``, provided at least two maps
+    are listed and every other listed map has an order, (d) the one map of
+    ``map_name``, else (e) ``None``.
+
+    ``sequence`` is ``None`` when the robot did not report it (or it was not read):
+    that is not the same as an empty order, and rule (c) does not apply then.
     """
     if (sweeper := valid_map_id(sweeper_map)) is not None:
         return sweeper
-    order = tuple(sequence)
+    order = None if sequence is None else tuple(sequence)
     if order:
         matches = {
             map_id
@@ -561,6 +567,11 @@ def active_map_id(
         if len(matches) == 1:
             return next(iter(matches))
     listed = {valid_map_id(item) for item in listed_map_ids} - {None}
+    if order is not None and not order and len(listed) >= 2:
+        with_order = {map_id for map_id, rooms in sequence_entries if rooms}
+        without_order = listed - with_order
+        if len(without_order) == 1:
+            return next(iter(without_order))
     return next(iter(listed)) if len(listed) == 1 else None
 
 

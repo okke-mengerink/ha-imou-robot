@@ -55,7 +55,7 @@ from .coordinator import (
 )
 from .entity import ImouEntity, async_add_after_first_poll, local_start, local_time
 from .model import ThingsModel, to_int
-from .support import part_lifetime_hours
+from .support import part_lifetime_hours, reset_confirmed
 from .rooms import Schedule
 
 _LOGGER = logging.getLogger(__name__)
@@ -305,6 +305,12 @@ class ImouSensor(ImouEntity, SensorEntity):
         """Initialize the sensor."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
+        if description.key == "sensors":
+            # the RV1 apps show no counter for the sensors and the cloud keeps it at 0;
+            # it is real on the models whose sensors reset is confirmed (the RV-L11-A)
+            self._attr_entity_registry_enabled_default = reset_confirmed(
+                coordinator.device.model, "sensors"
+            )
 
     @property
     @override

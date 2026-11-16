@@ -13,8 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import Iterable, Mapping
+from collections import Counter
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 import hmac
 import logging
@@ -60,8 +64,77 @@ class ImouTokenError(ImouAuthError):
     """The access token is invalid or expired (the client refreshes once)."""
 
 
+class ImouQuotaError(ImouApiError):
+    """The App ID has used up its API call quota (``OP1013``)."""
+
+
 class ImouDeviceOfflineError(ImouApiError):
     """The device is offline."""
+
+
+# -- API call counter (diagnostics) ------------------------------------------
+# Why a call is made. ``token`` is set by the client itself for ``accessToken``;
+# a call without a tag counts as ``other``.
+PURPOSE_OTHER = "other"
+PURPOSE_TOKEN = "token"
+DAYS_KEPT = 8  # per-day counts older than this many days are dropped
+
+_purpose: ContextVar[str | None] = ContextVar("imou_api_purpose", default=None)
+
+
+@contextmanager
+def api_purpose(tag: str, *, keep_outer: bool = False) -> Iterator[None]:
+    """Tag the API calls made inside the block (and awaited from it) with ``tag``.
+
+    With ``keep_outer`` an enclosing tag wins and ``tag`` is only the default, so a
+    helper can name its calls without hiding why its caller made them.
+    """
+    if keep_outer and _purpose.get() is not None:
+        yield
+        return
+    token = _purpose.set(tag)
+    try:
+        yield
+    finally:
+        _purpose.reset(token)
+
+
+class ApiCallCounter:
+    """Count the HTTP requests sent to the Imou API: in total, per method, per
+    purpose and per local calendar day (the last ``DAYS_KEPT`` days, in memory only)."""
+
+    def __init__(self, now: Callable[[], datetime] | None = None) -> None:
+        """Start counting now; ``now`` gives the local time (default: the system's)."""
+        self._now = now or (lambda: datetime.now().astimezone())
+        self.since = self._now()
+        self.total = 0
+        self.per_method: Counter[str] = Counter()
+        self.per_purpose: Counter[str] = Counter()
+        self._per_day: dict[str, Counter[str]] = {}  # date -> purpose -> calls
+
+    def record(self, method: str, purpose: str | None) -> None:
+        """Count one request."""
+        purpose = purpose or PURPOSE_OTHER
+        self.total += 1
+        self.per_method[method] += 1
+        self.per_purpose[purpose] += 1
+        day = self._now().date().isoformat()
+        self._per_day.setdefault(day, Counter())[purpose] += 1
+        for old in sorted(self._per_day)[:-DAYS_KEPT]:
+            del self._per_day[old]
+
+    def as_diagnostics(self) -> dict[str, Any]:
+        """Return the counts for the diagnostics download (no ids, no names)."""
+        return {
+            "since": self.since.isoformat(),
+            "total": self.total,
+            "per_method": dict(sorted(self.per_method.items())),
+            "per_purpose": dict(sorted(self.per_purpose.items())),
+            "per_day": {day: sum(c.values()) for day, c in sorted(self._per_day.items())},
+            "per_day_per_purpose": {
+                day: dict(sorted(c.items())) for day, c in sorted(self._per_day.items())
+            },
+        }
 
 
 def sign(app_secret: str, timestamp: int, nonce: str) -> str:
@@ -164,6 +237,27 @@ def _looks_like_auth_failure(code: str, msg: str) -> bool:
     )
 
 
+# OP1013: "call interface times exceed limit", the monthly quota of the App ID is used up.
+_QUOTA_ERROR_CODES = frozenset({"OP1013"})
+
+
+def _looks_like_quota_error(code: str, msg: str) -> bool:
+    """Does this error mean that the App ID has used up its call quota?
+
+    The code ``OP1013``, or a message that says the number of calls exceeds the
+    limit (it needs "exceed", "limit" and one of "call", "times" or "quota", so a
+    plain "too frequent" or "busy" is not a used-up quota).
+    """
+    if code.upper() in _QUOTA_ERROR_CODES:
+        return True
+    text = msg.lower()
+    return (
+        "exceed" in text
+        and "limit" in text
+        and any(word in text for word in ("call", "times", "quota"))
+    )
+
+
 def _looks_like_rate_limit(msg: str) -> bool:
     text = msg.lower()
     return any(
@@ -202,8 +296,9 @@ class ImouClient:
         app_id: str,
         app_secret: str,
         host: str,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
-        """Initialize the client."""
+        """Initialize the client; ``now`` is the local clock of the call counter."""
         self._session = session
         self._app_id = app_id
         self._app_secret = app_secret
@@ -211,12 +306,20 @@ class ImouClient:
         self._token: str | None = None
         self._token_valid_until = 0.0  # monotonic, already includes the margin
         self._token_lock = asyncio.Lock()
+        self._counter = ApiCallCounter(now)
+
+    def api_calls(self) -> dict[str, Any]:
+        """Return how many calls this client sent (see ``ApiCallCounter``)."""
+        return self._counter.as_diagnostics()
 
     # -- transport -----------------------------------------------------------
     async def _post(self, method: str, params: Mapping[str, Any]) -> dict[str, Any]:
         """Send one signed request; return ``result.data`` or raise a typed error."""
         body = build_request_body(self._app_id, self._app_secret, params)
         url = f"https://{self._host}/openapi/{method}"
+        self._counter.record(
+            method, PURPOSE_TOKEN if method == "accessToken" else _purpose.get()
+        )
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT):
                 async with self._session.post(url, json=body) as response:
@@ -240,6 +343,8 @@ class ImouClient:
         msg = str(result.get("msg", ""))
         _LOGGER.debug("Imou %s: code=%s msg=%s", method, code, msg)
         if code != "0":
+            if _looks_like_quota_error(code, msg):
+                raise ImouQuotaError(code, msg)
             if _looks_like_token_error(code, msg):
                 raise ImouTokenError(code, msg)
             if _looks_like_offline(code, msg):
@@ -258,7 +363,7 @@ class ImouClient:
         """
         try:
             data = await self._post("accessToken", {})
-        except ImouAuthError:
+        except (ImouAuthError, ImouQuotaError):
             raise
         except ImouApiError as err:
             if _looks_like_rate_limit(err.msg) or err.code == "INVALID_RESPONSE":

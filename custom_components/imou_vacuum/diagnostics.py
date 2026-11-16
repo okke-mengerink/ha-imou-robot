@@ -164,6 +164,11 @@ async def async_get_config_entry_diagnostics(
                 "things_model": coordinator.model.raw,
                 "probe": await _guard(_async_probe(hass, coordinator)),
                 "last_command": coordinator.last_command,
+                "room_learning": list(coordinator.learning_trace),
             }
         )
-    return {"entry": async_redact_data(dict(entry.data), TO_REDACT), "robots": robots}
+    return {
+        "entry": async_redact_data(dict(entry.data), TO_REDACT),
+        "api_calls": entry.runtime_data.client.api_calls(),
+        "robots": robots,
+    }

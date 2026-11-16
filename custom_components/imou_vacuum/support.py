@@ -35,7 +35,8 @@ VERIFIED_MODELS: frozenset[str] = frozenset({"L11-A"})
 PARTLY_VERIFIED_MODELS: frozenset[str] = frozenset({"RV1 Pro Max"})
 
 # Reset buttons that are enabled by default: the parts whose reset was confirmed on a
-# real robot of that model (the owner's L11-A, a user's RV1L Pro). Every other
+# real robot of that model (the owner's L11-A, users' RV1L Pro and RV1 Pro Max; on the
+# RV1 Pro Max only the mop reset was tried). Every other
 # model/part combination is created disabled. Keys are robot model names (matched
 # like ``model_in``), values the part keys of ``RESET_PART_LABEL_KEYS``.
 CONFIRMED_RESETS: dict[str, frozenset[str]] = {
@@ -43,21 +44,26 @@ CONFIRMED_RESETS: dict[str, frozenset[str]] = {
     "RV1L Pro": frozenset(
         {"side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery"}
     ),
+    "RV1 Pro Max": frozenset({"mop"}),
 }
 
 # Lifetime in hours per consumable, as the Imou app of that model shows it (the app
 # shows the remaining percentage of this lifetime). Keys are robot model names
 # (matched like ``model_in``), values map the part keys of ``RESET_PART_LABEL_KEYS``
-# to hours. Only models whose app was read are listed.
+# to hours. Only models whose app was read are listed: the RV1L Pro and the RV1 Pro
+# Max (whose app shows the same lifetimes; used hours plus the remaining hours of the
+# app gave these totals, which also confirms that the counters are minutes).
+_RV1_LIFETIME_HOURS: dict[str, int] = {
+    "side_brush": 150,
+    "main_brush": 240,
+    "filter": 150,
+    "mop": 180,
+    "main_brush_cover": 200,
+    "battery": 800,
+}
 PART_LIFETIME_HOURS: dict[str, dict[str, int]] = {
-    "RV1L Pro": {
-        "side_brush": 150,
-        "main_brush": 240,
-        "filter": 150,
-        "mop": 180,
-        "main_brush_cover": 200,
-        "battery": 800,
-    },
+    "RV1L Pro": dict(_RV1_LIFETIME_HOURS),
+    "RV1 Pro Max": dict(_RV1_LIFETIME_HOURS),
 }
 
 NEW_MODEL_URL = (

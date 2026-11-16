@@ -786,6 +786,37 @@ def test_active_map_id_edge_cases() -> None:
     assert rooms.active_map_id(None, [(None, ORDER_A)], ORDER_A, [1001, 1002]) is None
 
 
+def test_active_map_id_with_an_empty_sequence() -> None:
+    """0.7.1b4: an active map without a cleaning order (neutral ids: maps 1001 and 1002)."""
+    only_b = [(1002, ORDER_B)]
+    # positive: sequence read and empty, one listed map has no order, the other has one
+    assert rooms.active_map_id(None, only_b, [], [1001, 1002]) == 1001
+    assert rooms.active_map_id(None, only_b, (), [1002, 1001]) == 1001
+    assert rooms.active_map_id(None, [(1001, ORDER_A)], [], [1001, 1002]) == 1002
+    assert rooms.active_map_id(None, [(1001, ORDER_A), (1002, ())], [], [1001, 1002]) == 1002  # an empty entry is no order
+    assert rooms.active_map_id(None, only_b, [], ["1001", 1002, 1002]) == 1001
+    assert rooms.active_map_id(None, [(None, ORDER_A), (1002, ORDER_B)], [], [1001, 1002]) == 1001  # no-map entries are ignored
+    # both maps have an empty or no order: still unknown (the tip: set an order on every map)
+    assert rooms.active_map_id(None, [], [], [1001, 1002]) is None
+    assert rooms.active_map_id(None, [(1001, ()), (1002, ())], [], [1001, 1002]) is None
+    # both maps have an order and the sequence is empty: nothing to tell
+    assert rooms.active_map_id(None, SEQUENCE_ENTRIES, [], [1001, 1002]) is None
+    # three maps: one without an order is not enough when another one lacks it too
+    assert rooms.active_map_id(None, only_b, [], [1001, 1002, 1003]) is None
+    assert rooms.active_map_id(None, [(1002, ORDER_B), (1003, ORDER_A)], [], [1001, 1002, 1003]) == 1001
+    # not reported (None) is not the same as empty
+    assert rooms.active_map_id(None, only_b, None, [1001, 1002]) is None
+    # a single listed map is still that map (empty or not reported)
+    assert rooms.active_map_id(None, [], [], [1001]) == 1001
+    assert rooms.active_map_id(None, [], None, [1001]) == 1001
+    assert rooms.active_map_id(None, only_b, [], [1002]) == 1002
+    # the order of the sources: sweeper_sequence first, then a non-empty order match
+    assert rooms.active_map_id(1002, only_b, [], [1001, 1002]) == 1002
+    assert rooms.active_map_id(None, SEQUENCE_ENTRIES, list(ORDER_B), [1001, 1002]) == 1002
+    # an unlisted map does not count
+    assert rooms.active_map_id(None, [(1001, ORDER_A), (1002, ORDER_B)], [], [1001, 1002, None, -1]) is None
+
+
 def test_active_map_id_from_the_property_values() -> None:
     """The path of the coordinator: parse_values and the model's refs, then the order."""
     pro_max = model.ThingsModel.from_api(fixture("rv1promax_model.json"))

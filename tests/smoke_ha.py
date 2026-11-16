@@ -435,11 +435,22 @@ def test_entities() -> None:
     remaining_names = [f"{k}_remaining" for k in remaining_keys]
     check("L11-A has no remaining sensors", not [k for k in sensors if k.endswith("_remaining")], str(sorted(sensors)))
     pro_max_sensors = by_key(make_entities(FakeCoordinator(RV1_MODEL_JSON, RV1_VALUES_JSON["properties"], device_model="RV1 Pro Max"))["sensor"])
-    check("RV1 Pro Max has no remaining sensors", not [k for k in pro_max_sensors if k.endswith("_remaining")], str(sorted(pro_max_sensors)))
+    pro_max_remaining = [s for k, s in pro_max_sensors.items() if k.endswith("_remaining")]
+    check("0.7.1b4: RV1 Pro Max has exactly 6 remaining sensors, enabled, and none for the sensors", sorted(s.entity_description.key for s in pro_max_remaining) == sorted(remaining_names) and all(s.entity_registry_enabled_default for s in pro_max_remaining) and "sensors_remaining" not in pro_max_sensors, str(sorted(pro_max_sensors)))
+    pro_max_coordinator = pro_max_sensors["side_brush_remaining"].coordinator
+    pro_max_coordinator.set_values(life={"brush_time": 4500, "main_brush_time": 7200, "rosebox_time": 9000, "mop_time": 5400, "cover_time": 6000, "battery_time": 24000})
+    check("0.7.1b4: RV1 Pro Max remaining % uses the same lifetimes as the RV1L Pro (minutes)", [pro_max_sensors[k].native_value for k in remaining_names] == [50, 50, 0, 50, 50, 50], str([pro_max_sensors[k].native_value for k in remaining_names]))
+    # 0.7.1b4: the sensors usage sensor is enabled by default only where its counter is real (the L11-A)
+    check("0.7.1b4: Sensors usage is enabled by default on the L11-A", sensors["sensors"].entity_registry_enabled_default)
+    check("0.7.1b4: the other usage sensors of the L11-A stay enabled", all(sensors[k].entity_registry_enabled_default for k in ("side_brush", "main_brush", "filter")))
     lpro_sensors = by_key(make_entities(FakeCoordinator(RV1LPRO_MODEL_JSON, RV1_VALUES_JSON["properties"], device_model="RV1L Pro"))["sensor"])
     remaining = [s for k, s in lpro_sensors.items() if k.endswith("_remaining")]
     check("RV1L Pro has exactly 6 remaining sensors, enabled", sorted(s.entity_description.key for s in remaining) == sorted(remaining_names) and all(s.entity_registry_enabled_default for s in remaining), str(sorted(lpro_sensors)))
     check("RV1L Pro has no sensors remaining sensor", "sensors_remaining" not in lpro_sensors)
+    for name, usage in (("RV1 Pro Max", pro_max_sensors), ("RV1L Pro", lpro_sensors)):
+        check(f"0.7.1b4: {name}: Sensors usage exists but is disabled by default; the other usage sensors stay enabled", "sensors" in usage and not usage["sensors"].entity_registry_enabled_default and all(usage[k].entity_registry_enabled_default for k in ("side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery_usage")), str(sorted(usage)))
+    unlisted = by_key(make_entities(FakeCoordinator(RV1LPRO_MODEL_JSON, RV1_VALUES_JSON["properties"], device_model="Some Other RV1"))["sensor"])
+    check("0.7.1b4: an unlisted model has Sensors usage disabled by default, no remaining sensors", not unlisted["sensors"].entity_registry_enabled_default and not [k for k in unlisted if k.endswith("_remaining")])
     check("remaining sensors: %, measurement, diagnostic, translation key", all(s.native_unit_of_measurement == "%" and s.state_class == SensorStateClass.MEASUREMENT and s.entity_category == EntityCategory.DIAGNOSTIC and s.translation_key == s.entity_description.key and s.device_class is None for s in remaining))
     check("remaining unique ids are new", [lpro_sensors[k].unique_id for k in remaining_names] == [f"TESTDEVICE0001_{k}" for k in remaining_names] and len({s.unique_id for s in lpro_sensors.values()}) == len(lpro_sensors))
     lpro_coordinator = lpro_sensors["side_brush_remaining"].coordinator
@@ -653,13 +664,13 @@ def test_reset_buttons() -> None:
     rv1_parts = (*parts, "mop", "main_brush_cover", "battery")
     rv1_ids = [f"TESTDEVICE0001_reset_{part}" for part in rv1_parts]
     # enabled by default only where the reset is confirmed on a real robot of that model
-    confirmed = {"RV1 Pro Max": set(), "RV1L Pro": {"side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery"}}
+    confirmed = {"RV1 Pro Max": {"mop"}, "RV1L Pro": {"side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery"}}
     for json_model, name in ((RV1_MODEL_JSON, "RV1 Pro Max"), (RV1LPRO_MODEL_JSON, "RV1L Pro")):
         rv1_coordinator, rv1 = reset_buttons(json_model, name)
         check(f"{name}: seven reset buttons (the four plus mop, main brush cover, battery)", sorted(rv1) == sorted(rv1_ids), str(sorted(rv1)))
         enabled = {k.removeprefix("TESTDEVICE0001_reset_") for k, b in rv1.items() if b.entity_registry_enabled_default}
         check(f"{name}: enabled by default are exactly the confirmed parts {sorted(confirmed[name])}", enabled == confirmed[name], str(sorted(enabled)))
-        check(f"{name}: mop, main brush cover and battery resets are enabled by default only where confirmed (RV1L Pro)", all(rv1[f"TESTDEVICE0001_reset_{p}"].entity_registry_enabled_default == (name == "RV1L Pro") for p in ("mop", "main_brush_cover", "battery")))
+        check(f"{name}: mop, main brush cover and battery resets are enabled by default only where confirmed (mop on both, the other two on the RV1L Pro)", all(rv1[f"TESTDEVICE0001_reset_{p}"].entity_registry_enabled_default == (name == "RV1L Pro" or p == "mop") for p in ("mop", "main_brush_cover", "battery")))
         check(f"{name}: the sensors reset stays disabled by default", not rv1["TESTDEVICE0001_reset_sensors"].entity_registry_enabled_default)
         check(f"{name}: new reset buttons are configuration category with translation key reset_<part>", all(rv1[f"TESTDEVICE0001_reset_{p}"].entity_category is EntityCategory.CONFIG and rv1[f"TESTDEVICE0001_reset_{p}"].translation_key == f"reset_{p}" for p in ("mop", "main_brush_cover", "battery")))
         asyncio.run(rv1["TESTDEVICE0001_reset_sensors"].async_press())
@@ -876,7 +887,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.1b3"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.1b4"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -886,7 +897,7 @@ def test_files() -> None:
     from awesomeversion import AwesomeVersion, AwesomeVersionStrategy  # noqa: PLC0415
 
     version = AwesomeVersion(manifest["version"])
-    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.1", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b3" and AwesomeVersion("0.7.0") < version < AwesomeVersion("0.7.1"), f"{version.strategy} {version.modifier}")
+    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.1", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b4" and AwesomeVersion("0.7.0") < version < AwesomeVersion("0.7.1"), f"{version.strategy} {version.modifier}")
     hacs = json.loads((ROOT / "hacs.json").read_text("utf-8"))
     check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True, "zip_release": True, "filename": "imou_vacuum.zip"}, str(hacs))
     # the release workflow zips exactly this folder; the archive name must match hacs.json
@@ -986,7 +997,7 @@ class FakeClient:
     initial_status = "online"
     initial_fail_with: Exception | None = None  # the first polls fail
 
-    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
         FakeClient.instance = self
         self.app_id, self.host = app_id, host
         self.status = FakeClient.initial_status
@@ -1010,12 +1021,25 @@ class FakeClient:
         self.ignore_sets = False  # simulate a cloud that accepts but does not apply writes
         self.ignore_level_control = False  # WindWater accepted (code 0) but not applied
         self.apply_level_property_writes = False  # the real L11-A ignores 1027/1028 writes
+        self.fail_quota = False  # every call fails with OP1013 (the API quota is used up)
+        self.quota_calls = 0  # calls that failed because of it
+        self.purposes: list[tuple[str, str | None]] = []  # (API method, purpose tag in force) of every call
+
+    def api_calls(self) -> dict[str, Any]:
+        return {"since": "2026-11-09T00:00:00+00:00", "total": self.poll_count, "per_method": {}, "per_purpose": {}, "per_day": {}}
+
+    def _check_quota(self, method: str) -> None:
+        self.purposes.append((method, mod("api")._purpose.get()))  # noqa: SLF001
+        if self.fail_quota:
+            self.quota_calls += 1
+            raise mod("api").ImouQuotaError("OP1013", "call interface times exceed limit")
 
     async def async_validate(self) -> None:
         if FakeClient.validate_error is not None:
             raise FakeClient.validate_error
 
     async def async_list_devices(self) -> list[Any]:
+        self.purposes.append(("listDeviceDetailsByPage", mod("api")._purpose.get()))  # noqa: SLF001
         if FakeClient.devices_override is not None:
             return FakeClient.devices_override
         api = mod("api")
@@ -1027,6 +1051,7 @@ class FakeClient:
         ]  # fmt: skip
 
     async def async_get_product_model(self, product_id: str) -> dict[str, Any]:
+        self.purposes.append(("getProductModel", mod("api")._purpose.get()))  # noqa: SLF001
         if FakeClient.model_error is not None:
             raise FakeClient.model_error
         if product_id == "PRODUCT_ID":
@@ -1035,6 +1060,7 @@ class FakeClient:
 
     async def async_get_properties(self, product_id: str, device_id: str, refs: Any) -> Any:
         api = mod("api")
+        self._check_quota("getIotDeviceProperties")
         self.poll_count += 1
         room_read = set(refs) <= ROOM_READ_REFS  # (read together with the schedules; not the poll, not the probe)
         if not room_read:
@@ -1052,6 +1078,7 @@ class FakeClient:
         return api.ImouProperties(status=self.status, values=values)
 
     async def async_set_properties(self, product_id: str, device_id: str, properties: dict[str, Any]) -> None:
+        self._check_quota("setIotDeviceProperties")
         self.calls.append(("set", device_id, dict(properties)))
         if (failure := self.fail_set_with or self.fail_commands_with or self.fail_with) is not None:
             raise failure
@@ -1062,6 +1089,7 @@ class FakeClient:
                 self.props[ref] = value
 
     async def async_control(self, product_id: str, device_id: str, ref: str, content: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._check_quota("iotDeviceControl")
         if ref == "2500":  # clean_list (read-only probe): kept out of self.calls
             self.probe_service_calls.append((ref, dict(content or {})))
             if self.latency:
@@ -1202,6 +1230,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("L11-A entities: the 17 of main, four reset buttons and one Clean button per room (24), and no schedule switch", len(entities) == 24 and len({e.unique_id for e in entities} - room_button_ids) == 21 and not any("schedule_" in e.unique_id for e in entities) and not [e for e in entities if e.domain == "switch" and "schedule" in e.unique_id], str(sorted(e.unique_id for e in entities)))
     ids = {e.unique_id.split("_", 1)[1]: e.entity_id for e in entities}
     print("entity ids:", ", ".join(sorted(ids.values())))
+    check("0.7.1b4: L11-A: Sensors usage is enabled in the registry (its counter is real there)", ent_reg.async_get(ent_reg.async_get_entity_id("sensor", "imou_vacuum", "TESTDEVICE0001_sensors")).disabled_by is None)
     check("existing registry entries stay enabled (upgrade): switches are not disabled", all(e.disabled_by is None for e in entities if e.domain == "switch"), str({e.unique_id: e.disabled_by for e in entities if e.domain == "switch"}))
     check("the first refresh ran before the entities were created", coordinator.reports.seen_online and "rug_press" in coordinator.reports.reported, str(coordinator.reports.as_diagnostics()))
 
@@ -1648,6 +1677,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
 
     real_session_getter = diagnostics.async_get_clientsession
     diagnostics.async_get_clientsession = lambda hass: FakeSession()
+    check("0.7.1b4: L11-A: unchanged: no partition_area, so no learning trace, no quota flag, polls tagged", not coordinator.learning_trace and not coordinator.quota_exhausted and not coordinator.sequence_reported and all(tag in ("setup", "poll", "command", "schedules", "on_demand", "room_properties") for _, tag in client.purposes), str(client.purposes[:5]))
     check("L11-A: no room property call (no sequence, room sources or map_name in its model), so no extra call and no extra entity", client.room_read_refs == [] and coordinator._room_property_identifiers() == [] and coordinator.sequence_rooms is None and coordinator.source_entries is None and coordinator.listed_map_ids == [] and coordinator.active_map() is None and not coordinator.is_multi_map() and coordinator.room_map() is None)  # noqa: SLF001
     client.probe_service_calls.clear()  # (the schedules were read during setup)
     probe_polls_before, polled_refs_before = client.poll_count, getattr(client, "last_refs", None)
@@ -2261,8 +2291,8 @@ class RV1Client(FakeClient):
 
     report_station = True
 
-    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
-        super().__init__(session, app_id, app_secret, host)
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
+        super().__init__(session, app_id, app_secret, host, now)
         self.props = copy.deepcopy(RV1_VALUES_JSON["properties"])
         # room/map properties: never polled, only read by the diagnostics probe
         self.props.update({"126200": [], "122300": ["Map one"], "120600": [], "121600": []})
@@ -2273,18 +2303,22 @@ class RV1Client(FakeClient):
 
     async def async_list_devices(self) -> list[Any]:
         api = mod("api")
+        self.purposes.append(("listDeviceDetailsByPage", api._purpose.get()))  # noqa: SLF001
         return [api.ImouDevice(device_id="TESTDEVICE0002", product_id="PRODUCT_ID_RV1", name="RV1-PRO-MAX-TEST", model="RV1 Pro Max", status="online", version="1.0.0", brand="lechange")]
 
     async def async_get_product_model(self, product_id: str) -> dict[str, Any]:
+        self.purposes.append(("getProductModel", mod("api")._purpose.get()))  # noqa: SLF001
         return copy.deepcopy(RV1_MODEL_JSON)
 
     async def async_set_properties(self, product_id: str, device_id: str, properties: dict[str, Any]) -> None:
+        self._check_quota("setIotDeviceProperties")
         self.calls.append(("set", device_id, dict(properties)))
         if self.fail_set_with is not None:
             raise self.fail_set_with
         self.props.update(properties)
 
     async def async_control(self, product_id: str, device_id: str, ref: str, content: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._check_quota("iotDeviceControl")
         if ref == "201600":  # clean_list (read-only): kept out of self.calls
             self.probe_service_calls.append((ref, dict(content or {})))
             if self.fail_schedules_with is not None:
@@ -2499,6 +2533,10 @@ async def rv1_setup_checks(config_dir: str) -> None:
         registry = er.async_get(hass)
         reset_entries = [registry.async_get(registry.async_get_entity_id("button", "imou_vacuum", f"TESTDEVICE0002_reset_{part}")) for part in ("side_brush", "main_brush", "filter", "sensors")]
         check("RV1 Pro Max: the four reset buttons are in the registry, disabled by the integration, configuration category", all(e.disabled_by is er.RegistryEntryDisabler.INTEGRATION and e.entity_category == "config" for e in reset_entries), str([(e.disabled_by, e.entity_category) for e in reset_entries]))
+        pro_max_resets = {part: ent_registry.async_get(ent_registry.async_get_entity_id("button", "imou_vacuum", f"TESTDEVICE0002_reset_{part}")).disabled_by for part in ("mop", "main_brush_cover", "battery")}
+        check("0.7.1b4: RV1 Pro Max: Reset mop is enabled (confirmed), main brush cover and battery stay disabled", pro_max_resets == {"mop": None, "main_brush_cover": er.RegistryEntryDisabler.INTEGRATION, "battery": er.RegistryEntryDisabler.INTEGRATION}, str(pro_max_resets))
+        pro_max_sensor_entries = {key: ent_registry.async_get(ent_registry.async_get_entity_id("sensor", "imou_vacuum", f"TESTDEVICE0002_{key}")) for key in ("sensors", "side_brush", "mop_remaining", "battery_remaining")}
+        check("0.7.1b4: RV1 Pro Max: remaining sensors exist and are enabled; Sensors usage is disabled by the integration", pro_max_sensor_entries["sensors"].disabled_by is er.RegistryEntryDisabler.INTEGRATION and all(pro_max_sensor_entries[k].disabled_by is None for k in ("side_brush", "mop_remaining", "battery_remaining")), str({k: e.disabled_by for k, e in pro_max_sensor_entries.items()}))
         room_buttons = {rid: registry.async_get_entity_id("button", "imou_vacuum", f"TESTDEVICE0002_clean_room_{rid}") for rid in (-128, -127, -126, -124)}
         check("RV1 Pro Max: a Clean button exists for each room, unique id <device id>_clean_room_<negative id>", all(room_buttons.values()), str(room_buttons))
         check("RV1 Pro Max: the button of room -127 reads 'Clean room -127'", hass.states.get(room_buttons[-127]).name == "RV1-PRO-MAX-TEST Clean room -127", hass.states.get(room_buttons[-127]).name)
@@ -2587,8 +2625,8 @@ class RV1LProClient(RV1Client):
     initial_props: dict[str, Any] | None = None
     drop_station = False
 
-    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
-        super().__init__(session, app_id, app_secret, host)
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
+        super().__init__(session, app_id, app_secret, host, now)
         self.props = copy.deepcopy(RV1LPRO_VALUES_JSON["properties"])
         self.props.update({"126200": [], "122300": [{"122302": "Map", "122301": 1}], "120600": [], "121600": []})
         self.clean_list_output = {"201621": []}  # no schedules (the user's real response)
@@ -2597,9 +2635,11 @@ class RV1LProClient(RV1Client):
 
     async def async_list_devices(self) -> list[Any]:
         api = mod("api")
+        self.purposes.append(("listDeviceDetailsByPage", api._purpose.get()))  # noqa: SLF001
         return [api.ImouDevice(device_id="TESTDEVICE0004", product_id="PRODUCT_ID_RV1LPRO", name="RV1L-PRO-TEST", model="RV1L Pro", status="online", version="1.0.0", brand="lechange")]
 
     async def async_get_product_model(self, product_id: str) -> dict[str, Any]:
+        self.purposes.append(("getProductModel", mod("api")._purpose.get()))  # noqa: SLF001
         return copy.deepcopy(RV1LPRO_MODEL_JSON)
 
 
@@ -2758,8 +2798,8 @@ class RV1LProRoomsClient(RV1LProClient):
     """An RV1L Pro without a schedule and with an empty ``sequence``, but with the room
     configuration (swp_allareaConfig): 7 rooms on its single map and 1 room of another map."""
 
-    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
-        super().__init__(session, app_id, app_secret, host)
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
+        super().__init__(session, app_id, app_secret, host, now)
         rooms = [{"147401": ROOM_MAP, "147402": room, "147403": 0} for room in (-128, -127, -126, -125, -124, -123, -122)]
         rooms.append({"147401": OTHER_MAP, "147402": -50, "147403": 1})  # another map: filtered out
         self.props.update({"147400": rooms, "122300": [{"122302": "Map A", "122301": ROOM_MAP}]})
@@ -2885,8 +2925,8 @@ class RV1TwoMapClient(RV1LProClient):
     """An RV1 robot with two maps. Map A is active (its cleaning order is the top-level ``sequence``).
     Room ids repeat on both maps. The schedules hold a room of map A and a schedule of map B."""
 
-    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
-        super().__init__(session, app_id, app_secret, host)
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
+        super().__init__(session, app_id, app_secret, host, now)
         area_config = [{"147401": MAP_A, "147402": room, "147403": 0} for room in ORDER_A]
         area_config += [{"147401": MAP_B, "147402": room, "147403": 0} for room in (*ORDER_B, -129)]
         self.props.update(
@@ -3235,8 +3275,8 @@ class RV1SingleMapClient(RV1LProClient):
     """The RV1L Pro of a real beta report (one map, ids neutralised): ``sequence``, ``swp_cleansequence`` and
     ``sweeper_sequence`` hold the same 9 rooms and ``swp_allareaConfig`` 5 of them."""
 
-    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
-        super().__init__(session, app_id, app_secret, host)
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
+        super().__init__(session, app_id, app_secret, host, now)
         order = [-128, -126, -125, -124, -123, -127, -121, -120, -119]
         self.props.update(
             {
@@ -3290,8 +3330,8 @@ def test_rv1_two_maps() -> None:
 class RV1TwoMapUnknownClient(RV1TwoMapClient):
     """Two maps, but nothing tells which one is active: the order of ``sequence`` matches neither map."""
 
-    def __init__(self, session: Any, app_id: str, app_secret: str, host: str) -> None:
-        super().__init__(session, app_id, app_secret, host)
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
+        super().__init__(session, app_id, app_secret, host, now)
         self.props["120600"] = [-5, -6]
 
 
@@ -3579,6 +3619,7 @@ async def partition_rejected_checks(hass: Any, entry: Any) -> None:
         polls = client.poll_count
         await coordinator.async_refresh()
         check("partition rejected: the poll is retried once without the ref, which works", client.poll_count == polls + 2 and coordinator.last_update_success and coordinator.data.online, f"{client.poll_count - polls}")
+        check("0.7.1b4: the fallback read without partition_area is tagged poll_without_partition_area, the first read poll", ("getIotDeviceProperties", "poll_without_partition_area") in client.purposes and ("getIotDeviceProperties", "poll") in client.purposes, str(client.purposes[-4:]))
         check("partition rejected: the ref is dropped for the run and one info line is logged", "126200" not in coordinator.poll_refs and len(infos()) == 1, f"{coordinator.poll_refs} {[r.getMessage() for r in infos()]}")
         polls = client.poll_count
         await coordinator.async_refresh()
@@ -3591,6 +3632,216 @@ async def partition_rejected_checks(hass: Any, entry: Any) -> None:
 def test_rv1_partition_area_rejected() -> None:
     FakeClient.initial_status, RV1LProClient.drop_station = "online", False
     run_fresh(RV1RejectsPartitionClient, partition_rejected_checks)
+
+
+# --- 0.7.1b4: used-up API quota -------------------------------------------------------------------
+async def quota_checks(hass: Any, entry: Any) -> None:
+    from homeassistant.exceptions import ServiceValidationError  # noqa: PLC0415
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    device = "TESTDEVICE0004"
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators[device]
+    issues = ir.async_get(hass)
+    issue_id = f"api_quota_exhausted_{entry.entry_id}"
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    capture = Capture(level=logging.WARNING)
+    logging.getLogger(PKG).addHandler(capture)
+
+    def quota_warnings() -> list[str]:
+        return [r.getMessage() for r in records if "quota" in r.getMessage().lower()]
+
+    try:
+        # the purpose tags of the calls so far: discovery, poll, schedules and room properties
+        purposes = set(client.purposes)
+        check("quota: discovery is tagged setup, the poll poll", {("listDeviceDetailsByPage", "setup"), ("getProductModel", "setup"), ("getIotDeviceProperties", "poll")} <= purposes, str(sorted(purposes, key=str)))
+        check("quota: the schedules read is tagged schedules, the room properties read room_properties", ("iotDeviceControl", "schedules") in purposes and ("getIotDeviceProperties", "room_properties") in purposes, str(sorted(purposes, key=str)))
+        check("quota: no calls without a tag at setup", not [p for p in client.purposes if p[1] is None], str([p for p in client.purposes if p[1] is None]))
+        check("quota: no issue while calls work", issues.async_get_issue("imou_vacuum", issue_id) is None and not coordinator.quota_exhausted and coordinator.update_interval.total_seconds() == 300)
+
+        # an on-demand read is tagged on_demand, the pre-clean read of a multi-map robot room_properties
+        client.purposes.clear()
+        coordinator._schedules_fetched_at = None  # noqa: SLF001
+        await coordinator.async_refresh_schedules()
+        check("quota: async_refresh_schedules tags its calls on_demand", client.purposes and all(tag == "on_demand" for _, tag in client.purposes), str(client.purposes))
+        client.purposes.clear()
+        await coordinator.async_check_rooms([MAP_A])
+        check("quota: the read before a room clean is tagged room_properties", client.purposes == [("getIotDeviceProperties", "room_properties")], str(client.purposes))
+
+        # the quota is used up
+        client.fail_quota = True
+        client.quota_calls = 0
+        await coordinator.async_refresh()
+        issue = issues.async_get_issue("imou_vacuum", issue_id)
+        check("quota: an OP1013 poll creates one repair issue: error, not fixable, translation api_quota_exhausted", issue is not None and issue.severity is ir.IssueSeverity.ERROR and issue.is_fixable is False and issue.translation_key == "api_quota_exhausted" and issue.data == {"entry_id": entry.entry_id}, str(issue))
+        check("quota: ... and polling slows down to 1800 s", coordinator.quota_exhausted and coordinator.update_interval.total_seconds() == 1800, str(coordinator.update_interval))
+        check("quota: one failing call per poll, no second read without partition_area", client.quota_calls == 1, str(client.quota_calls))
+        check("quota: ... and one warning", len(quota_warnings()) == 1, str(quota_warnings()))
+        await coordinator.async_refresh()
+        await coordinator.async_refresh()
+        check("quota: more failed polls log no more warnings, keep one issue and the 1800 s interval", len(quota_warnings()) == 1 and sum(1 for domain, i in issues.issues if domain == "imou_vacuum" and i == issue_id) == 1 and coordinator.update_interval.total_seconds() == 1800, str(quota_warnings()))
+        # schedule, room and learn reads stay quiet while the quota is used up
+        before = (client.sequence_reads, len(client.probe_service_calls), client.quota_calls)
+        coordinator._schedules_fetched_at = None  # noqa: SLF001
+        coordinator._schedules_due = 0.0  # noqa: SLF001
+        check("quota: an on-demand schedule read makes no call and reports failure", await coordinator.async_refresh_schedules() is False and (client.sequence_reads, len(client.probe_service_calls), client.quota_calls) == before, str((before, client.sequence_reads)))
+        try:
+            await coordinator.async_check_rooms([MAP_A])
+        except ServiceValidationError:
+            refused = True
+        else:
+            refused = False
+        check("quota: the read before a room clean makes no call and refuses the rooms", refused and (client.sequence_reads, client.quota_calls) == (before[0], before[2]), str((before, client.sequence_reads, client.quota_calls)))
+        status_ref, cleaning, _ = work_status_ref_and_values(coordinator)
+        check("quota: the schedules and rooms read before are still known", coordinator.schedules is not None and coordinator.room_names() != {})
+
+        # a call works again: the issue is deleted and polling is normal again
+        client.fail_quota = False
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        check("quota: after a successful poll the issue is deleted and the flag is cleared", issues.async_get_issue("imou_vacuum", issue_id) is None and not coordinator.quota_exhausted)
+        check("quota: ... and polling returns to the normal 300 s", coordinator.update_interval.total_seconds() == 300 and coordinator.last_update_success, str(coordinator.update_interval))
+        coordinator._schedules_fetched_at = None  # noqa: SLF001
+        check("quota: ... and schedule reads work again", await coordinator.async_refresh_schedules() is True)
+        # a new failure creates the issue (and warns) again
+        client.fail_quota = True
+        await coordinator.async_refresh()
+        check("quota: a later quota error creates the issue again", issues.async_get_issue("imou_vacuum", issue_id) is not None and len(quota_warnings()) == 2, str(quota_warnings()))
+        client.fail_quota = False
+        await coordinator.async_refresh()
+        check("quota: cleared again by the next good poll", issues.async_get_issue("imou_vacuum", issue_id) is None and not coordinator.quota_exhausted)
+        # a quota error in a schedule read alone (the poll works) is noticed too, without a second room read
+        client.fail_schedules_with = mod("api").ImouQuotaError("OP1013", "call interface times exceed limit")
+        reads = client.sequence_reads
+        coordinator._schedules_due = 0.0  # noqa: SLF001
+        await coordinator.async_refresh()
+        check("quota: a quota error of the schedules read alone creates the issue and skips the room read", coordinator.quota_exhausted and issues.async_get_issue("imou_vacuum", issue_id) is not None and client.sequence_reads == reads and coordinator.update_interval.total_seconds() == 300, f"{client.sequence_reads - reads} {coordinator.update_interval}")
+        client.fail_schedules_with = None
+        await coordinator.async_refresh()
+        check("quota: the next good poll clears it", issues.async_get_issue("imou_vacuum", issue_id) is None and not coordinator.quota_exhausted)
+        # removing the entry deletes the issue as well
+        client.fail_quota = True
+        await coordinator.async_refresh()
+        client.fail_quota = False
+        check("quota: the issue exists before the entry is removed", issues.async_get_issue("imou_vacuum", issue_id) is not None)
+        await hass.config_entries.async_remove(entry.entry_id)
+        await hass.async_block_till_done()
+        check("quota: removing the config entry deletes the quota issue", issues.async_get_issue("imou_vacuum", issue_id) is None)
+    finally:
+        logging.getLogger(PKG).removeHandler(capture)
+
+
+def test_quota_exhausted() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1TwoMapClient, quota_checks)
+
+
+# --- 0.7.1b4: an active map without a cleaning order; the room-learning trace -------------------------
+class RV1EmptyOrderClient(RV1TwoMapClient):
+    """Two maps; the active map (A) has an empty cleaning order, map B has one, the top-level ``sequence`` is [].
+
+    Like a RV1 Pro Max seen in the field: swp_cleansequence holds A -> [] and B -> an order."""
+
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
+        super().__init__(session, app_id, app_secret, host, now)
+        self.props["120600"] = []
+        self.props["146000"] = [{"146001": MAP_A, "146002": "[]"}, {"146001": MAP_B, "146002": json.dumps(ORDER_B)}]
+
+
+async def empty_order_checks(hass: Any, entry: Any) -> None:
+    device = "TESTDEVICE0004"
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators[device]
+    status_ref, cleaning, docked = work_status_ref_and_values(coordinator)
+    diagnostics = mod("diagnostics")
+
+    async def reread() -> None:
+        coordinator._schedules_fetched_at = None  # noqa: SLF001
+        assert await coordinator.async_refresh_schedules()
+
+    # 1. the rule: sequence read and empty, exactly one listed map without an order
+    check("empty order: several maps, sequence reported and empty", coordinator.is_multi_map() and coordinator.sequence_reported and coordinator.sequence_rooms == [], str((coordinator.sequence_reported, coordinator.sequence_rooms)))
+    check("empty order: the active map is the listed map without an order (A)", coordinator.active_map() == MAP_A and coordinator.room_map() == MAP_A, str(coordinator.active_map()))
+    check("empty order: the rooms of map A are known through its schedule and room properties", bool(coordinator.room_names()))
+
+    # 2. learning works with that map, and the trace says what happened
+    trace = coordinator.learning_trace
+    check("trace: the first poll of the idle robot is the one observation so far", len(trace) == 1 and trace[0]["result"] == "not_room_clean" and trace[0]["work_status"] is not None and trace[0]["partition_area"] == [] and trace[0]["multi_map"] is True, str(list(trace)))
+    client.purposes.clear()
+    client.props[status_ref] = cleaning
+    client.props["126200"] = [-127]
+    await coordinator.async_refresh()
+    check("learn: a room clean on the map without an order learns the room under that map", coordinator.learned_rooms == {str(MAP_A): [-127]}, str(coordinator.learned_rooms))
+    check("learn: the fresh read of the room properties is tagged learn", ("getIotDeviceProperties", "learn") in client.purposes, str(client.purposes))
+    last = trace[-1]
+    check("trace: the observation has the time (UTC ISO), status number and key, partition_area, active map, multi_map and result", set(last) == {"time", "work_status", "work_status_key", "partition_area", "active_map", "multi_map", "result"} and last["work_status"] == cleaning and last["work_status_key"] == "room_clean" and last["partition_area"] == [-127] and last["active_map"] == MAP_A and last["multi_map"] is True and last["result"] == "learned" and last["time"].endswith("+00:00"), str(last))
+    await coordinator.async_refresh()
+    check("trace: the next poll of the same clean adds nothing_new", trace[-1]["result"] == "nothing_new" and len(trace) == 3, str(list(trace)))
+    await coordinator.async_refresh()
+    await coordinator.async_refresh()
+    check("trace: polls that see the same thing add no more observations", len(trace) == 3, str(list(trace)))
+    client.props[status_ref] = docked
+    await coordinator.async_refresh()
+    check("trace: a status change is an observation, not_room_clean while docked", len(trace) == 4 and trace[-1]["result"] == "not_room_clean" and trace[-1]["work_status_key"] != "room_clean" and trace[-1]["partition_area"] == [-127], str(trace[-1]))
+    client.props[status_ref] = cleaning
+    client.props["126200"] = []
+    await coordinator.async_refresh()
+    check("trace: a room clean with an empty partition_area is recorded as empty", trace[-1]["result"] == "empty" and trace[-1]["partition_area"] == [], str(trace[-1]))
+
+    # 3. the trace is bounded
+    for number in range(30):
+        client.props["126200"] = [-127 - number % 2 * 100 - 1 if number % 3 else 0]
+        client.props[status_ref] = cleaning if number % 2 else docked
+        await coordinator.async_refresh()
+    check("trace: only the last 10 observations are kept", len(trace) == 10 == mod("const").LEARNING_TRACE_SIZE and trace.maxlen == 10, str(len(trace)))
+    check("trace: only the allowed result words are used", {o["result"] for o in trace} <= {"not_room_clean", "empty", "active_map_unknown", "map_read_failed", "learned", "nothing_new"}, str({o["result"] for o in trace}))
+
+    # 4. diagnostics: per robot, no names
+    dump = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
+    robot = dump["robots"][0]
+    check("diagnostics: room_learning is the trace, a list of at most 10", robot["room_learning"] == list(trace) and len(robot["room_learning"]) <= 10)
+    check("diagnostics: api_calls is at entry level", "api_calls" in dump and set(dump["api_calls"]) >= {"since", "total", "per_method", "per_purpose", "per_day"} and "api_calls" not in robot, str(dump.keys()))
+    check("diagnostics: the trace holds no names", not any(isinstance(v, str) and v not in {o["result"], o["work_status_key"], o["time"]} for o in robot["room_learning"] for v in o.values()), str(robot["room_learning"][:2]))
+
+    # 5. both maps without an order: the active map stays unknown, and nothing is learned
+    client.props["146000"] = [{"146001": MAP_A, "146002": "[]"}, {"146001": MAP_B, "146002": "[]"}]
+    await reread()
+    check("empty order: both maps without an order: the active map is unknown", coordinator.active_map() is None and coordinator.room_map() is None, str(coordinator.active_map()))
+    learned_before = dict(coordinator.learned_rooms)
+    coordinator._map_confirmed = False  # noqa: SLF001
+    client.props[status_ref] = docked
+    client.props["126200"] = [-127]
+    await coordinator.async_refresh()
+    client.props[status_ref] = cleaning
+    await coordinator.async_refresh()
+    check("trace: with an unknown active map the result is active_map_unknown and nothing is learned", trace[-1]["result"] == "active_map_unknown" and trace[-1]["active_map"] is None and coordinator.learned_rooms == learned_before, str(trace[-1]))
+
+    # 6. sequence not reported at all: not the same as empty, the active map stays unknown
+    client.props["146000"] = [{"146001": MAP_A, "146002": "[]"}, {"146001": MAP_B, "146002": json.dumps(ORDER_B)}]
+    client.props.pop("120600")
+    await reread()
+    check("empty order: a sequence that is not reported keeps the active map unknown", not coordinator.sequence_reported and coordinator.active_map() is None, str((coordinator.sequence_reported, coordinator.active_map())))
+    client.props["120600"] = []
+    await reread()
+    check("empty order: reported and empty again: map A is the active map", coordinator.sequence_reported and coordinator.active_map() == MAP_A)
+    # 7. both maps with an order but an empty sequence: nothing to tell
+    client.props["146000"] = [{"146001": MAP_A, "146002": json.dumps(ORDER_A)}, {"146001": MAP_B, "146002": json.dumps(ORDER_B)}]
+    await reread()
+    check("empty order: both maps have an order and the sequence is empty: unknown", coordinator.active_map() is None)
+    # 8. sequence read failure: not a "reported empty"
+    client.props["146000"] = [{"146001": MAP_A, "146002": "[]"}, {"146001": MAP_B, "146002": json.dumps(ORDER_B)}]
+    await reread()
+    check("empty order: ... and back to A", coordinator.active_map() == MAP_A)
+
+
+def test_rv1_empty_order_active_map_and_learning_trace() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1EmptyOrderClient, empty_order_checks)
 
 
 # ---------------------------------------------------------------------------
@@ -3727,11 +3978,13 @@ def test_issue_translations() -> None:
     issue = strings["issues"]["model_not_fully_supported"]
     check("issue text is in strings.json and translations/en.json, identical", strings == english and strings["entity"]["binary_sensor"]["charging"] == {"name": "Charging"})
     check("issue text does not overclaim", "Other functions may work, but the missing or unknown parts may not show or react correctly." in issue["description"] and "Everything else works" not in issue["description"])
+    quota = strings["issues"]["api_quota_exhausted"]
+    check("0.7.1b4: the quota issue text names the free quota, the renewal, the console and the slower polling", all(word in quota["description"] for word in ("30,000", "per App ID", "1st", "Imou developer console", "every 30 minutes", "OP1013")) and "api_quota_exhausted" in EN_JSON["issues"], str(quota))
     check("issue title and description use the three placeholders", "{model}" in issue["title"] and all(p in issue["description"] for p in ("{model}", "{missing}", "{unknown}")) and "diagnostics" in issue["description"].lower() and "GitHub" in issue["description"], str(issue))
 
 
 def main() -> int:
-    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_reset_buttons, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_rv1_two_maps, test_rv1_two_maps_unknown_at_setup, test_rv1_single_map_with_room_properties, test_rv1_learned_rooms_single_map, test_rv1_learned_rooms_two_maps, test_rv1_learned_rooms_unknown_map, test_rv1_partition_area_rejected, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
+    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_reset_buttons, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_rv1_two_maps, test_rv1_two_maps_unknown_at_setup, test_rv1_single_map_with_room_properties, test_rv1_learned_rooms_single_map, test_rv1_learned_rooms_two_maps, test_rv1_learned_rooms_unknown_map, test_rv1_partition_area_rejected, test_quota_exhausted, test_rv1_empty_order_active_map_and_learning_trace, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
         print(f"\n=== {func.__name__} ===")
         try:
             func()

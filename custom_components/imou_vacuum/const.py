@@ -29,9 +29,11 @@ REGION_HOSTS: Final[dict[str, str]] = {
 }
 
 # Polling. One API call per robot per poll; the free tier is 30,000 calls per
-# month per App ID (about 12k/month with this plan).
+# month per App ID, renewed on the 1st. The intended use is roughly 300-600 calls a
+# day per robot (an estimate: the real count is in the diagnostics, ``api_calls``).
 SCAN_INTERVAL_IDLE: Final = 300  # seconds, docked / idle
 SCAN_INTERVAL_ACTIVE: Final = 30  # seconds, robot is doing something
+QUOTA_RETRY_INTERVAL: Final = 1800  # seconds between polls while the API quota is used up
 COMMAND_REFRESH_DELAY: Final = 3  # seconds, one refresh after any command
 COMMAND_BOOST_SECONDS: Final = 120  # keep fast polling this long after a command
 # A failed poll keeps the last good data. Entities become unavailable only after
@@ -255,6 +257,7 @@ ROOM_SOURCES: Final[tuple[tuple[str, str | None, str | None], ...]] = (
 # delayed (seconds), so a burst of changes is written once.
 ROOM_CLEAN_KEY: Final = "room_clean"  # the work_status key of a room clean (选区清扫中)
 LEARNED_STORAGE_VERSION: Final = 1
+LEARNING_TRACE_SIZE: Final = 10  # learning observations kept per robot (diagnostics)
 LEARNED_SAVE_DELAY: Final = 30
 # failed combined reads in a row (while ``sequence`` alone works) after which the extra
 # refs are not requested any more until a restart

@@ -200,6 +200,7 @@ def test_confirmed_resets_per_model() -> None:
     assert support.CONFIRMED_RESETS == {
         "L11-A": {"side_brush", "main_brush", "filter", "sensors"},
         "RV1L Pro": {"side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery"},
+        "RV1 Pro Max": {"mop"},  # 0.7.1b4: only the mop reset was tried on this model
     }
     for name in ("L11-A", "Imou RV-L11-A", " l11a "):
         for part in ("side_brush", "main_brush", "filter", "sensors"):
@@ -211,32 +212,45 @@ def test_confirmed_resets_per_model() -> None:
         for part in ("side_brush", "main_brush", "filter", "mop", "main_brush_cover", "battery"):
             assert support.reset_confirmed(name, part), (name, part)
         assert not support.reset_confirmed(name, "sensors"), name
-    for name in ("RV1 Pro Max", "RV1L Pro Max", "RV1 Pro", "L11-A Pro", "", None):
+    for name in ("RV1 Pro Max", "Imou RV1-Pro-Max", "rv1 pro max"):
+        assert support.reset_confirmed(name, "mop"), name
+        for part in ("side_brush", "main_brush", "filter", "sensors", "main_brush_cover", "battery"):
+            assert not support.reset_confirmed(name, part), (name, part)
+    for name in ("RV1L Pro Max", "RV1 Pro", "L11-A Pro", "", None):
         for part in ("side_brush", "main_brush", "filter", "sensors", "mop", "main_brush_cover", "battery"):
             assert not support.reset_confirmed(name, part), (name, part)
 
 
 def test_part_lifetime_hours() -> None:
-    assert support.PART_LIFETIME_HOURS == {
-        "RV1L Pro": {
-            "side_brush": 150,
-            "main_brush": 240,
-            "filter": 150,
-            "mop": 180,
-            "main_brush_cover": 200,
-            "battery": 800,
-        }
+    lifetimes = {
+        "side_brush": 150,
+        "main_brush": 240,
+        "filter": 150,
+        "mop": 180,
+        "main_brush_cover": 200,
+        "battery": 800,
     }
-    for name in ("RV1L Pro", "Imou RV1L-Pro", "rv1l pro"):
-        got = {part: support.part_lifetime_hours(name, part) for part in support.PART_LIFETIME_HOURS["RV1L Pro"]}
-        assert got == support.PART_LIFETIME_HOURS["RV1L Pro"], (name, got)
-        assert support.part_lifetime_hours(name, "sensors") is None, name
-        assert support.part_lifetime_hours(name, "") is None, name
-        assert support.part_lifetime_hours(name, "dust_bag") is None, name
+    # 0.7.1b4: the RV1 Pro Max app shows the same lifetimes as the RV1L Pro
+    assert support.PART_LIFETIME_HOURS == {"RV1L Pro": lifetimes, "RV1 Pro Max": lifetimes}
+    assert support.PART_LIFETIME_HOURS["RV1L Pro"] is not support.PART_LIFETIME_HOURS["RV1 Pro Max"]
+    for model_names in (("RV1L Pro", "Imou RV1L-Pro", "rv1l pro"), ("RV1 Pro Max", "Imou RV1-Pro-Max", "rv1 pro max")):
+        for name in model_names:
+            got = {part: support.part_lifetime_hours(name, part) for part in lifetimes}
+            assert got == lifetimes, (name, got)
+            assert support.part_lifetime_hours(name, "sensors") is None, name
+            assert support.part_lifetime_hours(name, "") is None, name
+            assert support.part_lifetime_hours(name, "dust_bag") is None, name
     # other models and fail closed
-    for name in ("L11-A", "Imou RV-L11-A", "RV1 Pro Max", "RV1L Pro Max", "RV1 Pro", "", "  ", "IMOU", None):
+    for name in ("L11-A", "Imou RV-L11-A", "RV1L Pro Max", "RV1 Pro", "", "  ", "IMOU", None):
         for part in ("side_brush", "main_brush", "filter", "sensors", "mop", "main_brush_cover", "battery"):
             assert support.part_lifetime_hours(name, part) is None, (name, part)
+
+
+def test_sensors_usage_default_follows_the_confirmed_sensors_reset() -> None:
+    """0.7.1b4: the sensors usage sensor is enabled by default only where its counter is real."""
+    assert support.reset_confirmed("L11-A", "sensors")
+    for name in ("RV1L Pro", "RV1 Pro Max", "RV1 Pro", "", None):
+        assert not support.reset_confirmed(name, "sensors"), name
 
 
 def test_missing_core_functions_are_listed() -> None:
