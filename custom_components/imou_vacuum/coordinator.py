@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
+import inspect
 import logging
 import time
 from typing import Any
@@ -190,6 +191,11 @@ def learned_rooms_store(
     return Store(hass, LEARNED_STORAGE_VERSION, f"{DOMAIN}.learned_rooms.{entry_id}.{digest}")
 
 
+def quota_issue_id(entry_id: str) -> str:
+    """Return the id of the repair issue for a used-up API quota (one per config entry)."""
+    return f"api_quota_exhausted_{entry_id}"
+
+
 def _unsupported(feature: str) -> HomeAssistantError:
     return HomeAssistantError(
         translation_domain=DOMAIN,
@@ -282,6 +288,12 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         # whether the API quota of the App ID is used up (the last call that told said so):
         # polling slows down and the schedule, room and learn reads are skipped meanwhile
         self.quota_exhausted = False
+        # reads of the room properties that worked (a counter), and for the empty-order
+        # active map: the map that rule gave on the last full read, and whether the read
+        # before gave the same one (learning needs two reads that agree)
+        self._room_reads = 0
+        self._empty_order_map: int | None = None
+        self._empty_order_agreed = False
         # whether the last read of the room properties reported ``sequence`` (an empty
         # order that was reported differs from one that was not reported at all)
         self.sequence_reported = False
@@ -303,19 +315,22 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             with api_purpose("poll"):
                 result = await self._async_poll_properties()
         except ImouDeviceOfflineError as err:
+            self._quota_restored()  # an answer that is no quota error: calls work
             if err.code.upper() != ASLEEP_CODE:
                 return self._poll_failed("the robot is offline")
             asleep = True  # DV1030: not offline, the same as the status "sleep"
         except ImouAuthError as err:
+            self._quota_restored()
             raise ConfigEntryAuthFailed(
                 translation_domain=DOMAIN, translation_key="auth_failed"
             ) from err
         except ImouError as err:
             if isinstance(err, ImouQuotaError):
-                self._quota_hit()
+                self._quota_hit(err)
+            elif isinstance(err, ImouApiError):  # the cloud answered, not with a quota error
+                self._quota_restored()
             return self._poll_failed(str(err), err)
-
-        if self.quota_exhausted:
+        else:
             self._quota_restored()
 
         # A missing status is treated as online.
@@ -339,11 +354,13 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 failed,
             )
         self._update_polling_interval(state)
-        fetched = status == "online" and time.monotonic() >= self._schedules_due
-        if fetched:
+        due = status == "online" and time.monotonic() >= self._schedules_due
+        room_reads = self._room_reads
+        if due:
             await self._async_fetch_schedules(self._failed_parts or None)
         if status == "online":
-            await self._async_learn_partition_area(values, fetched)
+            # only a room-properties read that really happened counts as fresh
+            await self._async_learn_partition_area(values, self._room_reads != room_reads)
         return state
 
     async def _async_poll_properties(self) -> Any:
@@ -410,23 +427,29 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         )
 
     def _quota_issue_id(self) -> str:
-        return f"api_quota_exhausted_{self.config_entry.entry_id}"
+        return quota_issue_id(self.config_entry.entry_id)
 
-    def _quota_hit(self) -> None:
+    def _quota_hit(self, err: ImouError | None = None) -> None:
         """Remember that the API quota is used up; tell the user once per config entry.
 
-        The repair issue (and the one log warning) exists once for the entry, however
-        many robots or polls see the error.
+        The first hit of this robot logs one warning with the raw code and message of
+        the error (so a wrong match by message can be seen); the repair issue exists
+        once for the entry, however many robots or polls see the error. Polling slows
+        down at once.
         """
+        if not self.quota_exhausted:
+            _LOGGER.warning(
+                "The Imou cloud reports that the API call limit (quota) of this App ID is reached "
+                "(code %s, message %s); polling %s only every %d minutes until calls work again",
+                err.code if err is not None else "?",
+                err.msg if err is not None else "?",
+                self.device.name,
+                QUOTA_RETRY_INTERVAL // 60,
+            )
         self.quota_exhausted = True
+        self.update_interval = timedelta(seconds=QUOTA_RETRY_INTERVAL)
         if ir.async_get(self.hass).async_get_issue(DOMAIN, self._quota_issue_id()) is not None:
             return
-        _LOGGER.warning(
-            "The Imou API quota of this App ID is used up; polling %s only every %d minutes "
-            "until calls work again",
-            self.device.name,
-            QUOTA_RETRY_INTERVAL // 60,
-        )
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -438,10 +461,16 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         )
 
     def _quota_restored(self) -> None:
-        """A call worked again: delete the repair issue and poll normally."""
+        """A call got an answer that is no quota error: delete the issue, poll normally."""
+        if not self.quota_exhausted:
+            return
         self.quota_exhausted = False
         _LOGGER.info("Imou API calls work again for %s", self.device.name)
         ir.async_delete_issue(self.hass, DOMAIN, self._quota_issue_id())
+
+    def _quota_blocked(self) -> HomeAssistantError:
+        """The error of a command while the quota is used up (no call is made)."""
+        return HomeAssistantError(translation_domain=DOMAIN, translation_key="quota_exhausted")
 
     def _interval_seconds(self) -> float:
         if self.update_interval is None:
@@ -474,6 +503,11 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 self.device.product_id, self.device.device_id, payload
             )
         )
+
+    def check_quota(self) -> None:
+        """Raise a translated error while the API quota is used up (before any call)."""
+        if self.quota_exhausted:
+            raise self._quota_blocked()
 
     async def async_control(
         self, service: str, inputs: Mapping[str, Any] | None = None
@@ -565,7 +599,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                     "Could not read the schedules of %s: %s", self.device.name, err
                 )
                 if isinstance(err, ImouQuotaError):
-                    self._quota_hit()
+                    self._quota_hit(err)
             else:
                 parsed = parse_schedules(
                     response,
@@ -597,7 +631,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                     "Could not read the rooms of %s: %s", self.device.name, err
                 )
                 if isinstance(err, ImouQuotaError):
-                    self._quota_hit()  # and no second call to try ``sequence`` alone
+                    self._quota_hit(err)  # and no second call to try ``sequence`` alone
                 elif with_sources and PROP_SEQUENCE in identifiers:
                     # the extra refs may be the cause: keep the ``sequence`` rooms
                     values = await self._async_read_sequence_only(err)
@@ -665,6 +699,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         Without ``with_sources`` (only ``sequence`` was read) the earlier rooms of the
         other properties are kept, or none if there were none.
         """
+        self._room_reads += 1
         if self.model.prop(PROP_SEQUENCE) is not None:
             self.sequence_rooms = sequence_room_ids(values.get(PROP_SEQUENCE))
             self.sequence_reported = values.get(PROP_SEQUENCE) is not None
@@ -673,6 +708,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             # active map is unknown until the next full read
             self.sweeper_map_id = None
             self.sequence_entries = []
+            self._empty_order_map, self._empty_order_agreed = None, False
             if self.source_entries is None:
                 self.source_entries = []
             return
@@ -701,6 +737,10 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             self.map_names = map_names(
                 values.get(MAP_NAME), prop.member_refs, MAP_NAME_MEMBER_ID, MAP_NAME_MEMBER_NAME
             )
+        # the empty-order rule needs two full reads that give the same map before learning
+        via_rule = self.active_map() if self._active_map_by_empty_order() else None
+        self._empty_order_agreed = via_rule is not None and via_rule == self._empty_order_map
+        self._empty_order_map = via_rule
 
     # -- learned rooms -------------------------------------------------------
     async def async_load_learned_rooms(self) -> None:
@@ -731,8 +771,9 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
 
     async def _async_learn_result(self, values: Mapping[str, Any], fetched: bool) -> str:
         """Do the learning of ``_async_learn_partition_area``; return what came of it:
-        ``not_room_clean``, ``empty``, ``active_map_unknown``, ``map_read_failed``,
-        ``learned`` or ``nothing_new``."""
+        ``not_room_clean``, ``empty``, ``active_map_unknown``, ``active_map_unconfirmed``
+        (the empty-order rule gave the map, but the read before did not agree yet),
+        ``map_read_failed``, ``learned`` or ``nothing_new``."""
         if not self._is_room_clean(values):
             self._map_confirmed = False
             return "not_room_clean"
@@ -744,13 +785,19 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 if not fetched:
                     if self.quota_exhausted:
                         return "map_read_failed"
+                    reads = self._room_reads
                     with api_purpose("learn"):
                         await self._async_fetch_schedules({PART_ROOM_PROPERTIES})
-                self._map_confirmed = PART_ROOM_PROPERTIES not in self._failed_parts
+                    fetched = self._room_reads != reads
+                # confirmed only by a room-properties read that really worked
+                self._map_confirmed = fetched and PART_ROOM_PROPERTIES not in self._failed_parts
             if not self._map_confirmed:
                 return "map_read_failed"
             if self.active_map() is None:
                 return "active_map_unknown"
+            if self._active_map_by_empty_order() and not self._empty_order_agreed:
+                self._map_confirmed = False  # read again on the next poll
+                return "active_map_unconfirmed"
         learned = learn_rooms(self.learned_rooms, self.room_map(), found)
         if learned is None:
             return "nothing_new"
@@ -840,6 +887,19 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             self.sequence_entries,
             self.sequence_rooms if self.sequence_reported else None,
             self.listed_map_ids,
+        )
+
+    def _active_map_by_empty_order(self) -> bool:
+        """Whether the active map comes only from the empty-order rule of ``active_map_id``."""
+        return self.active_map() is not None and (
+            active_map_id(
+                self.sweeper_map_id,
+                self.sequence_entries,
+                self.sequence_rooms if self.sequence_reported else None,
+                self.listed_map_ids,
+                empty_order_rule=False,
+            )
+            is None
         )
 
     def room_map(self) -> int | None:
@@ -1212,7 +1272,14 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         return inputs
 
     async def _async_command(self, call: Awaitable[Any]) -> Any:
-        """Run a command; map API errors and schedule a quick refresh."""
+        """Run a command; map API errors and schedule a quick refresh.
+
+        While the API quota is used up nothing is sent (and no refresh or boost follows).
+        """
+        if self.quota_exhausted:
+            if inspect.iscoroutine(call):
+                call.close()  # never awaited: no "coroutine was never awaited" warning
+            raise self._quota_blocked()
         try:
             with api_purpose("command"):
                 return await call

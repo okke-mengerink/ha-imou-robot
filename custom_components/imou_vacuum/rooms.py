@@ -540,6 +540,7 @@ def active_map_id(
     sequence_entries: Iterable[RoomEntry],
     sequence: Iterable[int] | None,
     listed_map_ids: Iterable[Any],
+    empty_order_rule: bool = True,
 ) -> int | None:
     """Return the id of the map the robot has active now, if it can be told, else ``None``.
 
@@ -551,6 +552,8 @@ def active_map_id(
     listed map that has no order in ``sequence_entries``, provided at least two maps
     are listed and every other listed map has an order, (d) the one map of
     ``map_name``, else (e) ``None``.
+
+    Without ``empty_order_rule`` rule (c) is skipped (to tell where a map came from).
 
     ``sequence`` is ``None`` when the robot did not report it (or it was not read):
     that is not the same as an empty order, and rule (c) does not apply then.
@@ -567,7 +570,7 @@ def active_map_id(
         if len(matches) == 1:
             return next(iter(matches))
     listed = {valid_map_id(item) for item in listed_map_ids} - {None}
-    if order is not None and not order and len(listed) >= 2:
+    if empty_order_rule and order is not None and not order and len(listed) >= 2:
         with_order = {map_id for map_id, rooms in sequence_entries if rooms}
         without_order = listed - with_order
         if len(without_order) == 1:

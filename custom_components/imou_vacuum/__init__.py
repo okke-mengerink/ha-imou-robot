@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import logging
+import time
 
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -38,6 +39,7 @@ from .const import (
     CONF_REGION,
     DEFAULT_REGION,
     DOMAIN,
+    QUOTA_RETRY_INTERVAL,
     REGION_HOSTS,
     SERVICE_CLEAN_CONTROL,
 )
@@ -46,6 +48,7 @@ from .coordinator import (
     ImouCoordinator,
     ImouRuntimeData,
     learned_rooms_store,
+    quota_issue_id,
 )
 from .model import ThingsModel
 from .support import (
@@ -162,8 +165,56 @@ def _async_report_support(
     )
 
 
+_QUOTA_BLOCKED = "quota_blocked_until"  # key in hass.data[DOMAIN]: entry id -> monotonic time
+
+
+def _quota_blocks(hass: HomeAssistant) -> dict[str, float]:
+    """Return the entries whose setup waits for a used-up API quota (until when)."""
+    blocks: dict[str, float] = hass.data.setdefault(DOMAIN, {}).setdefault(_QUOTA_BLOCKED, {})
+    return blocks
+
+
+@callback
+def _async_quota_issue(hass: HomeAssistant, entry: ImouConfigEntry) -> None:
+    """Create the repair issue for a used-up API quota (once per config entry)."""
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        quota_issue_id(entry.entry_id),
+        is_fixable=False,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="api_quota_exhausted",
+        data={"entry_id": entry.entry_id},
+    )
+
+
+@callback
+def _async_quota_block(hass: HomeAssistant, entry: ImouConfigEntry) -> ConfigEntryNotReady:
+    """Remember that setup must not call the API for ``QUOTA_RETRY_INTERVAL``; return the
+    error to raise (Home Assistant retries at most every ~80 s, each retry would be a call)."""
+    _quota_blocks(hass)[entry.entry_id] = time.monotonic() + QUOTA_RETRY_INTERVAL
+    _async_quota_issue(hass, entry)
+    return ConfigEntryNotReady(
+        translation_domain=DOMAIN, translation_key="quota_setup_blocked"
+    )
+
+
+@callback
+def _async_quota_clear(hass: HomeAssistant, entry_id: str) -> None:
+    """Forget the setup block and delete the repair issue of this config entry."""
+    _quota_blocks(hass).pop(entry_id, None)
+    ir.async_delete_issue(hass, DOMAIN, quota_issue_id(entry_id))
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool:
     """Set up Imou Vacuum (Open Platform) from a config entry."""
+    blocked_until = _quota_blocks(hass).get(entry.entry_id)
+    if blocked_until is not None and time.monotonic() < blocked_until:
+        # the quota was used up a moment ago: no API call before the block is over
+        _async_quota_issue(hass, entry)
+        raise ConfigEntryNotReady(
+            translation_domain=DOMAIN, translation_key="quota_setup_blocked"
+        )
     client = ImouClient(
         async_get_clientsession(hass),
         entry.data[CONF_APP_ID],
@@ -179,6 +230,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool
         raise ConfigEntryAuthFailed(
             translation_domain=DOMAIN, translation_key="auth_failed"
         ) from err
+    except ImouQuotaError as err:
+        _LOGGER.warning(
+            "The Imou cloud reports that the API call limit (quota) of this App ID is reached "
+            "(code %s, message %s); setup is tried again in %d minutes",
+            err.code,
+            err.msg,
+            QUOTA_RETRY_INTERVAL // 60,
+        )
+        raise _async_quota_block(hass, entry) from err
     except ImouError as err:
         raise ConfigEntryNotReady(
             translation_domain=DOMAIN,
@@ -210,7 +270,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool
     for device, model in robots:
         coordinator = ImouCoordinator(hass, entry, client, device, model)
         await coordinator.async_load_learned_rooms()
-        await coordinator.async_config_entry_first_refresh()
+        try:
+            await coordinator.async_config_entry_first_refresh()
+        except ConfigEntryNotReady as err:
+            if coordinator.quota_exhausted:  # the first poll hit the quota (issue exists)
+                raise _async_quota_block(hass, entry) from err
+            raise
         coordinators[device.device_id] = coordinator
         # names follow the areas the rooms are linked to (no reload needed)
         entry.async_on_unload(coordinator.async_track_areas())
@@ -221,6 +286,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool
     )
     # new room names (options) are picked up by reloading
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    _quota_blocks(hass).pop(entry.entry_id, None)
+    if not any(c.quota_exhausted for c in coordinators.values()):
+        ir.async_delete_issue(hass, DOMAIN, quota_issue_id(entry.entry_id))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -236,13 +304,17 @@ async def _async_options_updated(hass: HomeAssistant, entry: ImouConfigEntry) ->
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> bool:
-    """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    """Unload a config entry; the quota notice goes too (a later setup creates it again)."""
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        ir.async_delete_issue(hass, DOMAIN, quota_issue_id(entry.entry_id))
+    return unloaded
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ImouConfigEntry) -> None:
     """Delete the repair issues and the learned rooms of a removed config entry."""
     _async_delete_support_issues(hass, entry.entry_id)
+    _async_quota_clear(hass, entry.entry_id)
     for device in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id):
         for domain, device_id in device.identifiers:
             if domain == DOMAIN:

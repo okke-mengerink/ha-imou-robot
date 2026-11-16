@@ -318,7 +318,7 @@
     },
     "api_quota_exhausted": {
       "title": "Imou API quota used up",
-      "description": "Imou refused the calls of this integration because the API quota of your App ID is used up (error OP1013). The free quota is 30,000 calls per month per App ID and renews on the 1st of the month. You can check your usage in the Imou developer console (Open Platform > your app). Other integrations or tools that use the same App ID count against the same quota.\n\nUntil calls work again the integration only polls every 30 minutes, so the entities may show the last values or become unavailable. This notice goes away by itself once a call works again."
+      "description": "Imou refused the calls of this integration because the API call limit of your App ID is reached (the Imou cloud reports that the quota is used up). The free quota is 30,000 calls per month per App ID and renews on the 1st of the month. You can check your usage in the Imou developer console (Open Platform > your app). Other integrations or tools that use the same App ID count against the same quota.\n\nUntil calls work again the integration only polls every 30 minutes, commands are refused, and the entities may show the last values or become unavailable. This notice goes away once a call works again; with two robots it can come back once while the other robot is still blocked."
     }
   },
   "exceptions": {
@@ -333,6 +333,12 @@
     },
     "update_failed": {
       "message": "Could not read the robot's state: {error}"
+    },
+    "quota_exhausted": {
+      "message": "The Imou API call limit is reached; try again later."
+    },
+    "quota_setup_blocked": {
+      "message": "The Imou API call limit of this App ID is reached; setup is tried again later."
     },
     "command_failed": {
       "message": "The Imou cloud did not accept the command: {error}"

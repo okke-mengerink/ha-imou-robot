@@ -796,6 +796,10 @@ def test_active_map_id_with_an_empty_sequence() -> None:
     assert rooms.active_map_id(None, [(1001, ORDER_A), (1002, ())], [], [1001, 1002]) == 1002  # an empty entry is no order
     assert rooms.active_map_id(None, only_b, [], ["1001", 1002, 1002]) == 1001
     assert rooms.active_map_id(None, [(None, ORDER_A), (1002, ORDER_B)], [], [1001, 1002]) == 1001  # no-map entries are ignored
+    # without the empty-order rule (to tell where a map came from) it is unknown; other rules still work
+    assert rooms.active_map_id(None, only_b, [], [1001, 1002], empty_order_rule=False) is None
+    assert rooms.active_map_id(1002, only_b, [], [1001, 1002], empty_order_rule=False) == 1002
+    assert rooms.active_map_id(None, only_b, ORDER_B, [1001, 1002], empty_order_rule=False) == 1002
     # both maps have an empty or no order: still unknown (the tip: set an order on every map)
     assert rooms.active_map_id(None, [], [], [1001, 1002]) is None
     assert rooms.active_map_id(None, [(1001, ()), (1002, ())], [], [1001, 1002]) is None

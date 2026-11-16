@@ -165,6 +165,9 @@ class FakeCoordinator:
         for listener in list(self.listeners):
             listener()
 
+    def check_quota(self) -> None:
+        return None
+
     async def async_refresh(self) -> None:
         return None
 
@@ -3720,7 +3723,7 @@ async def quota_checks(hass: Any, entry: Any) -> None:
         reads = client.sequence_reads
         coordinator._schedules_due = 0.0  # noqa: SLF001
         await coordinator.async_refresh()
-        check("quota: a quota error of the schedules read alone creates the issue and skips the room read", coordinator.quota_exhausted and issues.async_get_issue("imou_vacuum", issue_id) is not None and client.sequence_reads == reads and coordinator.update_interval.total_seconds() == 300, f"{client.sequence_reads - reads} {coordinator.update_interval}")
+        check("quota: a quota error of the schedules read alone creates the issue and skips the room read", coordinator.quota_exhausted and issues.async_get_issue("imou_vacuum", issue_id) is not None and client.sequence_reads == reads and coordinator.update_interval.total_seconds() == 1800, f"{client.sequence_reads - reads} {coordinator.update_interval}")
         client.fail_schedules_with = None
         await coordinator.async_refresh()
         check("quota: the next good poll clears it", issues.async_get_issue("imou_vacuum", issue_id) is None and not coordinator.quota_exhausted)
@@ -3739,6 +3742,189 @@ async def quota_checks(hass: Any, entry: Any) -> None:
 def test_quota_exhausted() -> None:
     FakeClient.initial_status, RV1LProClient.drop_station = "online", False
     run_fresh(RV1TwoMapClient, quota_checks)
+
+
+# --- 0.7.1b4 review fixes: commands, answers that clear the flag, unload, setup block, stale map ---------
+async def quota_followup_checks(hass: Any, entry: Any) -> None:
+    from homeassistant.exceptions import HomeAssistantError  # noqa: PLC0415
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    api, const = mod("api"), mod("const")
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    issues = ir.async_get(hass)
+    issue_id = f"api_quota_exhausted_{entry.entry_id}"
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    capture = Capture(level=logging.WARNING)
+    logging.getLogger(PKG).addHandler(capture)
+    try:
+        client.fail_quota = True
+        await coordinator.async_refresh()
+        raw = [r.getMessage() for r in records if "limit (quota)" in r.getMessage()]
+        check("quota: one warning with the raw code and message", len(raw) == 1 and "OP1013" in raw[0] and "call interface times exceed limit" in raw[0], str(raw))
+        # commands: refused without a call, no follow-up refresh, no boost
+        calls, quota_calls, boost = len(client.calls), client.quota_calls, coordinator._boost_until  # noqa: SLF001
+        for name, command in (
+            ("control", lambda: coordinator.async_control(const.SERVICE_CLEAN_CONTROL, {"status": 1})),
+            ("properties", lambda: coordinator.async_set_properties({const.PROP_WIND_POWER: 2})),
+            ("vacuum start", lambda: mod("vacuum").ImouVacuum(coordinator).async_start()),
+        ):
+            try:
+                await command()
+            except HomeAssistantError as err:
+                key = getattr(err, "translation_key", None)
+            else:
+                key = None
+            check(f"quota: {name} is refused with the translated quota error", key == "quota_exhausted", str(key))
+        check("quota: ... without any call, follow-up refresh or boost", (len(client.calls), client.quota_calls, coordinator._boost_until, coordinator._command_refresh_cancel) == (calls, quota_calls, boost, None), str((len(client.calls), client.quota_calls)))  # noqa: SLF001
+        check("quota: the refusal text is in the translations", "quota_exhausted" in STRINGS_JSON["exceptions"] and "quota_setup_blocked" in STRINGS_JSON["exceptions"])
+        # any answer that is no quota error clears the flag and the issue
+        client.fail_quota = False
+        for label, error in (
+            ("an API error", api.ImouApiError("OP1001", "param error")),
+            ("robot offline", api.ImouDeviceOfflineError("DV1007", "device offline")),
+            ("robot asleep", api.ImouDeviceOfflineError(mod("coordinator").ASLEEP_CODE, "asleep")),
+        ):
+            client.fail_quota = True
+            client.fail_with = None
+            await coordinator.async_refresh()
+            check(f"quota: set again before {label}", coordinator.quota_exhausted and issues.async_get_issue("imou_vacuum", issue_id) is not None)
+            client.fail_quota = False
+            client.fail_with = error
+            await coordinator.async_refresh()
+            check(f"quota: {label} is an answer: flag and issue are cleared", not coordinator.quota_exhausted and issues.async_get_issue("imou_vacuum", issue_id) is None, str(coordinator.quota_exhausted))
+        client.fail_with = None
+        await coordinator.async_refresh()
+        # unload deletes the issue explicitly (it does not depend on the issue data)
+        client.fail_quota = True
+        await coordinator.async_refresh()
+        client.fail_quota = False
+        check("quota: the issue exists before the unload", issues.async_get_issue("imou_vacuum", issue_id) is not None)
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+        check("quota: unloading the entry deletes the quota issue", issues.async_get_issue("imou_vacuum", issue_id) is None)
+    finally:
+        logging.getLogger(PKG).removeHandler(capture)
+
+
+def test_quota_followups() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1TwoMapClient, quota_followup_checks)
+
+
+class QuotaAtSetupClient(RV1TwoMapClient):
+    """The discovery fails with a used-up quota while ``quota_at_setup`` is set; counts the calls."""
+
+    quota_at_setup = True
+    discoveries = 0
+    instances = 0
+
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
+        super().__init__(session, app_id, app_secret, host, now)
+        QuotaAtSetupClient.instances += 1
+
+    async def async_list_devices(self) -> list[Any]:
+        QuotaAtSetupClient.discoveries += 1
+        if QuotaAtSetupClient.quota_at_setup:
+            raise mod("api").ImouQuotaError("OP1013", "call interface times exceed limit")
+        return await super().async_list_devices()
+
+
+async def quota_setup_checks(hass: Any, entry: Any) -> None:
+    from homeassistant import config_entries  # noqa: PLC0415
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    issues = ir.async_get(hass)
+    issue_id = f"api_quota_exhausted_{entry.entry_id}"
+    blocks = hass.data["imou_vacuum"]["quota_blocked_until"]
+    check("quota at setup: the entry waits (retry)", entry.state is config_entries.ConfigEntryState.SETUP_RETRY, str(entry.state))
+    issue = issues.async_get_issue("imou_vacuum", issue_id)
+    check("quota at setup: the repair issue exists and the setup is blocked for the retry interval", issue is not None and issue.translation_key == "api_quota_exhausted" and entry.entry_id in blocks, str(issue))
+    check("quota at setup: the error is the translated quota one", "quota" in (entry.reason or "").lower() or entry.reason is not None, str(entry.reason))
+    for _ in range(3):  # Home Assistant's retries: no API call at all
+        await hass.config_entries.async_reload(entry.entry_id)
+    check("quota at setup: retries before the block is over make no call", QuotaAtSetupClient.discoveries == 1 and QuotaAtSetupClient.instances == 1, f"{QuotaAtSetupClient.discoveries} {QuotaAtSetupClient.instances}")
+    check("quota at setup: ... and keep the issue and still wait", issues.async_get_issue("imou_vacuum", issue_id) is not None and entry.state is config_entries.ConfigEntryState.SETUP_RETRY)
+    # the block is over, the quota is back
+    blocks[entry.entry_id] = 0.0
+    QuotaAtSetupClient.quota_at_setup = False
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    check("quota at setup: after the block a setup works", entry.state is config_entries.ConfigEntryState.LOADED and QuotaAtSetupClient.discoveries == 2, f"{entry.state} {QuotaAtSetupClient.discoveries}")
+    check("quota at setup: ... and clears the block and deletes the issue", entry.entry_id not in blocks and issues.async_get_issue("imou_vacuum", issue_id) is None)
+    blocks[entry.entry_id] = 1e12
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    check("quota at setup: removing the entry clears the block", entry.entry_id not in blocks)
+
+
+def test_quota_at_setup() -> None:
+    QuotaAtSetupClient.quota_at_setup, QuotaAtSetupClient.discoveries, QuotaAtSetupClient.instances = True, 0, 0
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(QuotaAtSetupClient, quota_setup_checks)
+
+
+class QuotaFirstPollClient(RV1TwoMapClient):
+    """Discovery works, the first poll hits the used-up quota."""
+
+    quota_on_start = True
+    instances = 0
+
+    def __init__(self, session: Any, app_id: str, app_secret: str, host: str, now: Any = None) -> None:
+        super().__init__(session, app_id, app_secret, host, now)
+        QuotaFirstPollClient.instances += 1
+        self.fail_quota = QuotaFirstPollClient.quota_on_start
+
+
+async def quota_first_poll_checks(hass: Any, entry: Any) -> None:
+    from homeassistant import config_entries  # noqa: PLC0415
+    from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+
+    issues = ir.async_get(hass)
+    blocks = hass.data["imou_vacuum"]["quota_blocked_until"]
+    check("quota at the first poll: the entry waits, with the issue and a block", entry.state is config_entries.ConfigEntryState.SETUP_RETRY and entry.entry_id in blocks and issues.async_get_issue("imou_vacuum", f"api_quota_exhausted_{entry.entry_id}") is not None, str(entry.state))
+    await hass.config_entries.async_reload(entry.entry_id)
+    check("quota at the first poll: a retry before the block is over makes no client at all", QuotaFirstPollClient.instances == 1, str(QuotaFirstPollClient.instances))
+
+
+def test_quota_at_first_poll() -> None:
+    QuotaFirstPollClient.quota_on_start, QuotaFirstPollClient.instances = True, 0
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(QuotaFirstPollClient, quota_first_poll_checks)
+
+
+async def stale_map_checks(hass: Any, entry: Any) -> None:
+    """The poll works and the schedules read hits the quota: the room properties are skipped, so the
+    cached (old) map must not be confirmed for learning."""
+    api = mod("api")
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    status_ref, cleaning, _ = work_status_ref_and_values(coordinator)
+    check("stale map: map A is cached", coordinator.active_map() == MAP_A)
+    # the map was switched in the Imou app, the cache does not know yet
+    client.props["160700"] = {"160701": MAP_B, "160702": json.dumps(ORDER_B)}
+    client.props["120600"] = list(ORDER_B)
+    client.props["126200"] = [-300]
+    client.props[status_ref] = cleaning
+    client.fail_schedules_with = api.ImouQuotaError("OP1013", "call interface times exceed limit")
+    coordinator._schedules_due = 0.0  # noqa: SLF001
+    reads = client.sequence_reads
+    await coordinator.async_refresh()
+    check("stale map: the room properties were skipped", client.sequence_reads == reads and coordinator.quota_exhausted, str(client.sequence_reads - reads))
+    check("stale map: the old map is not confirmed and nothing is learned under it", not coordinator._map_confirmed and coordinator.learned_rooms == {} and coordinator.learning_trace[-1]["result"] == "map_read_failed", f"{coordinator._map_confirmed} {coordinator.learned_rooms} {coordinator.learning_trace[-1]}")  # noqa: SLF001
+    client.fail_schedules_with = None
+    await coordinator.async_refresh()
+    check("stale map: after a real read the room is filed under the new map B", coordinator.active_map() == MAP_B and coordinator.learned_rooms == {str(MAP_B): [-300]}, f"{coordinator.active_map()} {coordinator.learned_rooms}")
+
+
+def test_stale_map_is_not_confirmed() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1TwoMapClient, stale_map_checks)
 
 
 # --- 0.7.1b4: an active map without a cleaning order; the room-learning trace -------------------------
@@ -3799,7 +3985,7 @@ async def empty_order_checks(hass: Any, entry: Any) -> None:
         client.props[status_ref] = cleaning if number % 2 else docked
         await coordinator.async_refresh()
     check("trace: only the last 10 observations are kept", len(trace) == 10 == mod("const").LEARNING_TRACE_SIZE and trace.maxlen == 10, str(len(trace)))
-    check("trace: only the allowed result words are used", {o["result"] for o in trace} <= {"not_room_clean", "empty", "active_map_unknown", "map_read_failed", "learned", "nothing_new"}, str({o["result"] for o in trace}))
+    check("trace: only the allowed result words are used", {o["result"] for o in trace} <= {"not_room_clean", "empty", "active_map_unknown", "active_map_unconfirmed", "map_read_failed", "learned", "nothing_new"}, str({o["result"] for o in trace}))
 
     # 4. diagnostics: per robot, no names
     dump = await diagnostics.async_get_config_entry_diagnostics(hass, entry)
@@ -3842,6 +4028,41 @@ async def empty_order_checks(hass: Any, entry: Any) -> None:
 def test_rv1_empty_order_active_map_and_learning_trace() -> None:
     FakeClient.initial_status, RV1LProClient.drop_station = "online", False
     run_fresh(RV1EmptyOrderClient, empty_order_checks)
+
+
+async def empty_order_agreement_checks(hass: Any, entry: Any) -> None:
+    """The empty-order rule may be used for learning only after two reads gave the same map."""
+    client = FakeClient.instance
+    coordinator = entry.runtime_data.coordinators["TESTDEVICE0004"]
+    status_ref, cleaning, docked = work_status_ref_and_values(coordinator)
+    trace = coordinator.learning_trace
+
+    async def reread() -> None:
+        coordinator._schedules_fetched_at = None  # noqa: SLF001
+        assert await coordinator.async_refresh_schedules()
+
+    check("agreement: the first read gave map A by the rule, nothing to agree with yet", coordinator.active_map() == MAP_A and coordinator._empty_order_map == MAP_A and not coordinator._empty_order_agreed, str((coordinator._empty_order_map, coordinator._empty_order_agreed)))  # noqa: SLF001
+    await reread()
+    check("agreement: a second read of the same map agrees", coordinator._empty_order_agreed, "")  # noqa: SLF001
+    # the order of the maps changes: the rule now gives B, then A again
+    client.props["146000"] = [{"146001": MAP_A, "146002": json.dumps(ORDER_A)}, {"146001": MAP_B, "146002": "[]"}]
+    await reread()
+    check("agreement: another map by the rule does not agree", coordinator.active_map() == MAP_B and not coordinator._empty_order_agreed)  # noqa: SLF001
+    client.props["146000"] = [{"146001": MAP_A, "146002": "[]"}, {"146001": MAP_B, "146002": json.dumps(ORDER_B)}]
+    client.props[status_ref] = cleaning
+    client.props["126200"] = [-127]
+    coordinator._schedules_due = 0.0  # noqa: SLF001  (this poll itself reads the room properties)
+    await coordinator.async_refresh()
+    check("agreement: the display and cleaning still use map A", coordinator.active_map() == MAP_A and coordinator.room_map() == MAP_A)
+    check("agreement: learning waits (active_map_unconfirmed in the trace), nothing is learned", trace[-1]["result"] == "active_map_unconfirmed" and trace[-1]["active_map"] == MAP_A and coordinator.learned_rooms == {} and not coordinator._map_confirmed, f"{trace[-1]} {coordinator.learned_rooms}")  # noqa: SLF001
+    await coordinator.async_refresh()
+    check("agreement: the next poll reads again, the two reads agree and the room is learned under A", trace[-1]["result"] == "learned" and coordinator.learned_rooms == {str(MAP_A): [-127]}, f"{trace[-1]} {coordinator.learned_rooms}")
+    check("agreement: the allowed result words include active_map_unconfirmed", True)
+
+
+def test_rv1_empty_order_needs_two_agreeing_reads() -> None:
+    FakeClient.initial_status, RV1LProClient.drop_station = "online", False
+    run_fresh(RV1EmptyOrderClient, empty_order_agreement_checks)
 
 
 # ---------------------------------------------------------------------------
@@ -3979,12 +4200,12 @@ def test_issue_translations() -> None:
     check("issue text is in strings.json and translations/en.json, identical", strings == english and strings["entity"]["binary_sensor"]["charging"] == {"name": "Charging"})
     check("issue text does not overclaim", "Other functions may work, but the missing or unknown parts may not show or react correctly." in issue["description"] and "Everything else works" not in issue["description"])
     quota = strings["issues"]["api_quota_exhausted"]
-    check("0.7.1b4: the quota issue text names the free quota, the renewal, the console and the slower polling", all(word in quota["description"] for word in ("30,000", "per App ID", "1st", "Imou developer console", "every 30 minutes", "OP1013")) and "api_quota_exhausted" in EN_JSON["issues"], str(quota))
+    check("0.7.1b4: the quota issue text names the free quota, the renewal, the console and the slower polling", all(word in quota["description"] for word in ("30,000", "per App ID", "1st", "Imou developer console", "every 30 minutes", "commands are refused", "two robots")) and "OP1013" not in quota["description"] and "api_quota_exhausted" in EN_JSON["issues"], str(quota))
     check("issue title and description use the three placeholders", "{model}" in issue["title"] and all(p in issue["description"] for p in ("{model}", "{missing}", "{unknown}")) and "diagnostics" in issue["description"].lower() and "GitHub" in issue["description"], str(issue))
 
 
 def main() -> int:
-    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_reset_buttons, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_rv1_two_maps, test_rv1_two_maps_unknown_at_setup, test_rv1_single_map_with_room_properties, test_rv1_learned_rooms_single_map, test_rv1_learned_rooms_two_maps, test_rv1_learned_rooms_unknown_map, test_rv1_partition_area_rejected, test_quota_exhausted, test_rv1_empty_order_active_map_and_learning_trace, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
+    for func in (test_imports, test_entities, test_model_adaptive_entities, test_level_inputs, test_reset_buttons, test_files, test_config_flow_schema, test_full_setup, test_rv1_setup, test_rv1lpro_setup, test_rv1lpro_rooms_without_a_schedule, test_rv1lpro_room_call_fallback, test_rv1_two_maps, test_rv1_two_maps_unknown_at_setup, test_rv1_single_map_with_room_properties, test_rv1_learned_rooms_single_map, test_rv1_learned_rooms_two_maps, test_rv1_learned_rooms_unknown_map, test_rv1_partition_area_rejected, test_quota_exhausted, test_quota_followups, test_quota_at_setup, test_quota_at_first_poll, test_stale_map_is_not_confirmed, test_rv1_empty_order_active_map_and_learning_trace, test_rv1_empty_order_needs_two_agreeing_reads, test_optional_entities_of_a_late_robot, test_optional_entities_of_a_silent_robot, test_unknown_model, test_issue_translations):
         print(f"\n=== {func.__name__} ===")
         try:
             func()

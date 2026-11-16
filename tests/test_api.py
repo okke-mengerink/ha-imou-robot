@@ -518,8 +518,7 @@ def test_quota_error_detection() -> None:
         ("op1013", ""),
         ("OP1013", "anything"),
         ("XX9999", "Call interface times exceed limit."),
-        ("XX9999", "The number of calls exceeds the limit"),
-        ("XX9999", "API quota exceed limit"),
+        ("XX9999", "The number of call times exceeds the limit this month"),
     ):
         assert api._looks_like_quota_error(code, msg), (code, msg)
     for code, msg in (
@@ -530,6 +529,12 @@ def test_quota_error_detection() -> None:
         ("DV1007", "device offline"),
         ("XX9999", "exceed"),
         ("XX9999", "limit"),
+        ("XX9999", "API quota exceed limit"),  # no "times"
+        ("XX9999", "The number of calls exceeds the limit"),  # no "times"
+        ("XX9999", "interface call frequency exceeds the limit"),  # a rate limit
+        ("XX9999", "call times exceed the limit per second"),  # a per-second limit
+        ("XX9999", "Call times exceed limit, too frequent"),
+        ("OP1010", "interface call frequency exceeds the limit"),
     ):
         assert not api._looks_like_quota_error(code, msg), (code, msg)
     assert issubclass(api.ImouQuotaError, api.ImouApiError) and not issubclass(api.ImouQuotaError, api.ImouAuthError)

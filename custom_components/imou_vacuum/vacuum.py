@@ -284,6 +284,7 @@ class ImouVacuum(ImouEntity, StateVacuumEntity):
         """Start cleaning, or resume when paused."""
         # The cached state can be minutes old while the robot is paused or docked,
         # so look at the robot first (one extra API call).
+        self.coordinator.check_quota()  # no call while the API quota is used up
         await self.coordinator.async_refresh()
         data = self.coordinator.data
         if data is not None and self._status_key(data.work_status) in PAUSED_STATUS_KEYS:

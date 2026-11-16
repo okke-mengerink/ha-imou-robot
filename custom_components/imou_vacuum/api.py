@@ -244,17 +244,17 @@ _QUOTA_ERROR_CODES = frozenset({"OP1013"})
 def _looks_like_quota_error(code: str, msg: str) -> bool:
     """Does this error mean that the App ID has used up its call quota?
 
-    The code ``OP1013``, or a message that says the number of calls exceeds the
-    limit (it needs "exceed", "limit" and one of "call", "times" or "quota", so a
-    plain "too frequent" or "busy" is not a used-up quota).
+    The code ``OP1013``, or a message that has "exceed", "limit" and "times" and not
+    "frequen" or "second" (a per-second rate limit such as "interface call frequency
+    exceeds the limit" is no used-up quota).
     """
     if code.upper() in _QUOTA_ERROR_CODES:
         return True
     text = msg.lower()
     return (
-        "exceed" in text
-        and "limit" in text
-        and any(word in text for word in ("call", "times", "quota"))
+        all(word in text for word in ("exceed", "limit", "times"))
+        and "frequen" not in text
+        and "second" not in text
     )
 
 
