@@ -5,9 +5,11 @@ Run: python3 -I tests/test_rooms.py
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import sys
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -47,7 +49,7 @@ def test_constants() -> None:
     assert const.INPUT_PARTITION_AREA == "partition_area"
     assert const.OUTPUT_TIMER == "timer"
     assert const.CLEAN_MODE_ROOMS == 1
-    assert const.SCHEDULE_REFRESH_SECONDS == 3600
+    assert const.SCHEDULE_REFRESH_SECONDS == 6 * 3600
     assert const.CONF_ROOM_NAMES == "room_names"
     assert const.FALLBACK_SERVICE_REFS[const.SERVICE_CLEAN_LIST] == "2500"
     assert const.FALLBACK_INPUT_REFS[const.SERVICE_CLEAN_CONTROL][const.INPUT_PARTITION_AREA] == "2704"
@@ -984,6 +986,86 @@ def test_segment_ids_of_all_maps_sort_by_map_then_room() -> None:
     ids = ["1002:-126", "1001:-127", "1002:-128", "1001:-128"]
     assert sorted(ids, key=rooms.segment_sort_key) == ["1001:-128", "1001:-127", "1002:-128", "1002:-126"]
     assert rooms.parse_room_key("1002:-128") == (1002, -128) and rooms.parse_room_key("-128") == (None, -128)
+
+
+AMS = ZoneInfo("Europe/Amsterdam")
+
+
+def schedule(**kwargs: object) -> object:
+    """A Schedule with the given fields (enabled, no rooms by default)."""
+    return rooms.Schedule(**{"enabled": True, "active": None, "start": None, "end": None, **kwargs})
+
+
+def schedules(*items: object) -> object:
+    return rooms.ScheduleList(tz_offset=None, schedules=list(items))
+
+
+def test_next_start_of_a_weekly_l11a_schedule() -> None:
+    # the verified L11-A sample: period [0] with startTime 50400 is "Sun 14:00"
+    parsed = rooms.parse_schedules(
+        response([{"period": [0], "unlock": True, "cleanAreas": [4], "startTime": 50400, "endTime": 0}])
+    )
+    saturday_noon = datetime(2026, 11, 21, 12, 0, tzinfo=AMS)
+    assert rooms.next_schedule_start(parsed, saturday_noon) == datetime(2026, 11, 22, 14, 0, tzinfo=AMS)
+    sunday_start = datetime(2026, 11, 22, 14, 0, tzinfo=AMS)
+    # strictly later than ``after``: at the start itself the next one is a week later
+    assert rooms.next_schedule_start(parsed, sunday_start) == datetime(2026, 11, 29, 14, 0, tzinfo=AMS)
+    assert rooms.next_schedule_start(parsed, sunday_start - timedelta(seconds=1)) == sunday_start
+
+
+def test_disabled_and_unknown_schedules_have_no_start() -> None:
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=AMS)
+    assert rooms.next_schedule_start(None, now) is None
+    assert rooms.next_schedule_start(schedules(), now) is None
+    off = schedule(enabled=False, time_of_day="13:00", days=["sat"], period=[6])
+    assert rooms.next_schedule_start(schedules(off), now) is None
+    broken = schedule(time_of_day="xx:yy", days=["sat"], period=[6])
+    assert rooms.next_schedule_start(schedules(broken), now) is None
+    # a repeating L11-A schedule whose startTime was no time of day: no start known
+    assert rooms.next_schedule_start(schedules(schedule(period=[6])), now) is None
+
+
+def test_next_start_of_a_one_off_l11a_schedule() -> None:
+    now = datetime(2026, 11, 21, 12, 0, tzinfo=AMS)
+    later = int(now.timestamp()) + 3600
+    one_off = schedule(start=later)
+    assert rooms.next_schedule_start(schedules(one_off), now) == datetime(2026, 11, 21, 13, 0, tzinfo=AMS)
+    assert rooms.next_schedule_start(schedules(schedule(start=later - 7200)), now) is None  # past
+    # the real sample is a one-off that is switched off: no start
+    assert rooms.next_schedule_start(rooms.parse_schedules(REAL, "2501"), now) is None
+
+
+def test_next_start_of_rv1_schedules() -> None:
+    # RV1: time of day from start_time, days from select_day (here Monday and Wednesday)
+    weekly = schedule(time_of_day="02:00", days=["mon", "wed"], period=[1, 3], once=False)
+    friday = datetime(2026, 11, 20, 12, 0, tzinfo=AMS)
+    assert rooms.next_schedule_start(schedules(weekly), friday) == datetime(2026, 11, 23, 2, 0, tzinfo=AMS)
+    # a schedule that runs once has no days (and no date): no start, so no daily polls
+    once = schedule(time_of_day="12:10", days=[], period=[], once=True)
+    assert rooms.next_schedule_start(schedules(once), friday) is None
+    # the earliest of several schedules wins
+    soon = schedule(time_of_day="12:30", days=["fri"], period=[5])
+    assert rooms.next_schedule_start(schedules(weekly, once, soon), friday) == datetime(2026, 11, 20, 12, 30, tzinfo=AMS)
+
+
+def test_next_start_keeps_the_local_time_over_a_dst_change() -> None:
+    # Sunday 29 March 2026 the clocks go forward: 14:00 stays 14:00 local (12:00 UTC)
+    sunday = schedule(time_of_day="14:00", days=["sun"], period=[0])
+    start = rooms.next_schedule_start(schedules(sunday), datetime(2026, 3, 28, 12, 0, tzinfo=AMS))
+    assert start == datetime(2026, 3, 29, 14, 0, tzinfo=AMS)
+    assert start.utcoffset() == timedelta(hours=2)
+
+
+def test_next_start_is_a_moment_across_the_dst_gap() -> None:
+    # 01:59 CET is one minute before 03:00 CEST (the clock jumps from 02:00 to 03:00)
+    before_jump = datetime(2026, 3, 29, 1, 59, tzinfo=AMS)
+    three = schedule(time_of_day="03:00", days=["sun"], period=[0])
+    start = rooms.next_schedule_start(schedules(three), before_jump)
+    assert start.timestamp() - before_jump.timestamp() == 60
+    # the earliest by moment, not by clock time: 02:59 (non-existent, read as CET, so
+    # 03:59 CEST) comes after 03:00 CEST
+    late = schedule(time_of_day="02:59", days=["sun"], period=[0])
+    assert rooms.next_schedule_start(schedules(late, three), before_jump).timestamp() == start.timestamp()
 
 
 if __name__ == "__main__":

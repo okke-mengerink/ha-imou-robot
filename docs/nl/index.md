@@ -69,7 +69,7 @@ Je robot staat nu in Home Assistant.
 
 ### Let op het API-limiet
 
-De integratie werkt via de cloud, en Imou geeft gratis 30.000 API-aanroepen per maand per App ID. Normaal gebruik van de integratie komt uit op ongeveer 13.000 per maand. Gebruik daarom niet dezelfde App ID in de ingebouwde `imou`-integratie van Home Assistant, want die verbruikt je limiet.
+De integratie werkt via de cloud, en Imou geeft gratis 30.000 API-aanroepen per maand per App ID. Normaal gebruik van de integratie komt uit op ongeveer 3.000 tot 7.500 aanroepen per maand per robot. Gebruik daarom niet dezelfde App ID in de ingebouwde `imou`-integratie van Home Assistant, want die verbruikt je limiet.
 
 ## Kamerreiniging (Home Assistant 2026.3+)
 

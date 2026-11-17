@@ -38,6 +38,7 @@ from .api import (
 )
 from .const import (
     ACTIVE_STATUS_KEYS,
+    CLEANING_STATUS_KEYS,
     CLEAN_MODE_ROOMS,
     CLEAN_PLAN_GENERAL,
     CLEAN_START,
@@ -74,13 +75,18 @@ from .const import (
     PROP_WIND_POWER,
     PROP_WORK_STATUS,
     QUOTA_RETRY_INTERVAL,
+    RESTING_STATUS_KEYS,
     ROOM_CLEAN_KEY,
     ROOM_SOURCES,
     SCAN_INTERVAL_ACTIVE,
+    SCAN_INTERVAL_BOOST,
     SCAN_INTERVAL_IDLE,
+    SCAN_INTERVAL_RESTING,
     SCHEDULE_MIN_REFRESH_SECONDS,
     SCHEDULE_REFRESH_SECONDS,
     SCHEDULE_RETRY_SECONDS,
+    SCHEDULE_START_DELAY,
+    SCHEDULE_START_WINDOW,
     SERVICE_CLEAN_CONTROL,
     SERVICE_CLEAN_LIST,
     SERVICE_WIND_WATER,
@@ -104,6 +110,7 @@ from .rooms import (
     map_ids,
     map_names,
     map_rooms,
+    next_schedule_start,
     parse_schedules,
     partition_area,
     partition_room_ids,
@@ -256,7 +263,8 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         # the robot's cleaning schedules, or None while unknown; the room ids of its
         # cleaning order (``sequence``), or None while unknown; the rooms of the other
         # room properties (ROOM_SOURCES, per map) and the ids of the maps of
-        # ``map_name``, or None while unknown. All are read together, about once an hour.
+        # ``map_name``, or None while unknown. All are read together, every few hours and
+        # right after a clean ends (SCHEDULE_REFRESH_SECONDS).
         self.schedules: ScheduleList | None = None
         self.sequence_rooms: list[int] | None = None
         self.source_entries: list[RoomEntry] | None = None
@@ -283,6 +291,9 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         self._extra_failures = 0
         self._extras_disabled = False
         self._schedules_fetched_at: float | None = None  # monotonic, last success
+        # whether an online poll saw a clean (CLEANING_STATUS_KEYS) since the robot last
+        # rested; the first resting status after one is the end of the clean
+        self._cleaning = False
         self._boost_until = 0.0
         self._command_refresh_cancel: CALLBACK_TYPE | None = None
         # whether the API quota of the App ID is used up (the last call that told said so):
@@ -353,14 +364,33 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
                 self.device.name,
                 failed,
             )
-        self._update_polling_interval(state)
-        due = status == "online" and time.monotonic() >= self._schedules_due
+        online = status == "online"
+        clean_ended = False
+        if online:  # (asleep or upgrading: the values are the last ones, not news)
+            key = self._status_key(state)
+            if key in CLEANING_STATUS_KEYS:
+                self._cleaning = True
+            elif key in RESTING_STATUS_KEYS and self._cleaning:
+                # a clean just ended: a one-off schedule may be used up and the rooms may
+                # have changed, so read them now instead of hours later
+                self._cleaning = False
+                clean_ended = True
+        due = online and (clean_ended or time.monotonic() >= self._schedules_due)
         room_reads = self._room_reads
-        if due:
-            await self._async_fetch_schedules(self._failed_parts or None)
-        if status == "online":
-            # only a room-properties read that really happened counts as fresh
-            await self._async_learn_partition_area(values, self._room_reads != room_reads)
+        try:
+            if due:
+                # after a clean everything is read, else only the parts that failed last
+                await self._async_fetch_schedules(
+                    None if clean_ended else self._failed_parts or None
+                )
+            if online:
+                # only a room-properties read that really happened counts as fresh
+                await self._async_learn_partition_area(values, self._room_reads != room_reads)
+        finally:
+            # after the reads (it uses the schedules); a read that hit the quota keeps
+            # the quota interval
+            if not self.quota_exhausted:
+                self._update_polling_interval(state, online)
         return state
 
     async def _async_poll_properties(self) -> Any:
@@ -477,18 +507,60 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
             return float(SCAN_INTERVAL_IDLE)
         return self.update_interval.total_seconds()
 
-    def _update_polling_interval(self, state: ImouRobotState) -> None:
-        """30 s while the robot is active (or just got a command), else 300 s."""
+    def _status_key(self, state: ImouRobotState) -> str | None:
+        """The work_status key of an online robot; ``None`` when unknown or offline."""
         status = state.work_status
-        active = (
-            state.online
-            and status is not None
-            and self.model.work_status_keys().get(status) in ACTIVE_STATUS_KEYS
-        )
-        boosted = time.monotonic() < self._boost_until
-        self.update_interval = timedelta(
-            seconds=SCAN_INTERVAL_ACTIVE if active or boosted else SCAN_INTERVAL_IDLE
-        )
+        if not state.online or status is None:
+            return None
+        return self.model.work_status_keys().get(status)
+
+    def _update_polling_interval(self, state: ImouRobotState, online: bool = True) -> None:
+        """Pick the next polling interval from the robot's status.
+
+        Just after a command: SCAN_INTERVAL_BOOST. Active (cleaning, returning, ...):
+        SCAN_INTERVAL_ACTIVE. Resting (docked, charging, standby), or asleep or upgrading
+        (``online`` False: the values are the last ones, the robot does nothing):
+        SCAN_INTERVAL_RESTING, or less before a schedule starts (``_resting_interval``).
+        Anything else (paused, error, washing the mop, an unknown status):
+        SCAN_INTERVAL_IDLE.
+        """
+        key = self._status_key(state) if online else None
+        if time.monotonic() < self._boost_until:
+            seconds = float(SCAN_INTERVAL_BOOST)
+        elif key in ACTIVE_STATUS_KEYS:
+            seconds = float(SCAN_INTERVAL_ACTIVE)
+        elif not online or key in RESTING_STATUS_KEYS:
+            seconds = self._resting_interval()
+        else:
+            seconds = float(SCAN_INTERVAL_IDLE)
+        self.update_interval = timedelta(seconds=seconds)
+
+    def _resting_interval(self) -> float:
+        """SCAN_INTERVAL_RESTING, or less so that a poll follows the next schedule start.
+
+        The poll comes SCHEDULE_START_DELAY after the start. While the robot still rests
+        up to SCHEDULE_START_WINDOW after a start (it may start late, or not at all), it
+        is polled every SCAN_INTERVAL_ACTIVE. Times are compared as moments (unix time),
+        so a DST change in between does not shift the poll.
+        """
+        now = dt_util.utcnow()
+        try:
+            start = next_schedule_start(
+                self.schedules,
+                dt_util.as_local(now - timedelta(seconds=SCHEDULE_START_WINDOW)),
+            )
+        except (ArithmeticError, TypeError, ValueError, OSError):
+            # a schedule that cannot be placed in time must not break polling
+            _LOGGER.debug(
+                "Could not work out the next schedule start of %s", self.device.name, exc_info=True
+            )
+            return float(SCAN_INTERVAL_RESTING)
+        if start is None:
+            return float(SCAN_INTERVAL_RESTING)
+        until = start.timestamp() - now.timestamp()
+        if until <= 0:
+            return float(SCAN_INTERVAL_ACTIVE)
+        return min(float(SCAN_INTERVAL_RESTING), until + SCHEDULE_START_DELAY)
 
     # -- commands ------------------------------------------------------------
     async def async_set_properties(self, values: Mapping[str, Any]) -> None:
@@ -582,7 +654,7 @@ class ImouCoordinator(DataUpdateCoordinator[ImouRobotState]):
         of what failed); ``None`` reads both. The room properties are one property call
         (``sequence``, the ROOM_SOURCES and ``map_name``, as far as the model has them). Never raises ``ImouError``, so it cannot
         make a poll fail. Returns whether anything new was read. A part that fails
-        is retried sooner than the hour, and alone.
+        is retried sooner (SCHEDULE_RETRY_SECONDS), and alone.
         """
         if self.quota_exhausted:
             return False  # the quota is used up: do not hammer the API (nothing is marked failed)

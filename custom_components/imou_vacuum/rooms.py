@@ -13,8 +13,9 @@ unit tested with plain Python.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Container, Iterable, Mapping
+from collections.abc import Callable, Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, time as day_time, timedelta
 import json
 import logging
 from typing import Any
@@ -350,6 +351,58 @@ def parse_timer(entry: Mapping[str, Any]) -> ScheduleList:
         schedule for raw in raw_items if (schedule := _parse_schedule(raw)) is not None
     ]
     return ScheduleList(tz_offset=tz_offset, schedules=schedules)
+
+
+# Python's weekday() numbers of the day names of Schedule.days
+_WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+def _schedule_starts(schedule: Schedule, after: datetime) -> Iterator[datetime]:
+    """The starts of one schedule from the day of ``after`` on (8 days at most).
+
+    A one-off L11-A schedule starts at its unix time. A schedule with a time of day
+    starts at that local time on each of its days. One without days (an RV1 schedule
+    that runs once: it has no date, and may stay switched on after it ran) gives no
+    start, so it cannot cost a poll every day.
+    """
+    if schedule.time_of_day is None:
+        if schedule.start is not None and not schedule.period:
+            yield datetime.fromtimestamp(schedule.start, after.tzinfo)
+        return
+    weekdays = {_WEEKDAYS[day] for day in schedule.days if day in _WEEKDAYS}
+    if not weekdays:
+        return
+    try:
+        hours, minutes = (int(part) for part in schedule.time_of_day.split(":"))
+        moment = day_time(hours, minutes)
+    except ValueError:
+        return
+    for offset in range(8):
+        day = after.date() + timedelta(days=offset)
+        if day.weekday() in weekdays:
+            yield datetime.combine(day, moment, after.tzinfo)
+
+
+def next_schedule_start(schedules: ScheduleList | None, after: datetime) -> datetime | None:
+    """Return the first start of an enabled schedule later than ``after``, or ``None``.
+
+    ``after`` must be timezone aware, in the time zone of the robot's times of day:
+    the local time zone of Home Assistant (the robot's own UTC offset is not used; a
+    wrong guess only costs the early poll of a scheduled clean). Starts are compared
+    as moments (unix time), not as local clock times, so a DST change does not shift
+    them; use ``timestamp()`` for arithmetic with the result as well.
+    """
+    if schedules is None:
+        return None
+    limit = after.timestamp()
+    starts = [
+        start
+        for schedule in schedules.schedules
+        if schedule.enabled
+        for start in _schedule_starts(schedule, after)
+        if start.timestamp() > limit
+    ]
+    return min(starts, key=lambda start: start.timestamp(), default=None)
 
 
 def sequence_room_ids(value: Any) -> list[int]:

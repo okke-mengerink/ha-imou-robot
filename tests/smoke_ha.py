@@ -890,7 +890,7 @@ def test_files() -> None:
     check("manifest keys: domain, name, then alphabetical (hassfest)", keys[:2] == ["domain", "name"] and keys[2:] == sorted(keys[2:]), str(keys))
     check(
         "manifest values",
-        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.1b4"
+        manifest["domain"] == "imou_vacuum" and manifest["name"] == "Imou Vacuum (Open Platform)" and manifest["version"] == "0.7.1b5"
         and manifest["config_flow"] is True and manifest["iot_class"] == "cloud_polling" and manifest["integration_type"] == "hub"
         and manifest["requirements"] == [] and manifest["codeowners"] == ["@okke-mengerink"]
         and manifest["documentation"] == "https://github.com/okke-mengerink/ha-imou-robot"
@@ -900,7 +900,7 @@ def test_files() -> None:
     from awesomeversion import AwesomeVersion, AwesomeVersionStrategy  # noqa: PLC0415
 
     version = AwesomeVersion(manifest["version"])
-    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.1", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b4" and AwesomeVersion("0.7.0") < version < AwesomeVersion("0.7.1"), f"{version.strategy} {version.modifier}")
+    check("manifest version is valid for hassfest (AwesomeVersion) and a pre-release of 0.7.1", version.strategy in (AwesomeVersionStrategy.SEMVER, AwesomeVersionStrategy.PEP440, AwesomeVersionStrategy.SIMPLEVER, AwesomeVersionStrategy.BUILDVER, AwesomeVersionStrategy.CALVER) and version.modifier == "b5" and AwesomeVersion("0.7.0") < version < AwesomeVersion("0.7.1"), f"{version.strategy} {version.modifier}")
     hacs = json.loads((ROOT / "hacs.json").read_text("utf-8"))
     check("hacs.json", hacs == {"name": "Imou Vacuum (Open Platform)", "homeassistant": "2026.1.0", "render_readme": True, "zip_release": True, "filename": "imou_vacuum.zip"}, str(hacs))
     # the release workflow zips exactly this folder; the archive name must match hacs.json
@@ -1259,7 +1259,7 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("status sensor lists options", state("status").attributes["options"][3] == "charging" and len(state("status").attributes["options"]) == 20)
     check("diagnostic entities are categorised", ent_reg.async_get(ids["wifi_signal"]).entity_category == "diagnostic" and ent_reg.async_get(ids["side_brush"]).entity_category == "diagnostic" and ent_reg.async_get(ids["battery"]).entity_category is None)
 
-    check("idle polling interval is 300 s", coordinator.update_interval.total_seconds() == 300, str(coordinator.update_interval))
+    check("a docked (charging) robot polls every 900 s", coordinator.update_interval.total_seconds() == 900, str(coordinator.update_interval))
 
     # ---- consumables: the robot reports minutes, the sensors show hours -----------------------------
     from homeassistant.components.sensor import async_rounded_state  # noqa: PLC0415
@@ -1465,8 +1465,8 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
         client.props["12300"] = status
         await coordinator.async_refresh()
         results[status] = coordinator.update_interval.total_seconds()
-    expected = {s: (30 if s in (2, 4, 5, 7, 8, 9, 10, 11, 12, 13) else 300) for s in range(14)}
-    check("interval: 30 s for {2,4,5,7,8,9,10,11,12,13}, 300 s otherwise", results == expected, str(results))
+    expected = {s: (60 if s in (2, 4, 5, 7, 8, 9, 10, 11, 12, 13) else 900 if s in (0, 3) else 300) for s in range(14)}
+    check("interval: 60 s for {2,4,5,7,8,9,10,11,12,13}, 900 s resting {0,3}, 300 s paused/error {1,6}", results == expected, str(results))
     client.props["12300"] = 3
     await coordinator.async_refresh()
 
@@ -1499,17 +1499,17 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     coordinator._boost_until = 0.0
     client.props["12300"] = 3
     await poll()
-    check("idle robot polls every 300 s", coordinator.update_interval.total_seconds() == 300)
+    check("docked robot polls every 900 s", coordinator.update_interval.total_seconds() == 900)
 
     # a single failed poll
     log_records.clear()
     client.fail_with = timeout
     ((first, first_interval),) = await poll()
     check("a single failed poll: entities stay available and show the last data", first == "docked" and state("battery").state == "1" and coordinator.last_update_success and not all_unavailable())
-    check("a single failed poll: the next poll comes in 60 s, not 300 s", first_interval == 60, str(first_interval))
+    check("a single failed poll: the next poll comes in 60 s, not 900 s", first_interval == 60, str(first_interval))
     client.fail_with = None
     await poll()
-    check("recovery: the failure count is reset and polling is idle again", coordinator.health.failures == 0 and coordinator.update_interval.total_seconds() == 300)
+    check("recovery: the failure count is reset and polling is resting again", coordinator.health.failures == 0 and coordinator.update_interval.total_seconds() == 900)
     check("logs for a short hiccup: one warning at the first failure, one info on recovery", levels() == ["WARNING", "INFO"], str([(r.levelname, r.getMessage()) for r in log_records if r.levelno >= logging.INFO]))
     check("the warning names the robot and the error code, nothing secret", "Could not read RV-L11-A-TEST (TIMEOUT: getIotDeviceProperties); keeping the last data" in [r.getMessage() for r in log_records if r.levelno == logging.WARNING], str([r.getMessage() for r in log_records]))
 
@@ -1520,7 +1520,9 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     check("two failed polls stay available, the third makes the entities unavailable", [x for x, _ in seen] == ["docked", "docked", "unavailable"] and not coordinator.last_update_success and all_unavailable(), str(seen))
     check("retry after 60 s, 60 s, then backing off to 120 s", [i for _, i in seen] == [60, 60, 120], str(seen))
     seen = await poll(2)
-    check("a longer outage keeps backing off: 240 s, then 300 s; still unavailable", [i for _, i in seen] == [240, 300] and all_unavailable(), str(seen))
+    check("a longer outage keeps backing off: 240 s, then 480 s; still unavailable", [i for _, i in seen] == [240, 480] and all_unavailable(), str(seen))
+    seen = await poll(2)
+    check("... up to 900 s, the resting interval", [i for _, i in seen] == [900, 900] and all_unavailable(), str(seen))
     check("logs for an outage: one warning (first failure) and one error (unavailable), no spam", levels() == ["WARNING", "ERROR"], str([(r.levelname, r.getMessage()) for r in log_records if r.levelno >= logging.INFO]))
     client.fail_with = None
     await poll()
@@ -1538,21 +1540,21 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     client.fail_with = None
     await poll()
 
-    # an active robot is retried after 30 s: never later than a normal poll
+    # an active robot is retried after 60 s: never later than a normal poll
     client.props["12300"] = 7
     await poll()
     client.fail_with = timeout
     ((active, active_interval),) = await poll()
-    check("active robot: a failed poll is retried after 30 s", active == "cleaning" and active_interval == 30, f"{active} {active_interval}")
+    check("active robot: a failed poll is retried after 60 s", active == "cleaning" and active_interval == 60, f"{active} {active_interval}")
     client.fail_with = None
     client.props["12300"] = 3
     await poll()
 
-    # a last good poll older than 15 minutes
-    coordinator.health.last_success -= 16 * 60
+    # a last good poll older than 30 minutes
+    coordinator.health.last_success -= 31 * 60
     client.fail_with = timeout
     ((stale, _),) = await poll()
-    check("last good data older than 15 minutes: unavailable at the first failure", stale == "unavailable", stale)
+    check("last good data older than 30 minutes: unavailable at the first failure", stale == "unavailable", stale)
     client.fail_with = None
     await poll()
     check("available again after a good poll", state("vacuum").state == "docked")
@@ -1779,13 +1781,93 @@ async def _full_setup_body(hass: Any, const: Any, api: Any, flow_module: Any, co
     client.probe_service_calls.clear()
     for _ in range(3):
         await coordinator.async_refresh()
-    check("the schedules are not read again within the hour (polls do not fetch them)", client.probe_service_calls == [], str(client.probe_service_calls))
-    check("the next read is due in about an hour", 3500 < coordinator._schedules_due - time.monotonic() <= 3600, str(coordinator._schedules_due - time.monotonic()))  # noqa: SLF001
-    coordinator._schedules_due = time.monotonic() - 1  # an hour later  # noqa: SLF001
+    check("the schedules are not read again within 6 hours (polls do not fetch them)", client.probe_service_calls == [], str(client.probe_service_calls))
+    check("the next read is due in about 6 hours", 21500 < coordinator._schedules_due - time.monotonic() <= 21600, str(coordinator._schedules_due - time.monotonic()))  # noqa: SLF001
+    coordinator._schedules_due = time.monotonic() - 1  # 6 hours later  # noqa: SLF001
     await coordinator.async_refresh()
     await coordinator.async_refresh()
-    check("an hour later one poll reads the schedules again (clean_list 2500, no inputs)", client.probe_service_calls == [("2500", {})], str(client.probe_service_calls))
+    check("6 hours later one poll reads the schedules again (clean_list 2500, no inputs)", client.probe_service_calls == [("2500", {})], str(client.probe_service_calls))
     check("reading the schedules is no command: no pending refresh", coordinator._command_refresh_cancel is None)  # noqa: SLF001
+
+    # the end of a clean (an active status, then a resting one) reads the schedules at once
+    client.probe_service_calls.clear()
+    coordinator._boost_until = 0.0  # noqa: SLF001
+    client.props["12300"] = 7  # room clean
+    await coordinator.async_refresh()
+    check("a clean that goes on does not read the schedules", client.probe_service_calls == [], str(client.probe_service_calls))
+    client.props["12300"] = 3  # back in the dock, charging
+    await coordinator.async_refresh()
+    check("the end of a clean (active, then resting) reads the schedules at once, hours before they are due", client.probe_service_calls == [("2500", {})] and 21500 < coordinator._schedules_due - time.monotonic() <= 21600, str(client.probe_service_calls))  # noqa: SLF001
+    await coordinator.async_refresh()
+    check("... once: the next resting poll does not read them again", client.probe_service_calls == [("2500", {})], str(client.probe_service_calls))
+    client.props["12300"] = 1  # paused: no rest
+    await coordinator.async_refresh()
+    client.props["12300"] = 3
+    await coordinator.async_refresh()
+    check("paused, then charging is no end of a clean: no read", client.probe_service_calls == [("2500", {})], str(client.probe_service_calls))
+    client.props["12300"] = 11  # emptying the bin in the dock
+    await coordinator.async_refresh()
+    client.props["12300"] = 3
+    await coordinator.async_refresh()
+    check("charging, emptying the bin, charging is no end of a clean: no read", client.probe_service_calls == [("2500", {})], str(client.probe_service_calls))
+    for status in (7, 14, 15):  # a clean, back to wash the mop, washing it
+        client.props["12300"] = status
+        await coordinator.async_refresh()
+    check("a mop wash in between (polled every 300 s) does not end the clean", client.probe_service_calls == [("2500", {})] and coordinator.update_interval.total_seconds() == 300, f"{client.probe_service_calls} {coordinator.update_interval}")
+    client.props["12300"] = 16  # drying the mop: resting
+    await coordinator.async_refresh()
+    check("... drying the mop afterwards ends it: one read, resting interval", client.probe_service_calls == [("2500", {})] * 2 and coordinator.update_interval.total_seconds() == 900, f"{client.probe_service_calls} {coordinator.update_interval}")
+    for status in (7, 1, 3):  # a clean, paused, then charging
+        client.props["12300"] = status
+        await coordinator.async_refresh()
+    check("a clean that was paused and then docked has ended: one read", client.probe_service_calls == [("2500", {})] * 3, str(client.probe_service_calls))
+    client.props["12300"] = 7
+    await coordinator.async_refresh()
+    client.status = "sleep"  # the last values (a clean) are shown, but the robot does nothing
+    await coordinator.async_refresh()
+    check("an asleep robot is polled like a resting one (900 s), not by its last status (a clean, 60 s)", coordinator.update_interval.total_seconds() == 900 and client.probe_service_calls == [("2500", {})] * 3, f"{coordinator.update_interval} {client.probe_service_calls}")
+    client.status = "online"
+    client.props["12300"] = 3
+    await coordinator.async_refresh()
+    check("... awake and docked: the clean has ended, one read", client.probe_service_calls == [("2500", {})] * 4, str(client.probe_service_calls))
+
+    # a resting robot is polled a minute after a schedule starts
+    from datetime import timedelta  # noqa: PLC0415
+
+    from homeassistant.util import dt as dt_util  # noqa: PLC0415
+
+    def weekly_at(moment: datetime, unlock: bool = True) -> dict[str, Any]:
+        """An L11-A weekly schedule on the local day and minute of ``moment`` (period 0 = Sunday)."""
+        local = dt_util.as_local(moment)
+        return {"period": [(local.weekday() + 1) % 7], "unlock": unlock, "active": True, "cleanAreas": [2], "startTime": local.hour * 3600 + local.minute * 60, "endTime": 0, "segmentTagIds": ["Kantoor"]}
+
+    async def resting_interval_with(*items: dict[str, Any]) -> float:
+        client.timer_value = {"timeZone": 1, "timeZoneSec": 3600, "value": list(items)}
+        coordinator._schedules_due = 0.0  # read the new schedules with this poll  # noqa: SLF001
+        coordinator._boost_until = 0.0  # noqa: SLF001
+        client.props["12300"] = 3
+        await coordinator.async_refresh()
+        return coordinator.update_interval.total_seconds()
+
+    now = dt_util.now()
+    soon = await resting_interval_with(weekly_at(now + timedelta(minutes=5)))
+    check("a schedule that starts in about 5 minutes: the next poll comes a minute after its start", 300 < soon <= 360, str(soon))
+    started = await resting_interval_with(weekly_at(now - timedelta(minutes=1)))
+    check("a schedule that started a minute ago while the robot still rests: polls every 60 s", started == 60, str(started))
+    off = await resting_interval_with(weekly_at(now + timedelta(minutes=5), unlock=False))
+    check("a switched-off schedule does not shorten the resting interval", off == 900, str(off))
+    far = await resting_interval_with(weekly_at(now + timedelta(hours=2)))
+    check("a schedule hours away does not shorten the resting interval", far == 900, str(far))
+    both = await resting_interval_with(weekly_at(now + timedelta(hours=2)), weekly_at(now + timedelta(minutes=5)))
+    check("the earliest of several schedules counts", 300 < both <= 360, str(both))
+    client.props["12300"] = 7
+    await coordinator.async_refresh()
+    check("a schedule start does not slow an active robot: 60 s", coordinator.update_interval.total_seconds() == 60, str(coordinator.update_interval))
+    client.timer_value = copy.deepcopy(SCHEDULES_VALUE)
+    client.props["12300"] = 3
+    coordinator._schedules_due = 0.0  # noqa: SLF001
+    await coordinator.async_refresh()  # (active, then resting: this read was due anyway)
+    check("back to the normal schedules and a resting interval of 900 s", coordinator.schedules is not None and len(coordinator.schedules.schedules) == 3 and coordinator.update_interval.total_seconds() == 900, str(coordinator.update_interval))
 
     # a failing schedule fetch never fails or slows the property poll
     client.probe_service_calls.clear()
@@ -2572,7 +2654,7 @@ async def rv1_setup_checks(config_dir: str) -> None:
         del client.props["120600"]
         coordinator._schedules_fetched_at = None
         coordinator.sequence_rooms = None
-        check("RV1 Pro Max: a response without sequence is 'read, empty', not a failure", await coordinator.async_refresh_schedules() is True and coordinator.sequence_rooms == [] and not coordinator._failed_parts and 3500 < coordinator._schedules_due - time.monotonic() <= 3600, f"{coordinator.sequence_rooms} {coordinator._failed_parts}")
+        check("RV1 Pro Max: a response without sequence is 'read, empty', not a failure", await coordinator.async_refresh_schedules() is True and coordinator.sequence_rooms == [] and not coordinator._failed_parts and 21500 < coordinator._schedules_due - time.monotonic() <= 21600, f"{coordinator.sequence_rooms} {coordinator._failed_parts}")
         # a failing sequence read: only it is retried, clean_list is not called again
         client.props["120600"] = [-128]
         client.fail_sequence_with = api_mod.ImouConnectionError("TIMEOUT", "getIotDeviceProperties")
@@ -2585,7 +2667,7 @@ async def rv1_setup_checks(config_dir: str) -> None:
         coordinator._schedules_due = 0.0
         client.probe_service_calls.clear()
         await coordinator.async_refresh()
-        check("RV1 Pro Max: the retry reads only sequence (no clean_list call), then waits an hour", client.probe_service_calls == [] and client.sequence_reads == 3 and coordinator.sequence_rooms == [-128] and not coordinator._failed_parts and 3500 < coordinator._schedules_due - time.monotonic() <= 3600, f"{client.probe_service_calls} {client.sequence_reads} {coordinator.sequence_rooms}")
+        check("RV1 Pro Max: the retry reads only sequence (no clean_list call), then waits 6 hours", client.probe_service_calls == [] and client.sequence_reads == 3 and coordinator.sequence_rooms == [-128] and not coordinator._failed_parts and 21500 < coordinator._schedules_due - time.monotonic() <= 21600, f"{client.probe_service_calls} {client.sequence_reads} {coordinator.sequence_rooms}")
         # the reverse: clean_list fails, sequence is not read again by the retry
         client.fail_schedules_with = api_mod.ImouConnectionError("TIMEOUT", "iotDeviceControl")
         coordinator._schedules_due = 0.0

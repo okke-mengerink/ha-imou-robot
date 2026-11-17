@@ -29,19 +29,28 @@ REGION_HOSTS: Final[dict[str, str]] = {
 }
 
 # Polling. One API call per robot per poll; the free tier is 30,000 calls per
-# month per App ID, renewed on the 1st. The intended use is roughly 300-600 calls a
-# day per robot (an estimate: the real count is in the diagnostics, ``api_calls``).
-SCAN_INTERVAL_IDLE: Final = 300  # seconds, docked / idle
-SCAN_INTERVAL_ACTIVE: Final = 30  # seconds, robot is doing something
+# month per App ID (all robots of the App ID share it), renewed on the 1st. The
+# intended use is about 100 calls a day per robot that rests in its dock, plus about
+# 60 per hour of cleaning (an estimate: the real count is in the diagnostics,
+# ``api_calls``).
+SCAN_INTERVAL_RESTING: Final = 900  # seconds, docked, charging or standby
+SCAN_INTERVAL_IDLE: Final = 300  # seconds, paused, error or another quiet status
+SCAN_INTERVAL_ACTIVE: Final = 60  # seconds, robot is doing something
+SCAN_INTERVAL_BOOST: Final = 30  # seconds, for COMMAND_BOOST_SECONDS after a command
 QUOTA_RETRY_INTERVAL: Final = 1800  # seconds between polls while the API quota is used up
 COMMAND_REFRESH_DELAY: Final = 3  # seconds, one refresh after any command
 COMMAND_BOOST_SECONDS: Final = 120  # keep fast polling this long after a command
+# A resting robot is polled this long after a schedule starts, and every
+# SCAN_INTERVAL_ACTIVE seconds while it still rests up to SCHEDULE_START_WINDOW
+# seconds after the start, so a scheduled clean shows within about a minute.
+SCHEDULE_START_DELAY: Final = 60
+SCHEDULE_START_WINDOW: Final = 180
 # A failed poll keeps the last good data. Entities become unavailable only after
 # this many failed polls in a row, or when the last good poll is older than
 # MAX_STALE_SECONDS, whichever comes first. A failure is retried after
-# RETRY_INTERVAL seconds, not after the idle interval.
+# RETRY_INTERVAL seconds, not after the normal interval.
 FAILURES_BEFORE_UNAVAILABLE: Final = 3
-MAX_STALE_SECONDS: Final = 15 * 60
+MAX_STALE_SECONDS: Final = 30 * 60
 RETRY_INTERVAL: Final = 60
 # A commanded value may be shown for at most this long while the cloud reports a
 # different value for the same setting; after that the cloud value wins, so a
@@ -233,12 +242,13 @@ CLEAN_PLAN_GENERAL: Final = 0
 # ``sequence`` (the cleaning order), in that list. Room ids can be negative. RV1
 # models may also report them in the room configuration, the cleaning plans and the
 # cleaning order of a map (ROOM_SOURCES). All are read together and refreshed this
-# often (seconds); a failed fetch is retried sooner.
+# often (seconds), and right after a clean ends (a used-up one-off schedule, rooms
+# changed in the app); a failed fetch is retried sooner.
 CONF_ROOM_NAMES: Final = "room_names"  # config entry option: {device id: {room id: name}}
-SCHEDULE_REFRESH_SECONDS: Final = 3600
+SCHEDULE_REFRESH_SECONDS: Final = 6 * 3600
 SCHEDULE_RETRY_SECONDS: Final = 900
 SCHEDULE_MIN_REFRESH_SECONDS: Final = 60  # on-demand reads are cached this long
-# the part of the hourly read that is one getIotDeviceProperties call (``sequence``,
+# the part of the periodic read that is one getIotDeviceProperties call (``sequence``,
 # the ROOM_SOURCES and ``map_name``); the other part is the service SERVICE_CLEAN_LIST
 PART_ROOM_PROPERTIES: Final = "room_properties"
 
@@ -500,6 +510,28 @@ ACTIVE_STATUS_KEYS: Final = frozenset(
 )
 PAUSED_STATUS_KEYS: Final = frozenset(
     {"paused", "return_paused", "mapping_paused", "return_to_wash_paused"}
+)
+# work_status keys during which the robot rests (docked, charging, standby, drying
+# its mop after a clean): slow polling. Paused and error are no rest: their next
+# change matters sooner.
+RESTING_STATUS_KEYS: Final = frozenset({"standby", "charging", "drying"})
+# work_status keys of a clean that is going on, including the trip back and a mop wash
+# in between (not emptying the bin or remote control): the first resting status after
+# one of these is the end of the clean, which reads the schedules and rooms at once.
+CLEANING_STATUS_KEYS: Final = frozenset(
+    {
+        "relocating",
+        "room_clean",
+        "zone_clean",
+        "spot_clean",
+        "go_to",
+        "whole_house_clean",
+        "mapping",
+        "returning",
+        "return_paused",
+        "returning_to_wash",
+        "washing_mop",
+    }
 )
 # The same set by number, for the numeric tables (L11-A and RV1 Pro Max).
 ACTIVE_WORK_STATUSES: Final = frozenset(

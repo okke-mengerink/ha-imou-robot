@@ -12,7 +12,7 @@ from .const import (
     FAILURES_BEFORE_UNAVAILABLE,
     MAX_STALE_SECONDS,
     RETRY_INTERVAL,
-    SCAN_INTERVAL_IDLE,
+    SCAN_INTERVAL_RESTING,
 )
 
 
@@ -51,12 +51,13 @@ class PollHealth:
     def retry_interval(self, current: float) -> float:
         """Seconds until the next poll after a failure: soon first, then backing off.
 
-        ``current`` is the interval that was in force (30 s while active, so that
-        a retry is never later than a normal poll). Once the failures make the
-        entities unavailable the interval doubles up to the idle interval, so a
-        long outage does not eat the API quota.
+        ``current`` is the interval that was in force (30 s just after a command, so
+        that a retry is never later than a normal poll). Once the failures make the
+        entities unavailable the interval doubles up to the resting interval, so a
+        long outage (or a robot that is switched off for days) does not eat the API
+        quota.
         """
         if self.failures < FAILURES_BEFORE_UNAVAILABLE:
             return min(float(RETRY_INTERVAL), current)
         steps = self.failures - FAILURES_BEFORE_UNAVAILABLE + 1
-        return min(float(SCAN_INTERVAL_IDLE), RETRY_INTERVAL * 2.0**steps)
+        return min(float(SCAN_INTERVAL_RESTING), RETRY_INTERVAL * 2.0**steps)

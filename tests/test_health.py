@@ -31,10 +31,13 @@ def make() -> tuple[object, Clock]:
     return health_mod.PollHealth(clock), clock
 
 
-def test_the_rules_are_three_polls_fifteen_minutes_sixty_seconds() -> None:
+def test_the_rules_are_three_polls_thirty_minutes_sixty_seconds() -> None:
     assert const.FAILURES_BEFORE_UNAVAILABLE == 3
-    assert const.MAX_STALE_SECONDS == 15 * 60
+    assert const.MAX_STALE_SECONDS == 30 * 60
     assert const.RETRY_INTERVAL == 60
+    # the stale limit must leave room for a failure after a resting interval and the
+    # retries after it, or one failed poll of a resting robot hides it at once
+    assert const.MAX_STALE_SECONDS > const.SCAN_INTERVAL_RESTING + 2 * const.RETRY_INTERVAL
 
 
 def test_a_single_failed_poll_keeps_the_last_data() -> None:
@@ -64,15 +67,26 @@ def test_a_good_poll_resets_the_count() -> None:
     assert health.failure() is True and health.failure() is True  # counting starts again
 
 
-def test_a_last_success_older_than_15_minutes_is_unavailable_at_once() -> None:
+def test_a_last_success_older_than_30_minutes_is_unavailable_at_once() -> None:
     health, clock = make()
     health.success()
-    clock.now += 15 * 60 - 1
-    assert health.failure() is True  # just under 15 minutes
+    clock.now += 30 * 60 - 1
+    assert health.failure() is True  # just under 30 minutes
     health.success()
-    clock.now += 15 * 60
-    assert health.failure() is False  # 15 minutes: too old, even for the first failure
+    clock.now += 30 * 60
+    assert health.failure() is False  # 30 minutes: too old, even for the first failure
     assert health.failures == 1
+
+
+def test_a_resting_robot_survives_one_failed_poll() -> None:
+    health, clock = make()
+    health.success()
+    clock.now += const.SCAN_INTERVAL_RESTING  # the next poll of a resting robot fails
+    assert health.failure() is True
+    clock.now += health.retry_interval(const.SCAN_INTERVAL_RESTING)
+    assert health.failure() is True  # and its retry: still the last data
+    clock.now += health.retry_interval(const.SCAN_INTERVAL_RESTING)
+    assert health.failure() is False  # the third failure in a row
 
 
 def test_without_a_good_poll_there_is_nothing_to_keep() -> None:
@@ -92,14 +106,14 @@ def test_retry_comes_after_60_seconds_not_300() -> None:
     assert health.retry_interval(60) == 60
 
 
-def test_a_long_outage_backs_off_to_the_idle_interval() -> None:
+def test_a_long_outage_backs_off_to_the_resting_interval() -> None:
     health, _ = make()
     health.success()
     seen = []
-    for _ in range(6):
+    for _ in range(7):
         health.failure()
         seen.append(health.retry_interval(60))
-    assert seen == [60, 60, 120, 240, 300, 300]
+    assert seen == [60, 60, 120, 240, 480, 900, 900]
 
 
 def test_success_reports_how_many_polls_failed_before_it() -> None:

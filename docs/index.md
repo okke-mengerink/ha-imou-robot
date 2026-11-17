@@ -69,7 +69,7 @@ Your robot is now in Home Assistant.
 
 ### Watch the API quota
 
-The integration works through the cloud. Imou's free tier includes 30,000 API calls per month per App ID, and typical use of this integration is about 13,000 per month. Do not run Home Assistant's core `imou` integration with the same App ID, because it would use up the quota.
+The integration works through the cloud. Imou's free tier includes 30,000 API calls per month per App ID, and typical use of this integration is about 3,000 to 7,500 calls per month per robot. Do not run Home Assistant's core `imou` integration with the same App ID, because it would use up the quota.
 
 ## Room cleaning (Home Assistant 2026.3+)
 

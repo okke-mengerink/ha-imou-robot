@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1b5 (beta)
+
+This beta cuts the Imou API calls per robot. The stable release is 0.7.0. Not verified yet: the new polling intervals and the schedule-start poll on a real robot.
+
+- Changed: fewer API calls. A robot that rests in its dock (charging, standby or drying its mop) is polled every 15 minutes (was 5), and an active robot every 60 seconds (was 30). A paused, error, mop-washing or unknown status stays at every 5 minutes; an asleep or updating robot is polled like a resting one (it used to follow its last status, which could be 30 seconds). A robot that rests all day uses about 100 calls a day, and every hour of cleaning adds about 60 more, so roughly 100 to 250 calls per day per robot is typical (about 3,000 to 7,500 per month; it was 300 to 600 a day, about 9,000 to 18,000 per month). The schedule and room reads cost about 150 to 350 calls per month, not about 720.
+- New: a resting robot is polled about 1 minute after the start time of each enabled schedule (local time of Home Assistant), and every minute up to 3 minutes after the start while it still rests. A scheduled clean shows in Home Assistant within about a minute, once the integration has read the schedule (within 6 hours, or right after the next clean). An RV1 schedule that runs only once has no date and gets no early poll.
+- Changed: the schedules and the room properties are read every 6 hours (was once an hour), right after each clean ends (also after a mop wash or a pause in between; emptying the bin in the dock does not count) and on demand (when you open the room mapping, and before a room clean on a robot with several maps). A map switch in the Imou app is noticed at the next of these reads, before a room clean, or when you open **Link rooms to areas**.
+- Changed: after a failed poll the next poll comes after 60 seconds, as before, but entities become unavailable after 3 failed polls in a row or when the last good poll is older than 30 minutes (was 15). During a longer outage the interval grows to 120, 240, 480 and 900 seconds (was up to 300).
+- Trade-off: a clean that you start from the Imou app or with the robot's button, while the robot rests, shows in Home Assistant within 15 minutes (was 5 minutes). Starts from Home Assistant and scheduled cleans still show within about a minute.
+- Docs: the README polling table, the quota section and the FAQ, and the call estimate in the docs pages, are updated.
+
 ## 0.7.1b4 (beta)
 
 This beta is for testing on the RV1L Pro and the RV1 Pro Max; the stable release is 0.7.0. Not verified yet: the repair notice for a used-up quota in a real Home Assistant, and the active map of a robot with an empty cleaning order.
