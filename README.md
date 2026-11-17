@@ -1,6 +1,6 @@
 # Imou Vacuum for Home Assistant
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/v/release/okke-mengerink/ha-imou-robot)](https://github.com/okke-mengerink/ha-imou-robot/releases)
 [![Validate workflow status](https://img.shields.io/github/actions/workflow/status/okke-mengerink/ha-imou-robot/validate.yml?branch=main&label=validate)](https://github.com/okke-mengerink/ha-imou-robot/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/github/license/okke-mengerink/ha-imou-robot)](https://github.com/okke-mengerink/ha-imou-robot/blob/main/LICENSE)
@@ -73,9 +73,11 @@ Not supported: the map, zone cleaning and creating, editing or switching schedul
 
 ### HACS
 
-1. In HACS, add a custom repository with category **Integration** and URL `https://github.com/okke-mengerink/ha-imou-robot`, or click the "Open your Home Assistant instance" badge at the top of this page.
-2. Install the integration from HACS. HACS installs it from the release asset `imou_vacuum.zip`.
-3. Restart Home Assistant.
+1. Open HACS, search for **Imou Vacuum (Open Platform)** and download it. You can also click the "Open your Home Assistant instance" badge at the top of this page to open it in HACS. HACS installs it from the release asset `imou_vacuum.zip`.
+2. Restart Home Assistant.
+3. Add the integration as described under [Setup](#setup).
+
+If it does not show up in HACS (older HACS or a stale cache), add a custom repository with category **Integration** and URL `https://github.com/okke-mengerink/ha-imou-robot`, then download it as above.
 
 If the download fails, check that the release has the `imou_vacuum.zip` asset. You can also use the manual installation below.
 
