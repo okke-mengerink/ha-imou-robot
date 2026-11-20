@@ -2,7 +2,7 @@
 
 ## 0.7.1b5 (beta)
 
-This beta cuts the Imou API calls per robot. The stable release is 0.7.0. Not verified yet: the new polling intervals and the schedule-start poll on a real robot.
+This beta cuts the Imou API calls per robot. The stable release is 0.7.0. Checked on an RV-L11-A in Home Assistant 2026.11.2: a docked robot is polled every 15 minutes, and after a command every 30 seconds for 2 minutes. Not verified yet: the number of calls over a full day, the schedule-start poll and the read after a clean on a real robot.
 
 - Changed: fewer API calls. A robot that rests in its dock (charging, standby or drying its mop) is polled every 15 minutes (was 5), and an active robot every 60 seconds (was 30). A paused, error, mop-washing or unknown status stays at every 5 minutes; an asleep or updating robot is polled like a resting one (it used to follow its last status, which could be 30 seconds). A robot that rests all day uses about 100 calls a day, and every hour of cleaning adds about 60 more, so roughly 100 to 250 calls per day per robot is typical (about 3,000 to 7,500 per month; it was 300 to 600 a day, about 9,000 to 18,000 per month). The schedule and room reads cost about 150 to 350 calls per month, not about 720.
 - New: a resting robot is polled about 1 minute after the start time of each enabled schedule (local time of Home Assistant), and every minute up to 3 minutes after the start while it still rests. A scheduled clean shows in Home Assistant within about a minute, once the integration has read the schedule (within 6 hours, or right after the next clean). An RV1 schedule that runs only once has no date and gets no early poll.
@@ -10,10 +10,11 @@ This beta cuts the Imou API calls per robot. The stable release is 0.7.0. Not ve
 - Changed: after a failed poll the next poll comes after 60 seconds, as before, but entities become unavailable after 3 failed polls in a row or when the last good poll is older than 30 minutes (was 15). During a longer outage the interval grows to 120, 240, 480 and 900 seconds (was up to 300).
 - Trade-off: a clean that you start from the Imou app or with the robot's button, while the robot rests, shows in Home Assistant within 15 minutes (was 5 minutes). Starts from Home Assistant and scheduled cleans still show within about a minute.
 - Docs: the README polling table, the quota section and the FAQ, and the call estimate in the docs pages, are updated.
+- Docs: confirmed by users after 0.7.1b4: the learned rooms on the RV1L Pro and the RV1 Pro Max (on the RV1 Pro Max also on a map without a cleaning order), and on the RV1 Pro Max the **remaining** sensors (they match the app) and the API call counter (it matches the Imou console). The README rooms section and the RV1 Pro Max row no longer call these unverified.
 
 ## 0.7.1b4 (beta)
 
-This beta is for testing on the RV1L Pro and the RV1 Pro Max; the stable release is 0.7.0. Not verified yet: the repair notice for a used-up quota in a real Home Assistant, and the active map of a robot with an empty cleaning order.
+This beta is for testing on the RV1L Pro and the RV1 Pro Max; the stable release is 0.7.0. Not verified yet: the repair notice for a used-up quota in a real Home Assistant, and the active map of a robot with an empty cleaning order. (The active map with an empty cleaning order was confirmed after this beta, on an RV1 Pro Max with two maps.)
 
 After feedback from testers: one Imou developer console showed about 4,000 API calls a day for a single robot, where the integration should make roughly 300 to 600; a second robot with two maps never learned rooms; and the RV1 Pro Max app showed the lifetimes of its consumables.
 
@@ -56,7 +57,7 @@ The Imou app does not show the used time of a consumable, it shows the remaining
 
 ## 0.7.1b1 (beta)
 
-This beta is for testing on RV1 models; the stable release is 0.7.0. Not verified yet: no user has confirmed the learned rooms on a real robot.
+This beta is for testing on RV1 models; the stable release is 0.7.0. Not verified yet: no user has confirmed the learned rooms on a real robot. (Confirmed later by users on an RV1L Pro and an RV1 Pro Max.)
 
 Learn rooms from the room cleans you start in the Imou app, for RV1 robots that report no room list at all (empty `sequence`, no room properties, a whole-house schedule).
 
